@@ -172,17 +172,20 @@ hotfpc runs on macOS, Linux and Windows, and can hot-reload programs built for:
 | Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | not tried | not tried | ✓ |
 | Linux arm64 | compiles; not run yet | | | |
 
-Each ✓ means all 17 [scenarios](tests/scenarios) gave the expected result. Each scenario is
-a program that has edits saved into it while it runs. Except for the `hotfpc.exe` row,
-each ✓ also passed a stress test (20,000 reloads of one unit while two threads called it,
-with no stale or wrong results) and four edits to lwpt's formatter units (6,600 lines).
+Each ✓ means all 17 [scenarios](tests/scenarios) gave the expected result with hotfpc
+1.0.0. Each scenario is a program that has edits saved into it while it runs. With fpc
+3.2.2 and 3.3.1, a stress test also passed on all three systems: 20,000 reloads of one
+unit while two threads called it, with no stale or wrong results. On macOS and Linux,
+four edits to lwpt's formatter units (6,600 lines) were all swapped in.
+
 fpc 3.2.2 is the current release of Free Pascal, and fpc 3.2.4-rc and 3.3.1 are
 [fpc-toolchain](https://github.com/frostney/fpc-toolchain)'s builds. Older compilers aren't
 supported. macOS x86-64 and 32-bit targets aren't supported.
 
 On Windows, fpc's linker always leaves out runtime routines the program never calls. New
 code that calls such a routine needs a restart there, while Linux and macOS link the whole
-unit. Native Windows (not Wine) hasn't been tried yet.
+unit. On Windows itself, CI builds hotfpc and runs its unit tests; the scenarios have only
+run under Wine so far.
 
 A swap usually takes 40 to 150 ms from save to running, and most of that is fpc compiling
 the unit. A unit with about 500 functions takes 0.5 to 1.1 s.
