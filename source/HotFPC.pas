@@ -1,8 +1,8 @@
 program HotFPC;
 { hotfpc: hot reloading for Free Pascal programs, as a wrapper around fpc.
 
-    hotfpc [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] [--settle MS]
-           [--log FILE] [fpc options] program.pas [-- program arguments]
+    hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
+           [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]
 
   Builds the program with the given fpc and two additions: its symbols are kept (-Xs-) and
   the agent unit is loaded first (-FaHotFPC.Agent). Starts it, watches the sources, and on
@@ -21,6 +21,8 @@ program HotFPC;
               when the target is Windows and this is not)
   --settle    how long a save must stay unchanged before it is compiled (default 2 ms)
   --log       a copy of every line this program prints, with times
+  --quiet     leave out the start line and the closing summary
+  --version   print hotfpc's version
 
   The work is in the HotFPC.* units next to this file; this program reads the command line and
   hands it to the driver. }
