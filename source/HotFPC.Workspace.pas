@@ -2,9 +2,6 @@ unit HotFPC.Workspace;
 { HotFPC.Workspace: the .hot/ directory next to the program's source, where hotfpc builds
   and keeps what it needs: every path in it, and the object files it holds. }
 {$mode delphi}{$H+}
-{ fpc 3.3.1 before fpc-toolchain release 3.3.1+4 miscompiles loops at -O1 and above
-  (docs/how-it-works.md, "A compiler bug"); fpc -iV cannot tell those builds from fixed ones. }
-{$IF FPC_FULLVERSION >= 30301}{$optimization off}{$ENDIF}
 
 interface
 

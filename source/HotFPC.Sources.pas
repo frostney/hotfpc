@@ -3,9 +3,6 @@ unit HotFPC.Sources;
   -Fi directories fpc will search, also those of response files), how it notices a change (sizes
   and times, then content digests) and which files changed. }
 {$mode delphi}{$H+}
-{ fpc 3.3.1 before fpc-toolchain release 3.3.1+4 miscompiles loops at -O1 and above
-  (docs/how-it-works.md, "A compiler bug"); fpc -iV cannot tell those builds from fixed ones. }
-{$IF FPC_FULLVERSION >= 30301}{$optimization off}{$ENDIF}
 
 interface
 

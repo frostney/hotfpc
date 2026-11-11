@@ -6,9 +6,6 @@ unit HotFPC.Compiler;
   it: relative paths in options and response files, and a fpc.cfg there, mean what they mean to
   fpc. }
 {$mode delphi}{$H+}
-{ fpc 3.3.1 before fpc-toolchain release 3.3.1+4 miscompiles loops at -O1 and above
-  (docs/how-it-works.md, "A compiler bug"); fpc -iV cannot tell those builds from fixed ones. }
-{$IF FPC_FULLVERSION >= 30301}{$optimization off}{$ENDIF}
 {$modeswitch advancedrecords}
 
 interface

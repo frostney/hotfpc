@@ -3,9 +3,6 @@ unit HotFPC.Network;
   start of the socket library, blocking mode, and closing. Everything else about sockets is
   the Sockets unit's, which both systems share. }
 {$mode delphi}{$H+}
-{ fpc 3.3.1 before fpc-toolchain release 3.3.1+4 miscompiles loops at -O1 and above
-  (docs/how-it-works.md, "A compiler bug"); fpc -iV cannot tell those builds from fixed ones. }
-{$IF FPC_FULLVERSION >= 30301}{$optimization off}{$ENDIF}
 
 interface
 

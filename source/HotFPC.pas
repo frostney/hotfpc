@@ -25,9 +25,6 @@ program HotFPC;
   The work is in the HotFPC.* units next to this file; this program reads the command line and
   hands it to the driver. }
 {$mode delphi}{$H+}
-{ fpc 3.3.1 before fpc-toolchain release 3.3.1+4 miscompiles loops at -O1 and above
-  (docs/how-it-works.md, "A compiler bug"); fpc -iV cannot tell those builds from fixed ones. }
-{$IF FPC_FULLVERSION >= 30301}{$optimization off}{$ENDIF}
 
 uses
   {$ifdef unix}

@@ -8,9 +8,6 @@ unit HotFPC.Layout;
   layout of each record or class type and the type of each variable. Two texts differ exactly
   when a field was added, removed, moved or retyped, or a variable changed its type. }
 {$mode delphi}{$H+}
-{ fpc 3.3.1 before fpc-toolchain release 3.3.1+4 miscompiles loops at -O1 and above
-  (docs/how-it-works.md, "A compiler bug"); fpc -iV cannot tell those builds from fixed ones. }
-{$IF FPC_FULLVERSION >= 30301}{$optimization off}{$ENDIF}
 
 interface
 

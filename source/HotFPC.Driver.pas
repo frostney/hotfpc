@@ -5,9 +5,6 @@ unit HotFPC.Driver;
   lines. It owns the order of these steps and the wording of what it prints; the work is in the
   units it asks. }
 {$mode delphi}{$H+}
-{ fpc 3.3.1 before fpc-toolchain release 3.3.1+4 miscompiles loops at -O1 and above
-  (docs/how-it-works.md, "A compiler bug"); fpc -iV cannot tell those builds from fixed ones. }
-{$IF FPC_FULLVERSION >= 30301}{$optimization off}{$ENDIF}
 
 interface
 
