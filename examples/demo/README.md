@@ -18,5 +18,5 @@ Each save prints `[hot] vN swapped`, and the score carries on from where it was.
 `Score: Integer` to `Score: Int64` prints `restart needed` instead, because a running
 program's variable can't change its size.
 
-[`tools/record-demo.py`](../../tools/record-demo.py) makes the same edits from a script
-and draws the split screen that the recording shows.
+[`tools/record-demo.py`](../../tools/record-demo.py) makes the same edits in vim inside
+tmux, which is what the recording shows.

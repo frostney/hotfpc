@@ -14,7 +14,7 @@ design; read it before changing either part.
 | `build.sh`, `build.bat` | build `bin/hotfpc` (`bin\hotfpc.exe`); `build.bat` has CRLF line ends |
 | `test/scenarios/` | `scenario.py` (17 programs and the edits saved into them), `check.py` (expected outcomes) |
 | `examples/demo`, `examples/lwpt` | the README's demo program; an lwpt package with a `hot` run task |
-| `tools/record-demo.py` | records `docs/demo.cast`; `docs/demo.gif` and `docs/demo.mp4` are made from it |
+| `tools/record-demo.py` | records `docs/demo.cast` (tmux, vim, asciinema); `docs/demo.gif` and `docs/demo.mp4` are made from it |
 
 ## Build and test
 

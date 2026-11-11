@@ -5,22 +5,25 @@ the program carries on with the new code and keeps its state: its variables, obj
 files and threads. When an edit can't be swapped in safely, hotfpc says why and leaves the
 program running as it was.
 
-![hotfpc running examples/demo: scene.pas on the left is edited four times while the program on the right keeps running](docs/demo.gif)
+![hotfpc running examples/demo: scene.pas is edited in vim on the left while the program keeps running on the right](docs/demo.gif)
 
 This is a real run of [`examples/demo`](examples/demo) on macOS arm64 with fpc 3.3.1
-([video](docs/demo.mp4), [asciinema cast](docs/demo.cast)). The left pane shows
-`scene.pas`, and the right pane shows the program's output, which hotfpc started and keeps
-running. The table at the bottom shows the timings the script measured for each save:
-how long until the swap, how much of that was fpc compiling, and how long until the first
-line of output showed the change.
+([video](docs/demo.mp4), [asciinema cast](docs/demo.cast)), recorded in tmux:
 
-- The first three edits change a character, a step size and a colour. Each one is swapped
-  in 110 to 200 ms after the save, and the score carries on from where it was.
-- The fourth edit changes the score from `Integer` to `Int64`. That can't be swapped into
-  a running program, so hotfpc reports a restart and leaves the program running.
+- **Right:** `hotfpc --log hot.log demo.pas` typed into a shell. The program's output and
+  hotfpc's `[hot]` lines appear there.
+- **Left:** `scene.pas` open in vim. Four edits are typed in and saved with `:w`.
+- **Below vim:** hotfpc's own timings from `hot.log`, showing for each save how long it
+  took to swap and which part of that went to settling, compiling, the interface check
+  and loading into the program.
 
-[`tools/record-demo.py`](tools/record-demo.py) types each edit into the left pane, writes
-the file to disk at the moment it shows "saved", and reads the program's output live.
+The first three edits change a character, a step size and a colour. Each one is swapped in
+about 100 ms after the save, and the score carries on from where it was. The fourth edit
+changes the score from `Integer` to `Int64`, which can't be swapped into a running
+program, so hotfpc reports a restart and the program keeps running.
+
+[`tools/record-demo.py`](tools/record-demo.py) makes the recording. It sends each
+keystroke to the shell and to vim with `tmux send-keys`.
 
 hotfpc wraps fpc and nothing else. It needs no build tool and no C compiler, and you don't
 change your program for it. It's a single program written in Pascal, and it doesn't depend
