@@ -7,7 +7,7 @@
 import os, shlex, re, shutil, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HOTRUN = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "bin", "hotfpc")
+HOTRUN = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc")
 
 
 def driver_cmd():

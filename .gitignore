@@ -1,10 +1,15 @@
-# hotfpc's own build
-/bin/
+# hotfpc's own build, and lwpt's state
 /build/
+.lwpt/sessions/
+.lwpt/tmp/
+.lwpt/install.lock
+.lwpt/workers/
+.lwpt/session-roots
+.lwpt/registry/
 # what hotfpc builds next to a program it runs
 .hot/
 # scenario test programs
-/test/scenarios/work/
+/tests/scenarios/work/
 # lwpt's local state in the example
 /examples/lwpt/.lwpt/
 /examples/lwpt/build/

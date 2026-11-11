@@ -1,11 +1,11 @@
-program hotfpc;
+program HotFPC;
 { hotfpc: hot reloading for Free Pascal programs, as a wrapper around fpc.
 
     hotfpc [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] [--settle MS]
            [--log FILE] [fpc options] program.pas [-- program arguments]
 
   Builds the program with the given fpc and two additions: its symbols are kept (-Xs-) and
-  the agent unit is loaded first (-Fahotagent). Starts it, watches the sources, and on
+  the agent unit is loaded first (-FaHotFPC.Agent). Starts it, watches the sources, and on
   every save recompiles and hands the changed object files to the agent inside the
   program, which swaps the code in and keeps the program's state, or says why it needs a
   restart.
@@ -20,18 +20,15 @@ program hotfpc;
               when the target is Windows and this is not)
   --settle    how long a save must stay unchanged before it is compiled (default 2 ms)
   --log       a copy of every line this program prints, with times }
-{$mode objfpc}{$H+}
-// Without optimisation, whatever the command line says: fpc 3.3.1+3 for x86-64 at -O1 and
-// -O2 gave a loop counter and a temporary string the same register, here and in other
-// code (docs/how-it-works.md, "A compiler bug"). Neither the driver nor the agent needs the speed.
-{$optimization off}
+{$I Shared.inc}
 
 uses
   {$ifdef unix}cthreads, baseunix,{$endif}
   {$ifdef windows}windows, winsock2,{$endif}
   Classes, SysUtils, Process, Sockets, fpjson, jsonparser;
 
-{$I agentsource.inc}
+{$I AgentSource.inc}
+{$I Version.inc}
 
 const
   SOURCE_EXT: array[0..4] of string = ('.pas', '.pp', '.inc', '.lpr', '.dpr');
@@ -294,6 +291,7 @@ begin
     else if (a = '--ppudump') and (i < ParamCount) then begin Inc(i); FPpuDump := ParamStr(i); end
     else if (a = '--run') and (i < ParamCount) then begin Inc(i); FLauncher := ParamStr(i); end
     else if a = '--quiet' then FQuiet := True
+    else if a = '--version' then begin WriteLn('hotfpc ', HotFPCVersion); Halt(0); end
     else if (a = '--settle') and (i < ParamCount) then begin Inc(i); FSettle := StrToFloatDef(ParamStr(i), 2) / 1000.0; end
     else if (a = '--log') and (i < ParamCount) then
     begin
@@ -308,7 +306,7 @@ begin
   end;
   if FSource = '' then
   begin
-    WriteLn('usage: hotfpc [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]');
+    WriteLn('usage: hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]');
     Halt(2);
   end;
   for i := 0 to FOpts.Count - 1 do
@@ -463,7 +461,7 @@ var
 begin
   SetLength(args, 0);
   Add('-Xs-');
-  Add('-Fahotagent');
+  Add('-FaHotFPC.Agent');
   Add('-Fu' + ExcludeTrailingPathDelimiter(FAgentDir));
   Add('-FU' + ExcludeTrailingPathDelimiter(FUnits));
   Add('-o' + FExe);
@@ -524,9 +522,13 @@ var
 begin
   ForceDirectories(FAgentDir);
   ForceDirectories(FAgentSrc);
-  AssignFile(f, FAgentSrc + 'hotagent.pas');
+  AssignFile(f, FAgentSrc + 'HotFPC.Agent.pas');
   Rewrite(f);
   for i := 0 to High(AgentSourceLines) do WriteLn(f, AgentSourceLines[i]);
+  CloseFile(f);
+  AssignFile(f, FAgentSrc + 'Shared.inc');
+  Rewrite(f);
+  for i := 0 to High(SharedIncludeLines) do WriteLn(f, SharedIncludeLines[i]);
   CloseFile(f);
   SetLength(args, 0);
   for i := 0 to FOpts.Count - 1 do
@@ -537,9 +539,9 @@ begin
     end;
   SetLength(args, Length(args) + 2);
   args[High(args) - 1] := '-FU' + ExcludeTrailingPathDelimiter(FAgentDir);
-  args[High(args)] := FAgentSrc + 'hotagent.pas';
+  args[High(args)] := FAgentSrc + 'HotFPC.Agent.pas';
   status := RunFpc(args, output);
-  if (status <> 0) or not FileExists(FAgentDir + 'hotagent.ppu') then
+  if (status <> 0) or not FileExists(FAgentDir + 'hotfpc.agent.ppu') then
   begin
     WriteLn('[hot] the agent did not compile:');
     WriteLn(output);

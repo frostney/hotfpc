@@ -1,5 +1,5 @@
-unit hotagent;
-{ hotagent: the in-process agent for hot reloading Free Pascal programs, as a unit.
+unit HotFPC.Agent;
+{ HotFPC.Agent: the in-process agent for hot reloading Free Pascal programs, as a unit.
 
   The wrapper adds it to the program with fpc's -Fa option (load these units before the
   program's uses clause), precompiled into a directory that does not hold this source:
@@ -35,11 +35,12 @@ unit hotagent;
   sysutils, which would change how a program without it reports runtime errors. It is
   written for the language every fpc since 3.2 accepts, because the driver compiles it
   with whatever compiler builds the program. }
-{$mode objfpc}{$H+}{$Q-}{$R-}{$pointermath on}
-// Without optimisation, whatever the command line says: fpc 3.3.1+3 for x86-64 at -O1 and
-// -O2 gave a loop counter and a temporary string the same register, here and in other
-// code (docs/how-it-works.md, "A compiler bug"). Neither the driver nor the agent needs the speed.
-{$optimization off}
+{$I Shared.inc}
+{ The agent works on raw addresses and machine words: wrapping arithmetic is intended, and a
+  failed check would end the user's program. }
+{$overflowchecks off}
+{$rangechecks off}
+{$pointermath on}
 interface
 
 {$ifdef unix}
@@ -55,7 +56,7 @@ uses baseunix, sockets;
 {$endif}
 
 {$if not (defined(darwin) and defined(cpuaarch64)) and not (defined(linux) and (defined(cpuaarch64) or defined(cpux86_64))) and not (defined(win64) and defined(cpux86_64))}
-  {$error hotagent: Darwin on aarch64, Linux on aarch64 or x86-64, Windows on x86-64 so far}
+  {$error HotFPC.Agent: Darwin on aarch64, Linux on aarch64 or x86-64, Windows on x86-64 so far}
 {$endif}
 
 const
@@ -102,7 +103,7 @@ type
 
 function clock_gettime(clk: LongInt; var ts: TTimeSpec): LongInt; cdecl; external 'c';
 function mprotect(addr: Pointer; len: PtrUInt; prot: LongInt): LongInt; cdecl; external 'c';
-function unsetenv(name: PChar): LongInt; cdecl; external 'c';
+function LibCUnsetEnv(name: PChar): LongInt; cdecl; external 'c' name 'unsetenv';
 function dlsym(handle: Pointer; name: PChar): Pointer; cdecl; external 'c';
 function pthread_sigmask(how: LongInt; newset, oldset: Pointer): LongInt; cdecl; external 'c';
 function getpagesize: LongInt; cdecl; external 'c';
@@ -175,7 +176,7 @@ type
   mach_port_t = LongWord;
   kern_return_t = LongInt;
 var
-  mach_task_self_: mach_port_t; cvar; external;
+  mach_task_self_: mach_port_t cvar; external;
 function mach_vm_remap(target: mach_port_t; var addr: QWord; size, mask: QWord; flags: LongInt; src_task: mach_port_t; src_addr: QWord; copy: LongInt; var cur, max: LongInt; inherit: LongWord): kern_return_t; cdecl; external 'c';
 function mach_vm_protect(task: mach_port_t; addr, size: QWord; set_max: LongInt; prot: LongInt): kern_return_t; cdecl; external 'c';
 function mach_vm_deallocate(task: mach_port_t; addr, size: QWord): kern_return_t; cdecl; external 'c';
@@ -286,7 +287,7 @@ begin
 {$ifdef windows}
   SetEnvironmentVariableA(PChar(name), nil);
 {$else}
-  unsetenv(PChar(name));
+  LibCUnsetEnv(PChar(name));
 {$endif}
 end;
 
@@ -1793,7 +1794,7 @@ begin
         syms := PElfSym(g_exe.Buf + sh[i].sh_offset);
         strs := PChar(g_exe.Buf + sh[sh[i].sh_link].sh_offset);
         for n := 0 to sh[i].sh_size div SizeOf(TElfSym) - 1 do
-          if AnsiString(PChar(strs + syms[n].st_name)) = 'HOTAGENT_$$_HOTANCHOR' then g_slide := PtrInt(PtrUInt(@HotAnchor)) - PtrInt(syms[n].st_value);
+          if AnsiString(PChar(strs + syms[n].st_name)) = 'HOTFPC.AGENT_$$_HOTANCHOR' then g_slide := PtrInt(PtrUInt(@HotAnchor)) - PtrInt(syms[n].st_value);
       end;
   end;
   ph := PElfPhdr(g_exe.Buf + eh^.e_phoff);
@@ -2228,7 +2229,7 @@ begin
     at := (g_image_hi + (QWord(1) shl 20)) and not QWord($3fff);
     Val(AnsiString(tb), sz, code);
     m := Fpmmap(Pointer(PtrUInt(at)), sz shl 20, 0, MAP_PRIV or MAP_ANONYM, -1, 0);
-    WriteLn(StdErr, '[hotagent] test obstacle of ', tb, ' MiB at ', HStr(QWord(PtrUInt(m))), ' (asked ', HStr(at), ')');
+    WriteLn(StdErr, '[hotfpc agent] test obstacle of ', tb, ' MiB at ', HStr(QWord(PtrUInt(m))), ' (asked ', HStr(at), ')');
   end;
 {$else}
   tb := nil;
@@ -2271,7 +2272,7 @@ begin
   g_jit := jit;
   g_data := data;
   if tb <> nil then
-    WriteLn(StdErr, '[hotagent] islands ', HStr(QWord(PtrUInt(isl))), ' (', (Int64(PtrUInt(isl)) - Int64(g_text_lo)) div (1 shl 20), ' MiB from the start of the program''s text), code ',
+    WriteLn(StdErr, '[hotfpc agent] islands ', HStr(QWord(PtrUInt(isl))), ' (', (Int64(PtrUInt(isl)) - Int64(g_text_lo)) div (1 shl 20), ' MiB from the start of the program''s text), code ',
       HStr(QWord(PtrUInt(jit))), ' (', (Int64(PtrUInt(jit)) - Int64(g_text_lo)) div (1 shl 20), ' MiB), data ', HStr(QWord(PtrUInt(data))));
   g_island_next := g_isl;
   g_veneer_next := g_jit;
@@ -4076,7 +4077,7 @@ begin
 {$endif}
   if not SockConnect(g_port) then
   begin
-    WriteLn(StdErr, '[hotagent] cannot reach the driver at 127.0.0.1:', g_port);
+    WriteLn(StdErr, '[hotfpc agent] cannot reach the driver at 127.0.0.1:', g_port);
     InterLockedExchange(g_busy, 0);
     Exit;
   end;
