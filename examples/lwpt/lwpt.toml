@@ -1,0 +1,14 @@
+[package]
+name = "greeter"
+version = "0.1.0"
+units = ["source"]
+
+[build]
+greeter = { source = "source/greeter.pas", output = "build/greeter" }
+
+# `lwpt run hot` runs the program under hotfpc. lwpt.cfg, which `lwpt install` writes, holds
+# the unit paths of the package and its dependencies; hotfpc passes it to fpc and watches
+# every directory in it.
+[hot]
+command = "hotfpc"
+args = ["@lwpt.cfg", "source/greeter.pas"]

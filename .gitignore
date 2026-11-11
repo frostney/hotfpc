@@ -1,0 +1,10 @@
+# hotfpc's own build
+/bin/
+/build/
+# what hotfpc builds next to a program it runs
+.hot/
+# scenario test programs
+/test/scenarios/work/
+# lwpt's local state in the example
+/examples/lwpt/.lwpt/
+/examples/lwpt/build/

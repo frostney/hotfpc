@@ -1,0 +1,101 @@
+# How hotfpc works
+
+## Two parts
+
+- **The driver** ([`source/hotfpc.pas`](../source/hotfpc.pas)) builds and starts the
+  program, watches its sources, compiles them, checks interfaces, and talks to the agent
+  over TCP on 127.0.0.1. TCP works the same on every system, including between a program
+  under Wine and a driver outside it.
+- **The agent** ([`source/hotagent.pas`](../source/hotagent.pas)) is a unit that fpc loads
+  into the program before the program's own units (`-Fahotagent`). The driver writes out
+  the agent's source and compiles it with the program's compiler into `.hot/agent/`, a
+  directory that doesn't hold the source. That's necessary because fpc 3.3.1's `-Fa` can't
+  load a unit it would recompile. When the program starts under hotfpc, the agent starts a
+  thread that waits for the driver's commands. Without hotfpc's environment variables, the
+  agent does nothing.
+
+The agent's source is embedded in the driver at build time
+([`source/embed.pas`](../source/embed.pas) writes `build/agentsource.inc`). That's why one
+hotfpc binary works with any fpc from 3.2 on: the agent is always compiled by the same
+compiler as the program it runs in. The agent uses only the language subset every fpc
+since 3.2 accepts, and it doesn't use `SysUtils`, which would change how a program without
+it reports runtime errors.
+
+hotfpc runs fpc in the current directory, so relative paths in options, in response files
+and in a local `fpc.cfg` mean what they mean to fpc. It adds `-Xs-` to keep the program's
+symbols and `-FU`/`-o` to build into `.hot/`.
+
+## One save
+
+1. The driver sees the change. It checks file sizes and times every 10 ms and file contents
+   twice a second. The content check catches an edit of the same size within the same
+   second, which the compiler's own check misses. The driver then deletes the compiler's
+   record of the changed units so they're recompiled. A changed include file causes every
+   unit to be recompiled; units whose object file comes out the same are left alone.
+2. fpc compiles without linking (`-Cn`).
+3. ppudump reads the interface of each changed unit. A field that moved or changed its type
+   without changing a size is invisible in the object file, so this check catches it.
+4. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
+   next to the program. Like a linker, it works out which parts the program can reach.
+   Type information that nothing uses is never read, because it may refer to things the
+   program doesn't have. Then the agent binds every name:
+   - A variable the program already has keeps its address and its value.
+   - A function keeps its first address, which gets a jump to the new code. That keeps
+     `@Proc`, method pointers and virtual method tables valid.
+   - A virtual method table is updated in place when its shape is unchanged.
+
+   The agent applies the relocations, stops the program's other threads for the few
+   microseconds the writes take, and redirects.
+
+### When a restart is needed
+
+An edit needs a restart when the running state depends on what it changes:
+
+- a variable's size;
+- a class's instance size or virtual method table shape;
+- a record's or object's layout in an interface;
+- a new unit or a new thread variable;
+- a routine of the runtime that the program was linked without.
+
+The program keeps running with its old code, and hotfpc names the declaration.
+
+## Per system
+
+- **macOS arm64.** The program's code pages are signed, so the agent copies a page, writes
+  the copy, and maps it back (`VM_PROT_COPY`). New code goes into `MAP_JIT` memory. macOS
+  checks a newly linked executable on its first start, which can take seconds, so the
+  driver waits up to 60 s.
+- **Linux.** The agent calls `mprotect` around the writes and stops other threads with a
+  signal whose handler waits. fpc's x86-64 code reaches variables through 32-bit absolute
+  addresses, so new code and data go below 2 GiB when the program is loaded there. On
+  x86-64 Linux, fpc 3.3.1 makes thread variables native ELF TLS variables. An existing one
+  keeps its offset, and a new one needs a restart.
+- **Windows.** The executable keeps a COFF symbol table when it's linked with `-Xs-`, which
+  hotfpc passes. `SuspendThread` stops the other threads. On x86-64 the agent also checks
+  that no thread is stopped inside the five bytes of an entry it overwrites, and retries if
+  one is. New code's unwind tables are registered with `RtlAddFunctionTable`, so exceptions
+  pass through it.
+  - fpc's COFF objects refer to everything in the same unit as a section plus an offset.
+    The agent maps those references back to the symbols they mean, allowing for an
+    immediate's length that fpc folds into the offset, so a unit's own variables keep
+    their values.
+  - fpc 3.2 gives an implementation-section variable no symbol at all, only a section
+    named after it. hotfpc links Windows programs with `-Xm`, and the agent finds those
+    sections' addresses in the linker's map.
+  - fpc's Windows linker always leaves out code the program never reaches. New code that
+    calls a runtime routine the program never called (`SysUtils.Supports`, for example)
+    needs a restart. Linux and macOS link the whole unit.
+- **Wine.** hotfpc translates the paths it gives a program under Wine to `Z:\...`.
+
+## A compiler bug
+
+fpc 3.3.1 from [fpc-toolchain](https://github.com/frostney/fpc-toolchain) (release 3.3.1+3)
+for x86-64, at `-O1` and `-O2`, assigned a loop counter and a temporary string to the same
+register while the counter was still live. In hotfpc's driver, that first caused a crash
+("List index (1619053936) out of bounds"), and after the loop was rewritten it silently
+found no changed files. The cause was the toolchain's patch that moves `raise` and `Halt`
+branches after the routine's code. A register that such a branch used first had its live
+range start after the routine's end. Patch 0122 in
+[fpc-toolchain#10](https://github.com/frostney/fpc-toolchain/pull/10) fixes it. Until a
+release includes that patch, both of hotfpc's sources declare `{$optimization off}`. Neither needs the
+speed.
