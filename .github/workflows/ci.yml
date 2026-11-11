@@ -1,0 +1,108 @@
+# Builds hotfpc, runs its unit tests and runs the scenarios (docs/tooling.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64, fpc 3.2.2
+            runner: ubuntu-24.04
+            fpc: apt
+          - name: macOS arm64, fpc 3.2.2
+            runner: macos-15
+            fpc: brew
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install fpc (apt)
+        if: matrix.fpc == 'apt'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc
+
+      - name: Install fpc (Homebrew)
+        if: matrix.fpc == 'brew'
+        run: brew install fpc
+
+      - name: Show the tools
+        run: |
+          fpc -iV
+          command -v instantfpc ppudump
+
+      - name: Build hotfpc and the unit tests
+        run: instantfpc build.pas
+
+      - name: The committed embedded agent is current
+        run: git diff --exit-code -- source/HotFPC.AgentSource.inc
+
+      - name: Unit tests
+        run: instantfpc build.pas tests
+
+      - name: Plain fpc build of source/
+        run: |
+          mkdir -p build/plain
+          fpc -Fusource -FUbuild/plain -obuild/plain/hotfpc source/HotFPC.pas
+          build/plain/hotfpc --version
+
+      - name: Scenarios
+        run: python3 tests/scenarios/check.py
+
+  windows:
+    name: Windows x86-64, fpc 3.2.2
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # The official installer with the win64 cross compiler and units.
+      - name: Install fpc
+        shell: pwsh
+        run: |
+          $url = "https://downloads.sourceforge.net/project/freepascal/Win32/3.2.2/fpc-3.2.2.win32.and.win64.exe"
+          Invoke-WebRequest -Uri $url -OutFile fpc-setup.exe -MaximumRedirection 10 -UserAgent "Wget/1.21"
+          $hash = (Get-FileHash -Algorithm SHA256 fpc-setup.exe).Hash.ToLower()
+          if ($hash -ne "8c255390544b051388b577eb61c6191a04883264afe0e3369b3600a56daf7bde") { Write-Error "installer SHA-256 mismatch: $hash"; exit 1 }
+          $proc = Start-Process -Wait -PassThru -FilePath fpc-setup.exe -ArgumentList "/VERYSILENT","/NORESTART","/SP-","/DIR=C:\fpc322"
+          if ($proc.ExitCode -ne 0) { exit 1 }
+
+      - name: Put fpc on PATH
+        run: |
+          FPC_BIN=$(find /c/fpc322 -name fpc.exe -type f | head -1)
+          echo "$(dirname "$FPC_BIN")" >> "$GITHUB_PATH"
+
+      - name: Show the tools
+        run: |
+          fpc -iV
+          command -v instantfpc
+
+      - name: Build hotfpc.exe and the unit tests
+        run: instantfpc build.pas -- -Twin64 -Px86_64
+
+      - name: Unit tests
+        run: instantfpc build.pas tests -- -Twin64 -Px86_64
+
+      - name: hotfpc.exe runs
+        run: build/hotfpc.exe --version

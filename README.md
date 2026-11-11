@@ -22,29 +22,55 @@ about 100 ms after the save, and the score carries on from where it was. The fou
 changes the score from `Integer` to `Int64`, which can't be swapped into a running
 program, so hotfpc reports a restart and the program keeps running.
 
-[`tools/record-demo.py`](tools/record-demo.py) makes the recording. It sends each
+[`scripts/record-demo.py`](scripts/record-demo.py) makes the recording. It sends each
 keystroke to the shell and to vim with `tmux send-keys`.
 
+## For rapid development
+
+hotfpc is meant for the edit-and-run loop while you develop: change a routine, save, and
+see the result in the running program without rebuilding, restarting and getting back to
+where you were. It's most useful for programs that run for a while and build up state,
+such as games, servers, simulations, tools with a long setup, and anything you're tuning
+by eye.
+
+Build what you ship with fpc as usual, without hotfpc. A program that hotfpc builds
+carries the hot-reload agent, keeps its symbols and is built for being changed, not for
+speed or size.
+
 hotfpc wraps fpc and nothing else. It needs no build tool and no C compiler, and you don't
-change your program for it. It's a single program written in Pascal, and it doesn't depend
-on your compiler's version. It carries the source of the part that runs inside your program
-and has your fpc compile that part.
+change your program for it. It's a single program written in Pascal.
+
+### Why there is an agent
+
+Free Pascal has no way to replace code in a running program, and another process isn't
+allowed to rewrite a program's code on every system. So hotfpc compiles a small unit, the
+agent, into your program with fpc's `-Fa` option. You don't edit the program for this. On
+each save, the agent loads the newly compiled code into the program and redirects the old
+routines to it, keeping your variables where they are.
+
+A compiled unit only works with the exact compiler and target that made it. That's why
+hotfpc carries the agent's source in its own binary and compiles it with your fpc and
+your options. One hotfpc binary works with any fpc from 3.2.2 on, including cross
+targets. [docs/how-it-works.md](docs/how-it-works.md) has the details.
 
 ## Install
 
-You need Free Pascal 3.2 or later. Build hotfpc with that compiler:
+You need Free Pascal 3.2.2 or later. hotfpc checks this when it starts.
+
+Download a binary for macOS arm64, Linux x86-64 or Windows x86-64 from the
+[releases](https://github.com/frostney/hotfpc/releases), or build it. hotfpc is plain
+Pascal with no dependencies beyond what ships with fpc, so either of these works:
 
 ```sh
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
-./build.sh            # bin/hotfpc, with the fpc on PATH
-./build.sh /path/to/fpc
+instantfpc build.pas hotfpc                     # build/hotfpc (build\hotfpc.exe on Windows)
+fpc -Fusource -FUbuild -obuild/hotfpc source/HotFPC.pas   # the same with plain fpc
 ```
 
-On Windows, run `build.bat` (it writes `bin\hotfpc.exe`). The build script passes any extra
-options to fpc, so `./build.sh fpc -Twin64 -Px86_64` cross-builds `bin/hotfpc.exe`.
-
-Put `bin/` on your `PATH`, or copy `bin/hotfpc` to a directory that is.
+You can also copy the `source/` folder into your own tree and build `source/HotFPC.pas`
+with any fpc 3.2.2 or later. Put `build/` on your `PATH`, or copy `build/hotfpc` to a
+directory that is.
 
 ## Use
 
@@ -92,8 +118,8 @@ it keeps its old code.
 ### Options
 
 ```text
-hotfpc [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] [--settle MS]
-       [--log FILE] [fpc options] program.pas [-- program arguments]
+hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
+       [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]
 ```
 
 | Option | What it does |
@@ -104,10 +130,11 @@ hotfpc [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] [--settle MS]
 | `--settle MS` | How long a saved file must stay unchanged before hotfpc compiles it (default: 2 ms). |
 | `--log FILE` | Writes a copy of every line hotfpc prints, with times. |
 | `--quiet` | Leaves out the start line and the closing summary. |
+| `--version` | Prints hotfpc's version. |
 
 ## With lwpt
 
-[lwpt](https://github.com/frostney/lwpt) writes the package's unit paths, and those of its
+hotfpc doesn't need [lwpt](https://github.com/frostney/lwpt), but works with it. lwpt writes the package's unit paths, and those of its
 dependencies, to `lwpt.cfg`, an fpc response file. hotfpc takes that file like fpc does and
 watches every directory listed in it. Add a run task to `lwpt.toml`:
 
@@ -131,19 +158,21 @@ in `source/greeting.pas` and save.
 
 hotfpc runs on macOS, Linux and Windows, and can hot-reload programs built for:
 
-| Program built for | Tested | fpc 3.3.1 | fpc 3.2.4-rc | fpc 3.2.2 |
+| Program built for | Tested | fpc 3.2.2 | fpc 3.2.4-rc | fpc 3.3.1 |
 | --- | --- | --- | --- | --- |
 | macOS arm64 | natively | ✓ | ✓ | ✓ |
 | Linux x86-64 | natively | ✓ | ✓ | ✓ |
 | Windows x86-64 | under Wine 9.0, hotfpc on Linux | ✓ | ✓ | ✓ |
-| Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | ✓ | not tried | not tried |
+| Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | not tried | not tried | ✓ |
 | Linux arm64 | compiles; not run yet | | | |
 
-Each ✓ means all 17 [scenarios](test/scenarios) gave the expected result. Each scenario is
+Each ✓ means all 17 [scenarios](tests/scenarios) gave the expected result. Each scenario is
 a program that has edits saved into it while it runs. Except for the `hotfpc.exe` row,
 each ✓ also passed a stress test (20,000 reloads of one unit while two threads called it,
 with no stale or wrong results) and four edits to lwpt's formatter units (6,600 lines).
-fpc 3.2.2 is the released compiler. macOS x86-64 and 32-bit targets aren't supported.
+fpc 3.2.2 is the current release of Free Pascal, and fpc 3.2.4-rc and 3.3.1 are
+[fpc-toolchain](https://github.com/frostney/fpc-toolchain)'s builds. Older compilers aren't
+supported. macOS x86-64 and 32-bit targets aren't supported.
 
 On Windows, fpc's linker always leaves out runtime routines the program never calls. New
 code that calls such a routine needs a restart there, while Linux and macOS link the whole
@@ -167,15 +196,16 @@ each system needs.
 ## Tests
 
 ```sh
-./build.sh
-python3 test/scenarios/check.py               # all 17 scenarios, about 1.5 minutes
-python3 test/scenarios/check.py globals rename
-HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 test/scenarios/check.py
+instantfpc build.pas tests                     # unit tests (source/*.Test.pas)
+python3 tests/scenarios/check.py               # all 17 scenarios, about 1.5 minutes
+python3 tests/scenarios/check.py globals rename
+HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
-`test/scenarios/scenario.py` holds the programs and their edits. `check.py` compares each
-run with its expected count of reloads applied, refused and failed, and checks that the
-program's output had no gaps.
+`tests/scenarios/scenario.py` holds the programs and their edits. `check.py` runs
+`build/hotfpc` on each, compares the run with its expected count of reloads applied,
+refused and failed, and checks that the program's output had no gaps.
+[docs/build-system.md](docs/build-system.md) describes `build.pas`.
 
 ## License
 

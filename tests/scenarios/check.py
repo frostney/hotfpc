@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression check for the scenarios: runs scenario.py (all cases, or those named) and
 compares each case's closing line with the outcome established for it. Writes the full
-transcript to $HOT_TRANSCRIPT when set. $HOT_DRIVER picks the driver (default: bin/hotfpc),
+transcript to $HOT_TRANSCRIPT when set. $HOT_DRIVER picks the driver (default: build/hotfpc),
 $HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
 
   check.py [case ...]

@@ -2,24 +2,68 @@
 
 ## Two parts
 
-- **The driver** ([`source/hotfpc.pas`](../source/hotfpc.pas)) builds and starts the
-  program, watches its sources, compiles them, checks interfaces, and talks to the agent
-  over TCP on 127.0.0.1. TCP works the same on every system, including between a program
-  under Wine and a driver outside it.
-- **The agent** ([`source/hotagent.pas`](../source/hotagent.pas)) is a unit that fpc loads
-  into the program before the program's own units (`-Fahotagent`). The driver writes out
-  the agent's source and compiles it with the program's compiler into `.hot/agent/`, a
-  directory that doesn't hold the source. That's necessary because fpc 3.3.1's `-Fa` can't
-  load a unit it would recompile. When the program starts under hotfpc, the agent starts a
-  thread that waits for the driver's commands. Without hotfpc's environment variables, the
-  agent does nothing.
+- **The driver** ([`source/HotFPC.pas`](../source/HotFPC.pas) and the `HotFPC.*` units
+  next to it) is the `hotfpc` program you run. It builds and starts your program, watches
+  its sources, compiles them, checks interfaces, and talks to the agent over TCP on
+  127.0.0.1. TCP works the same on every system, including between a program under Wine
+  and a driver outside it.
+- **The agent** ([`source/HotFPC.Agent.pas`](../source/HotFPC.Agent.pas)) is a unit that
+  hotfpc compiles into your program. It does the actual swap, from inside the program.
 
-The agent's source is embedded in the driver at build time
-([`source/embed.pas`](../source/embed.pas) writes `build/agentsource.inc`). That's why one
-hotfpc binary works with any fpc from 3.2 on: the agent is always compiled by the same
-compiler as the program it runs in. The agent uses only the language subset every fpc
-since 3.2 accepts, and it doesn't use `SysUtils`, which would change how a program without
-it reports runtime errors.
+## Why an agent inside the program
+
+Free Pascal has no way to replace code in a running program. There is no runtime linker
+for units and no reloadable module system. Shared libraries would only help if the program
+were written around them: the code to reload would have to live in a library and its state
+somewhere else. hotfpc's aim is a program you don't change.
+
+So something has to put new code into the process and point the old code at it, and that
+works best from inside:
+
+- **Permissions.** Rewriting code pages needs the process's own rights. On macOS, code
+  pages are signed and another process may not touch them without special entitlements. On
+  Linux, ptrace is often restricted. Inside the program, `mprotect`, `VM_PROT_COPY` and
+  `VirtualProtect` are ordinary calls.
+- **Knowing where things are.** The agent sees where the program was loaded (address space
+  layout randomisation moves it on every start), reads its symbol table, and binds the new
+  code to the program's existing variables and functions.
+- **Stopping threads safely.** It stops the program's other threads only for the few
+  microseconds of the writes, and checks that none of them is in the middle of an
+  instruction it rewrites.
+- **Exceptions.** On Windows it registers the new code's unwind tables with the system, so
+  exceptions pass through the new code.
+
+hotfpc adds the agent with fpc's `-Fa` option, which loads a unit before the program's own
+`uses` clause. Your source doesn't change, and the agent is initialised before any of your
+units. It starts a thread that waits for the driver's commands. Without the environment
+variables hotfpc sets, it does nothing.
+
+## Why the agent's source is embedded
+
+The agent has to be compiled by the same compiler, with the same target options, as the
+program it goes into:
+
+- a compiled unit (`.ppu`/`.o`) only works with the exact compiler build and runtime library
+  that produced it;
+- the agent must match the program's target (`-T`, `-P`), code generation options (`-Cp`,
+  `-Cf`) and unit paths.
+
+Shipping precompiled agents would mean one for every fpc version, target and option set.
+Instead, hotfpc carries the agent's source inside its own binary
+([`source/HotFPC.AgentSource.inc`](../source/HotFPC.AgentSource.inc)). On start it writes
+the source out and compiles it with your fpc and your target options into `.hot/agent/`.
+One hotfpc binary therefore works with every fpc from 3.2.2 on, including cross targets,
+and stays a single file you can copy anywhere. It also can't be paired with an agent of
+another version.
+
+`build.pas` regenerates the include file from `HotFPC.Agent.pas` and `Shared.inc` on every
+build. The file is committed, so `fpc -Fusource source/HotFPC.pas` builds hotfpc from a
+copy of `source/` alone.
+
+Because your compiler builds it, the agent is written for what fpc 3.2.2 accepts. It
+doesn't use `SysUtils`, which would change how a program without it reports runtime errors.
+It is compiled into a directory without its source because fpc 3.3.1's `-Fa` can't load a
+unit that the compiler decides to recompile.
 
 hotfpc runs fpc in the current directory, so relative paths in options, in response files
 and in a local `fpc.cfg` mean what they mean to fpc. It adds `-Xs-` to keep the program's
@@ -89,13 +133,18 @@ The program keeps running with its old code, and hotfpc names the declaration.
 
 ## A compiler bug
 
-fpc 3.3.1 from [fpc-toolchain](https://github.com/frostney/fpc-toolchain) (release 3.3.1+3)
-for x86-64, at `-O1` and `-O2`, assigned a loop counter and a temporary string to the same
-register while the counter was still live. In hotfpc's driver, that first caused a crash
-("List index (1619053936) out of bounds"), and after the loop was rewritten it silently
-found no changed files. The cause was the toolchain's patch that moves `raise` and `Halt`
-branches after the routine's code. A register that such a branch used first had its live
-range start after the routine's end. Patch 0122 in
-[fpc-toolchain#10](https://github.com/frostney/fpc-toolchain/pull/10) fixes it. Until a
-release includes that patch, both of hotfpc's sources declare `{$optimization off}`. Neither needs the
-speed.
+fpc 3.3.1 from [fpc-toolchain](https://github.com/frostney/fpc-toolchain) up to release
+3.3.1+3, for x86-64, at `-O1` and above, assigned a loop counter and a temporary string to
+the same register while the counter was still live. In hotfpc's driver, that first caused
+a crash ("List index (1619053936) out of bounds"). After the loop was rewritten, it silently
+found no changed files.
+
+The cause was the toolchain's patch that moves `raise` and `Halt` branches after the
+routine's code: a register that such a branch used first had its live range start after
+the routine's end. Patch 0122 fixes it
+([fpc-toolchain#10](https://github.com/frostney/fpc-toolchain/pull/10)), and release
+3.3.1+4 includes it.
+
+`fpc -iV` prints 3.3.1 for both the old and the fixed builds, so
+[`source/Shared.inc`](../source/Shared.inc) turns optimisation off for every 3.3.1. The
+agent is compiled by whatever 3.3.1 build you have, and neither part needs the speed.
