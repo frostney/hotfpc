@@ -35,12 +35,22 @@ unit HotFPC.Agent;
   sysutils, which would change how a program without it reports runtime errors. It is
   written for the language every fpc since 3.2 accepts, because the driver compiles it
   with whatever compiler builds the program. }
-{$I Shared.inc}
-{ The agent works on raw addresses and machine words: wrapping arithmetic is intended, and a
-  failed check would end the user's program. }
+{$mode delphi}{$H+}
+{ Typed constants are read-only; Delphi mode would make them writable. }
+{$J-}
+{ The agent works on raw addresses and machine words inside the user's program: wrapping
+  arithmetic is intended, and a failed check would end that program. }
 {$overflowchecks off}
 {$rangechecks off}
+{ Addresses are added to typed pointers (PByte + offset) throughout. }
 {$pointermath on}
+{ fpc 3.3.1 from fpc-toolchain before release 3.3.1+4 gave a loop counter and a temporary
+  string the same register on x86-64 at -O1 and above (docs/how-it-works.md, "A compiler
+  bug"). fpc -iV cannot tell those builds from fixed ones, so every 3.3.1 compiles the agent
+  without optimisation. It does not need the speed. }
+{$IF FPC_FULLVERSION >= 30301}
+  {$optimization off}
+{$ENDIF}
 interface
 
 {$ifdef unix}
