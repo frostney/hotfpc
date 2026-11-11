@@ -64,8 +64,14 @@ Pascal with no dependencies beyond what ships with fpc, so either of these works
 ```sh
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
-instantfpc build.pas hotfpc                     # build/hotfpc (build\hotfpc.exe on Windows)
-fpc -Fusource -FUbuild -obuild/hotfpc source/HotFPC.pas   # the same with plain fpc
+instantfpc build.pas hotfpc     # build/hotfpc (build\hotfpc.exe on Windows)
+```
+
+or, with plain fpc:
+
+```sh
+mkdir build
+fpc -Fusource -FUbuild -obuild/hotfpc source/HotFPC.pas
 ```
 
 You can also copy the `source/` folder into your own tree and build `source/HotFPC.pas`
