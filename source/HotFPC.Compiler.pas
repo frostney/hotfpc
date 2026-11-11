@@ -91,7 +91,9 @@ uses
 
 const
   AgentSourceFileName = 'HotFPC.Agent.pas';
-  AgentRecordFileName = 'hotfpc.agent.ppu';
+  { fpc names the unit's files after its source file; some builds write them in lower case. }
+  AgentRecordFileName = 'HotFPC.Agent.ppu';
+  AgentRecordFileNameLower = 'hotfpc.agent.ppu';
   AgentUnitOption = '-FaHotFPC.Agent';
   KeepSymbolsOption = '-Xs-';
   NoLinkOption = '-Cn';
@@ -336,7 +338,8 @@ begin
     Arguments.Add(UnitDirectoryOption + ExcludeTrailingPathDelimiter(FWorkspace.AgentDirectory));
     Arguments.Add(FWorkspace.AgentSourceDirectory + AgentSourceFileName);
     Result := (Execute(Arguments.ToStringArray, AOutput) = 0)
-      and FileExists(FWorkspace.AgentDirectory + AgentRecordFileName);
+      and (FileExists(FWorkspace.AgentDirectory + AgentRecordFileName)
+        or FileExists(FWorkspace.AgentDirectory + AgentRecordFileNameLower));
   finally
     Arguments.Free;
   end;
