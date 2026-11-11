@@ -12,6 +12,6 @@ begin
   begin
     Step;
     WriteLn(Frame);
-    Sleep(400);
+    Sleep(150);
   end;
 end.

@@ -5,13 +5,22 @@ the program carries on with the new code and keeps its state: its variables, obj
 files and threads. When an edit can't be swapped in safely, hotfpc says why and leaves the
 program running as it was.
 
-![hotfpc running examples/demo: scene.pas is edited three times while the program runs](docs/demo.gif)
+![hotfpc running examples/demo: scene.pas on the left is edited four times while the program on the right keeps running](docs/demo.gif)
 
-The recording above is a real run of [`examples/demo`](examples/demo) on macOS arm64 with
-fpc 3.3.1, recorded by [`tools/record-demo.py`](tools/record-demo.py)
-([video](docs/demo.mp4), [asciinema cast](docs/demo.cast)). The script saves three edits to
-`scene.pas`, and each one is swapped in about 120 ms after the save. Through all three, the
-score keeps counting from where it was.
+This is a real run of [`examples/demo`](examples/demo) on macOS arm64 with fpc 3.3.1
+([video](docs/demo.mp4), [asciinema cast](docs/demo.cast)). The left pane shows
+`scene.pas`, and the right pane shows the program's output, which hotfpc started and keeps
+running. The table at the bottom shows the timings the script measured for each save:
+how long until the swap, how much of that was fpc compiling, and how long until the first
+line of output showed the change.
+
+- The first three edits change a character, a step size and a colour. Each one is swapped
+  in 110 to 200 ms after the save, and the score carries on from where it was.
+- The fourth edit changes the score from `Integer` to `Int64`. That can't be swapped into
+  a running program, so hotfpc reports a restart and leaves the program running.
+
+[`tools/record-demo.py`](tools/record-demo.py) types each edit into the left pane, writes
+the file to disk at the moment it shows "saved", and reads the program's output live.
 
 hotfpc wraps fpc and nothing else. It needs no build tool and no C compiler, and you don't
 change your program for it. It's a single program written in Pascal, and it doesn't depend
