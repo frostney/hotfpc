@@ -56,8 +56,7 @@ One hotfpc binary therefore works with every fpc from 3.2.2 on, including cross 
 and stays a single file you can copy anywhere. It also can't be paired with an agent of
 another version.
 
-`build.pas` regenerates the include file from `HotFPC.Agent.pas` and `Shared.inc` on every
-build. The file is committed, so `fpc -Fusource source/HotFPC.pas` builds hotfpc from a
+`build.pas` regenerates the include file from `HotFPC.Agent.pas` on every build. The file is committed, so `fpc -Fusource source/HotFPC.pas` builds hotfpc from a
 copy of `source/` alone.
 
 Because your compiler builds it, the agent is written for what fpc 3.2.2 accepts. It
@@ -145,6 +144,6 @@ the routine's end. Patch 0122 fixes it
 ([fpc-toolchain#10](https://github.com/frostney/fpc-toolchain/pull/10)), and release
 3.3.1+4 includes it.
 
-`fpc -iV` prints 3.3.1 for both the old and the fixed builds, so
-[`source/Shared.inc`](../source/Shared.inc) turns optimisation off for every 3.3.1. The
-agent is compiled by whatever 3.3.1 build you have, and neither part needs the speed.
+`fpc -iV` prints 3.3.1 for both the old and the fixed builds, and the agent is compiled by
+whatever 3.3.1 build you have. So the agent turns optimisation off for every 3.3.1; it
+doesn't need the speed. Build hotfpc itself with fpc 3.2.2, or with 3.3.1+4 or later.

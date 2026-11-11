@@ -14,7 +14,7 @@ Only fpc is needed to build hotfpc. Everything else is for working on it.
 
 `lefthook.yml` runs two commands before each commit:
 
-- when the agent or `Shared.inc` is staged, `instantfpc build.pas embed`, which regenerates
+- when the agent is staged, `instantfpc build.pas embed`, which regenerates
   `source/HotFPC.AgentSource.inc` and adds it to the commit;
 - `instantfpc build.pas hotfpc tests`, which builds hotfpc and runs the unit tests.
 

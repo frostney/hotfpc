@@ -34,28 +34,28 @@ Units go to `build/units/<target>/`. Everything under `build/` is ignored by git
 
 ## Modes
 
-- **Development** (the default): line information (`-gl`) and, through
-  [`source/Shared.inc`](../source/Shared.inc), overflow, range, stack and object checks and
-  assertions.
-- **Production** (`--production`): `-dPRODUCTION -O2 -Xs`, with the checks off.
+- **Development** (the default): `-gl -Co -Cr -Ct -CR -Sa`, which is line information plus
+  overflow, range, stack and object checks and assertions.
+- **Production** (`--production`): `-dPRODUCTION -O2 -Xs`.
 
-Both modes pass `-B`, so every build compiles every unit.
+Both modes pass `-B`, so every build compiles every unit. A plain `fpc` build gets fpc's
+defaults.
 
-All compiler directives live in `source/Shared.inc`, which every unit and program includes:
-Delphi mode, `{$H+}`, read-only typed constants, the checks, and no optimisation for fpc
-3.3.1 (docs/how-it-works.md, "A compiler bug"). The agent includes it too and then turns
-overflow and range checks off for itself, because it works with raw addresses inside the
-user's program.
+There is no shared include file. Every unit and program starts with `{$mode delphi}{$H+}`,
+and the checks and optimisation come from the command line. The agent is the exception:
+the user's compiler builds it with the user's options, so it sets its own directives at
+the top of `HotFPC.Agent.pas`. It turns overflow and range checks off, because it works
+with raw addresses inside the user's program, and it turns optimisation off for fpc 3.3.1
+(docs/how-it-works.md, "A compiler bug").
 
 ## The embedded agent
 
-`source/HotFPC.AgentSource.inc` holds the lines of `source/HotFPC.Agent.pas` and
-`source/Shared.inc` as string arrays. The driver writes them out and compiles the agent
-with the user's compiler (docs/how-it-works.md, "Why the agent's source is embedded").
+`source/HotFPC.AgentSource.inc` holds the lines of `source/HotFPC.Agent.pas` as a string
+array. The driver writes them out and compiles the agent with the user's compiler (docs/how-it-works.md, "Why the agent's source is embedded").
 
 `build.pas` regenerates the file before every build of hotfpc, and only writes it when it
 changed. It's committed so that a plain `fpc` build of a copy of `source/` works. After
-changing the agent or `Shared.inc`, commit the regenerated file with them. The pre-commit
+changing the agent, commit the regenerated file with it. The pre-commit
 hook does this for you.
 
 ## Release binaries

@@ -6,7 +6,7 @@ pre-commit:
   commands:
     embed:
       priority: 1
-      glob: "source/{HotFPC.Agent.pas,Shared.inc}"
+      glob: "source/HotFPC.Agent.pas"
       run: instantfpc build.pas embed && git add source/HotFPC.AgentSource.inc
     build-and-test:
       priority: 2

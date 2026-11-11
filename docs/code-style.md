@@ -2,9 +2,10 @@
 
 hotfpc follows the native-nostalgia-stack code style. In short:
 
-- **Delphi mode** through [`source/Shared.inc`](../source/Shared.inc), which every unit and
-  program includes. Don't repeat compiler directives in a unit. The one exception is the
-  agent: it turns overflow and range checks off after the include, and says why.
+- **Delphi mode:** every unit and program starts with `{$mode delphi}{$H+}`. Checks and
+  optimisation come from the command line (docs/build-system.md), so other directives
+  appear only where a file needs them, with the reason. The agent sets its own, because the
+  user's compiler builds it with the user's options.
 - **Files:** namespaced and flat in `source/`: `HotFPC.pas` is the program, and
   `HotFPC.<Name>.pas` are its units. Unit tests sit next to the unit they test as
   `HotFPC.<Name>.Test.pas`. End-to-end scenarios are in `tests/`.
