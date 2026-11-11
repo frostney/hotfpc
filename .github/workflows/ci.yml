@@ -91,7 +91,8 @@ jobs:
       - name: Put fpc on PATH
         run: |
           FPC_BIN=$(find /c/fpc322 -name fpc.exe -type f | head -1)
-          echo "$(dirname "$FPC_BIN")" >> "$GITHUB_PATH"
+          # a Windows path: InstantFPC and fpc are native programs
+          cygpath -w "$(dirname "$FPC_BIN")" >> "$GITHUB_PATH"
 
       - name: Show the tools
         run: |
