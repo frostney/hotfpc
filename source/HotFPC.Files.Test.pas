@@ -44,8 +44,21 @@ begin
   Expect(DirectoryExists(Root), 'removing what is not there does nothing');
 end;
 
+procedure TestFindFileIgnoringCase;
+var
+  Root: string;
+begin
+  Root := MakeTestDirectory('case');
+  WriteTestFile(Root + 'Greeting.ppu', 'x');
+  ExpectEqual(ExtractFileName(FindFileIgnoringCase(Root, 'GREETING.ppu')), 'Greeting.ppu',
+    'a unit name in capitals finds the file named after its source');
+  ExpectEqual(ExtractFileName(FindFileIgnoringCase(Root, 'Greeting.ppu')), 'Greeting.ppu', 'and the exact name');
+  ExpectEqual(FindFileIgnoringCase(Root, 'other.ppu'), '', 'another name finds nothing');
+end;
+
 begin
   TestReadAndCopy;
   TestRemoveTree;
+  TestFindFileIgnoringCase;
   FinishTests;
 end.

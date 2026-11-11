@@ -76,7 +76,9 @@ uses
   fpjson,
   jsonparser,
   Process,
-  SysUtils;
+  SysUtils,
+
+  HotFPC.Files;
 
 const
   JSONDumpOption = '-Fj';
@@ -201,7 +203,7 @@ end;
 function TLayoutBuilder.Reference(const AType: TJSONData; const ADepth: Integer): string;
 var
   TypeObject, Definition: TJSONObject;
-  UnitName, Identifier: string;
+  UnitName, Identifier, UnitRecord: string;
   Index: Integer;
   OtherDefinitions: TStringList;
 begin
@@ -213,7 +215,8 @@ begin
   begin
     UnitName := TJSONArray(FRoot.Find('Units')).Strings[StrToIntDef(JSONText(TypeObject, 'Unit'), 0)];
     { a unit of the program: its numbering moves, its names do not }
-    if FileExists(FOwnDirectory + LowerCase(UnitName) + PPUExtension) then
+    UnitRecord := FindFileIgnoringCase(FOwnDirectory, UnitName + PPUExtension);
+    if UnitRecord <> '' then
     begin
       Index := FOthers.IndexOf(UnitName);
       if Index < 0 then
@@ -221,7 +224,7 @@ begin
         OtherDefinitions := TStringList.Create;
         OtherDefinitions.Sorted := True;
         OtherDefinitions.Duplicates := dupIgnore;
-        Load(FOwnDirectory + LowerCase(UnitName) + PPUExtension, OtherDefinitions);
+        Load(UnitRecord, OtherDefinitions);
         Index := FOthers.AddObject(UnitName, OtherDefinitions);
       end;
       OtherDefinitions := TStringList(FOthers.Objects[Index]);

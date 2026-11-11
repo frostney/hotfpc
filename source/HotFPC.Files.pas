@@ -11,6 +11,10 @@ procedure CopyFileContents(const ASource, ADestination: string);
 function SameFileContents(const AFirst, ASecond: string): Boolean;
 { Removes the directory and everything in it; nothing happens when it does not exist. }
 procedure RemoveTree(const ADirectory: string);
+{ The path of the file in ADirectory whose name is AName apart from case, or '' when there
+  is none. fpc names a unit's files after its source file, so on a case-sensitive file
+  system a unit's name alone does not give the file name. }
+function FindFileIgnoringCase(const ADirectory, AName: string): string;
 
 implementation
 
@@ -84,6 +88,26 @@ begin
     FindClose(Search);
   end;
   RemoveDir(ADirectory);
+end;
+
+function FindFileIgnoringCase(const ADirectory, AName: string): string;
+var
+  Search: TSearchRec;
+  Directory: string;
+begin
+  Directory := IncludeTrailingPathDelimiter(ADirectory);
+  Result := '';
+  if FindFirst(Directory + '*', faAnyFile, Search) = 0 then
+  begin
+    repeat
+      if SameText(Search.Name, AName) then
+      begin
+        Result := Directory + Search.Name;
+        Break;
+      end;
+    until FindNext(Search) <> 0;
+    FindClose(Search);
+  end;
 end;
 
 end.

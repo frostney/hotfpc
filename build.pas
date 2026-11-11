@@ -169,7 +169,11 @@ begin
     Runner.Options := [poWaitOnExit];
     Flush(Output);
     Runner.Execute;
-    Result := Runner.ExitCode;
+    { fpc 3.2.2's TProcess reports a Unix program's exit code in ExitStatus and leaves
+      ExitCode at 0; take whichever is set. }
+    Result := Runner.ExitStatus;
+    if Result = 0 then
+      Result := Runner.ExitCode;
   finally
     Runner.Free;
   end;
