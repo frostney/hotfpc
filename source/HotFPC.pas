@@ -27,8 +27,10 @@ uses
   {$ifdef windows}windows, winsock2,{$endif}
   Classes, SysUtils, Process, Sockets, fpjson, jsonparser;
 
-{$I AgentSource.inc}
-{$I Version.inc}
+{$I HotFPC.AgentSource.inc}
+
+const
+  HotFPCVersion = '1.0.0';
 
 const
   SOURCE_EXT: array[0..4] of string = ('.pas', '.pp', '.inc', '.lpr', '.dpr');
