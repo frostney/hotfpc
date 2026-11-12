@@ -111,9 +111,12 @@ The program keeps running with its old code, and hotfpc names the declaration.
   checks a newly linked executable on its first start, which can take seconds, so the
   driver waits up to 60 s.
 - **Linux.** The agent calls `mprotect` around the writes and stops other threads with a
-  signal whose handler waits. It leaves out threads that block that signal: libraries
-  start such threads (Mesa's software renderer starts one per core), and they run no code
-  of the program. fpc's x86-64 code reaches variables through 32-bit absolute
+  signal whose handler waits. Libraries start threads that block every signal (Mesa's
+  software renderer starts one per core). The agent doesn't send those the signal, because
+  real-time signals queue and would pile up. It checks again once the others have stopped:
+  a thread that has unblocked the signal since gets it and is waited for, and one that
+  still blocks it has to be waiting in the kernel, or the agent lets everything run and
+  tries again. A thread that doesn't stop within 2 s means the swap is refused. fpc's x86-64 code reaches variables through 32-bit absolute
   addresses, so new code and data go below 2 GiB when the program is loaded there. On
   x86-64 Linux, fpc 3.3.1 makes thread variables native ELF TLS variables. An existing one
   keeps its offset, and a new one needs a restart.

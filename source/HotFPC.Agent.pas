@@ -121,6 +121,8 @@ const
   ListGrowthSmall = 64;
   MapInitialSize = 1024;
   StopAttempts = 200;
+  ParkTimeoutFailure = 'a thread of the program did not stop';
+  BlockerRunningFailure = 'a thread that blocks signals kept running';
   ParkTimeoutMilliseconds = 2000;
   IdleTimeoutMilliseconds = 2000;
   IdleNapMilliseconds = 3600000;
@@ -135,6 +137,7 @@ const
   MaxPort = 65535;
   MaxThreads = 4096;
   StatusBufferSize = 4096;     // /proc/self/task/N/status
+  TaskPathSize = 64;           // /proc/self/task/N/status and a terminating zero
   ShutdownBoth = 2;
   LoopbackAddress = $7f000001;
   UContextRegistersOffset = 40;     // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers
@@ -3509,6 +3512,7 @@ end;
 
 var
   PatchError: AnsiString;   // set while other threads are stopped (a constant: no allocation), reported after
+  StopFailure: AnsiString;  // set by WorldStop when not every other thread stopped (a constant), '' otherwise
   PatchKernelResult: LongInt;
 
 // Overwrite one instruction each at a set of addresses, with the other threads stopped
@@ -3666,6 +3670,8 @@ var
   Hold, Parked, Arrived: LongInt;
   ThreadIDs: array[0..MaxThreads - 1] of LongInt;
   ThreadIDCount: LongInt;
+  BlockerIDs: array[0..MaxThreads - 1] of LongInt;   // threads that blocked the park signal
+  BlockerCount: LongInt;
   ProgramCounters: array[0..MaxThreads - 1] of QWord;   // where each stopped thread was
 
 procedure ParkHandler(ASignal: LongInt; AInfo: PSigInfo; AContext: PSigContext); cdecl;
@@ -3709,42 +3715,86 @@ begin
   FpSigAction(ParkSignal, @Action, nil);
 end;
 
+type
+  TStatusBuffer = array[0..StatusBufferSize - 1] of AnsiChar;
+
+// /proc/self/task/<thread>/<file> into a buffer, with nothing allocated: these are read
+// while other threads are stopped and may hold the heap's lock. The number of bytes read.
+function ReadTaskFile(AThreadID: LongInt; const AFile: ShortString; var ABuffer: TStatusBuffer): TSsize;
+var
+  Path: array[0..TaskPathSize - 1] of AnsiChar;
+  PathLength: SizeInt;
+  Number: ShortString;
+  FileDescriptor: cint;
+
+  procedure Put(const AText: ShortString);
+  begin
+    Move(AText[1], Path[PathLength], Length(AText));
+    Inc(PathLength, Length(AText));
+  end;
+
+begin
+  Str(AThreadID, Number);
+  PathLength := 0;
+  Put('/proc/self/task/');
+  Put(Number);
+  Put('/');
+  Put(AFile);
+  Path[PathLength] := #0;
+  FileDescriptor := FpOpen(PChar(@Path[0]), O_RDONLY);
+  if FileDescriptor < 0 then Exit(0);
+  Result := FpRead(FileDescriptor, ABuffer[0], SizeOf(ABuffer));
+  FpClose(FileDescriptor);
+end;
+
 // Whether a thread blocks the signal that parks threads. Libraries start threads of their own
 // that block every signal, such as the workers of Mesa's software renderer. Such a thread
-// never parks, so waiting for it would only run into the timeout, and it runs no code of
-// the program.
+// never parks, and sending it the signal each time would queue real-time signals until
+// the process may queue no more.
 function BlocksParkSignal(AThreadID: LongInt): Boolean;
 const
   BlockedField = 'SigBlk:';
   HexBase = 16;
   HexLetterBase = 10;   // the value of 'a'
 var
-  Buffer: array[0..StatusBufferSize - 1] of AnsiChar;
-  FileDescriptor: cint;
-  Count: TSsize;
-  Text: AnsiString;
-  Index: SizeInt;
+  Buffer: TStatusBuffer;
+  Count, Index, K: TSsize;
   Mask: QWord;
 begin
   Result := False;
-  FileDescriptor := FpOpen(PChar('/proc/self/task/' + SignedToString(AThreadID) + '/status'), O_RDONLY);
-  if FileDescriptor < 0 then Exit;
-  Count := FpRead(FileDescriptor, Buffer[0], SizeOf(Buffer));
-  FpClose(FileDescriptor);
-  if Count <= 0 then Exit;
-  SetString(Text, PAnsiChar(@Buffer[0]), Count);
-  Index := Pos(BlockedField, Text);
-  if Index = 0 then Exit;
-  Index := Index + Length(BlockedField);
-  while (Index <= Length(Text)) and (Text[Index] in [' ', #9]) do Inc(Index);
-  Mask := 0;
-  while (Index <= Length(Text)) and (Text[Index] in ['0'..'9', 'a'..'f']) do
+  Count := ReadTaskFile(AThreadID, 'status', Buffer);
+  Index := 0;
+  while Index + Length(BlockedField) <= Count do
   begin
-    if Text[Index] <= '9' then Mask := Mask * HexBase + QWord(Ord(Text[Index]) - Ord('0'))
-    else Mask := Mask * HexBase + QWord(Ord(Text[Index]) - Ord('a') + HexLetterBase);
+    K := 0;
+    while (K < Length(BlockedField)) and (Buffer[Index + K] = BlockedField[K + 1]) do Inc(K);
+    if K = Length(BlockedField) then Break;
+    Inc(Index);
+  end;
+  if Index + Length(BlockedField) > Count then Exit;
+  Index := Index + Length(BlockedField);
+  while (Index < Count) and (Buffer[Index] in [' ', #9]) do Inc(Index);
+  Mask := 0;
+  while (Index < Count) and (Buffer[Index] in ['0'..'9', 'a'..'f']) do
+  begin
+    if Buffer[Index] <= '9' then Mask := Mask * HexBase + QWord(Ord(Buffer[Index]) - Ord('0'))
+    else Mask := Mask * HexBase + QWord(Ord(Buffer[Index]) - Ord('a') + HexLetterBase);
     Inc(Index);
   end;
   Result := (Mask and (QWord(1) shl (ParkSignal - 1))) <> 0;
+end;
+
+// Whether a thread waits in the kernel (state S or D in /proc/self/task/<thread>/stat, after
+// the name in parentheses, which may itself hold parentheses).
+function WaitsInKernel(AThreadID: LongInt): Boolean;
+var
+  Buffer: TStatusBuffer;
+  Count, Index: TSsize;
+begin
+  Count := ReadTaskFile(AThreadID, 'stat', Buffer);
+  Index := Count - 1;
+  while (Index >= 0) and (Buffer[Index] <> ')') do Dec(Index);
+  Result := (Index >= 0) and (Index + 2 < Count) and (Buffer[Index + 2] in ['S', 'D']);
 end;
 
 procedure ListThreads;
@@ -3754,17 +3804,24 @@ var
   ThreadID, ErrorCode: LongInt;
 begin
   ThreadIDCount := 0;
+  BlockerCount := 0;
   Directory := FpOpendir('/proc/self/task');
   if Directory = nil then Exit;
   repeat
     Entry := FpReaddir(Directory^);
     if Entry = nil then Break;
     Val(AnsiString(PChar(@Entry^.d_name[0])), ThreadID, ErrorCode);
-    if (ErrorCode = 0) and (ThreadIDCount <= High(ThreadIDs)) and not BlocksParkSignal(ThreadID) then
-    begin
-      ThreadIDs[ThreadIDCount] := ThreadID;
-      Inc(ThreadIDCount);
-    end;
+    if (ErrorCode = 0) and (ThreadIDCount <= High(ThreadIDs)) then
+      if BlocksParkSignal(ThreadID) then
+      begin
+        BlockerIDs[BlockerCount] := ThreadID;
+        Inc(BlockerCount);
+      end
+      else
+      begin
+        ThreadIDs[ThreadIDCount] := ThreadID;
+        Inc(ThreadIDCount);
+      end;
   until False;
   FpClosedir(Directory^);
 end;
@@ -3774,6 +3831,7 @@ var
   CurrentThread, ProcessID, I, Sent: LongInt;
   StartTime: Double;
 begin
+  StopFailure := '';
   if not SuspendThreads then Exit;
   ListThreads;
   CurrentThread := LibCGetTID;
@@ -3785,6 +3843,18 @@ begin
     if (ThreadIDs[I] <> CurrentThread) and (LibCTGKill(ProcessID, ThreadIDs[I], ParkSignal) = 0) then Inc(Sent);
   StartTime := NowMilliseconds;
   while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
+  // A thread that blocked the signal only for a moment may have unblocked since: stop it
+  // like the others. One that still blocks it must be waiting in the kernel, where it runs
+  // no code that is about to change.
+  for I := 0 to BlockerCount - 1 do
+    if BlockerIDs[I] <> CurrentThread then
+      if not BlocksParkSignal(BlockerIDs[I]) then
+      begin
+        if LibCTGKill(ProcessID, BlockerIDs[I], ParkSignal) = 0 then Inc(Sent);
+      end
+      else if not WaitsInKernel(BlockerIDs[I]) then StopFailure := BlockerRunningFailure;
+  while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
+  if InterlockedCompareExchange(Parked, 0, 0) < Sent then StopFailure := ParkTimeoutFailure;
 end;
 
 procedure WorldStart;
@@ -4137,17 +4207,19 @@ begin
     for Attempt := 1 to StopAttempts do
     begin
       WorldStop;
-      if not StoppedInsidePatch then
+      if (StopFailure = '') and not StoppedInsidePatch then
       begin
         Cleared := True;
         Break;
       end;
       WorldStart;
+      if StopFailure = ParkTimeoutFailure then Break;   // it had its time already
       Nap(1);
     end;
     if not Cleared then
     begin
-      PatchError := 'a thread stayed inside the first bytes of a function being redirected';
+      if StopFailure <> '' then PatchError := StopFailure
+      else PatchError := 'a thread stayed inside the first bytes of a function being redirected';
       Applied := False;   // nothing written; the threads already run again
     end
     else Applied := ApplyPatches;
