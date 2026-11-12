@@ -72,30 +72,28 @@ Pascal and needs nothing beyond what ships with fpc:
 ```sh
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
-instantfpc build.pas hotfpc     # build/hotfpc (build\hotfpc.exe on Windows)
+./build.sh hotfpc     # build/hotfpc
 ```
 
-or, with plain fpc:
-
-```sh
-mkdir build
-fpc -FUbuild -obuild/hotfpc source/HotFPC.pas
-```
+On Windows, `build.bat hotfpc` builds `build\hotfpc.exe`.
 
 You don't need the whole repository to build it. All of hotfpc is in `source/`:
 
-- `HotFPC.pas` is hotfpc itself.
+- `HotFPC.pas` is hotfpc itself, with its unit tests at the end.
 - `HotFPC.Agent.pas` is the agent.
-- `HotFPC.AgentSource.inc` is the agent's source as a string array, which `HotFPC.pas`
-  includes.
+- `HotFPC.rc` makes the agent's source part of the hotfpc binary.
 
-Copy them into your own tree and build `HotFPC.pas` with fpc 3.2.2, or with fpc-toolchain's
-3.3.1+4 or later. Its earlier 3.3.1 builds miscompile hotfpc when optimising
-([docs/how-it-works.md](docs/how-it-works.md#a-compiler-bug) has the story). fpc only needs
-`HotFPC.pas` and `HotFPC.AgentSource.inc` to build it. Put the binary on your `PATH`, or
-copy it somewhere that is. If you change the agent, `instantfpc build.pas embed` in this
-repository writes the include again. `HotFPC.Test.inc` holds the unit tests, which are only
-compiled in with `-dHOTFPC_TESTS`.
+Copy them into your own tree and build them with fpc 3.2.2, or with fpc-toolchain's 3.3.1+4
+or later. Its earlier 3.3.1 builds miscompile hotfpc when optimising
+([docs/how-it-works.md](docs/how-it-works.md#a-compiler-bug) has the story). First fpcres,
+which comes with fpc, turns `HotFPC.rc` into `HotFPC.res`, and then fpc builds the rest:
+
+```sh
+fpcres -of res -o HotFPC.res HotFPC.rc
+fpc HotFPC.pas
+```
+
+Put the binary on your `PATH`, or copy it somewhere that is.
 
 ## Use
 
@@ -182,6 +180,13 @@ lwpt run hot
 [`examples/lwpt`](examples/lwpt) is a complete project. In it, run `lwpt install` and `lwpt
 run hot`, then change the text in `source/greeting.pas` and save.
 
+## With raylib
+
+[`examples/raylib`](examples/raylib) is a small [raylib](https://www.raylib.com) program to
+play with: balls that fall, bounce and change colour. Change the gravity, the colours or the
+shapes in `scene.pas`, save, and the balls carry on from where they were. It declares the
+raylib functions it uses itself, so raylib is the only thing to install.
+
 ## Platforms
 
 hotfpc runs on macOS, Linux and Windows, and hot-reloads programs built for:
@@ -194,7 +199,7 @@ hotfpc runs on macOS, Linux and Windows, and hot-reloads programs built for:
 | Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | not tried | not tried | ✓ |
 | Linux arm64 | compiles, not run yet | | | |
 
-Each ✓ means all 17 [scenarios](tests/scenarios) gave the expected result with hotfpc 1.0.0.
+Each ✓ means all 19 [scenarios](tests/scenarios) gave the expected result with hotfpc 1.0.0.
 A scenario is a program that gets edits saved into it while it runs. On Windows, two of them
 expect a restart where the other systems swap (see below). With fpc 3.2.2 and 3.3.1, a
 stress test also passed on all three systems (Windows under Wine): 20,000 reloads of one
@@ -229,8 +234,8 @@ each system needs.
 ## Tests
 
 ```sh
-instantfpc build.pas tests                     # unit tests (source/HotFPC.Test.inc)
-python3 tests/scenarios/check.py               # all 17 scenarios, about 1.5 minutes
+./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
+python3 tests/scenarios/check.py               # all 19 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
@@ -238,7 +243,8 @@ HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 `tests/scenarios/scenario.py` holds the programs and their edits. `check.py` runs
 `build/hotfpc` on each one, compares the run with its expected number of swaps applied,
 refused and failed, and checks for a clean exit and that the program's output had no gaps.
-[docs/build-system.md](docs/build-system.md) describes `build.pas`.
+For some cases it also checks the values the program printed after a swap.
+[docs/build-system.md](docs/build-system.md) describes `build.sh` and `build.bat`.
 
 ## Licence
 

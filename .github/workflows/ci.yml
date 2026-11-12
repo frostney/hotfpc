@@ -46,20 +46,15 @@ jobs:
       - name: Show the tools
         run: |
           fpc -iV
-          command -v instantfpc ppudump
+          command -v fpcres ppudump
 
-      - name: Build hotfpc and the unit tests
-        run: instantfpc build.pas
-
-      - name: The committed embedded agent is current
-        run: git diff --exit-code -- source/HotFPC.AgentSource.inc
-
-      - name: Unit tests
-        run: instantfpc build.pas tests
+      - name: Build hotfpc and run the unit tests
+        run: ./build.sh clean hotfpc tests
 
       - name: Plain fpc build of source/
         run: |
           mkdir -p build/plain
+          fpcres -of res -o source/HotFPC.res source/HotFPC.rc
           fpc -FUbuild/plain -obuild/plain/hotfpc source/HotFPC.pas
           build/plain/hotfpc --version
 
@@ -97,13 +92,11 @@ jobs:
       - name: Show the tools
         run: |
           fpc -iV
-          command -v instantfpc
+          command -v fpcres
 
-      - name: Build hotfpc.exe and the unit tests
-        run: instantfpc build.pas -- -Twin64 -Px86_64
-
-      - name: Unit tests
-        run: instantfpc build.pas tests -- -Twin64 -Px86_64
+      - name: Build hotfpc.exe and run the unit tests
+        shell: cmd
+        run: build.bat clean hotfpc tests -- -Twin64 -Px86_64
 
       - name: hotfpc.exe runs
         run: build/hotfpc.exe --version

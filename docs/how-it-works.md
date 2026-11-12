@@ -48,15 +48,15 @@ program it goes into:
   `-Cf`) and unit paths.
 
 Shipping precompiled agents would mean one for every fpc version, target and option set.
-Instead, hotfpc carries the agent's source inside its own binary
-([`source/HotFPC.AgentSource.inc`](../source/HotFPC.AgentSource.inc)). On start it writes
+Instead, hotfpc carries the agent's source inside its own binary, as a resource made from
+[`source/HotFPC.rc`](../source/HotFPC.rc). On start it writes
 the source out and compiles it with your fpc and your target options into `.hot/agent/`.
 One hotfpc binary therefore works with every fpc from 3.2.2 on, including cross targets,
 and stays a single file you can copy anywhere. It also can't be paired with an agent of
 another version.
 
-`build.pas` regenerates the include file from `HotFPC.Agent.pas` on every build. The file
-is committed, so `fpc source/HotFPC.pas` builds hotfpc from a copy of `source/` alone.
+fpcres compiles `HotFPC.rc` into `HotFPC.res` before fpc builds hotfpc, so the resource is
+always the `HotFPC.Agent.pas` next to it ([build-system.md](build-system.md#the-embedded-agent)).
 
 Because your compiler builds it, the agent is written for what fpc 3.2.2 accepts. It
 doesn't use `SysUtils`, which would change how a program without it reports runtime errors.
@@ -85,6 +85,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    - A function keeps its first address, which gets a jump to the new code. That keeps
      `@Proc`, method pointers and virtual method tables valid.
    - A virtual method table is updated in place when its shape is unchanged.
+   - A literal, such as a floating point constant, is new with the new code. fpc numbers a
+     unit's literals in the order it makes them (`_$U$_Ld1` with fpc 3.2, local `.Ld1` labels
+     with 3.3.1), so the number says nothing about which constant it is.
 
    The agent applies the relocations, stops the program's other threads for the few
    microseconds the writes take, and redirects.
@@ -108,7 +111,9 @@ The program keeps running with its old code, and hotfpc names the declaration.
   checks a newly linked executable on its first start, which can take seconds, so the
   driver waits up to 60 s.
 - **Linux.** The agent calls `mprotect` around the writes and stops other threads with a
-  signal whose handler waits. fpc's x86-64 code reaches variables through 32-bit absolute
+  signal whose handler waits. It leaves out threads that block that signal: libraries
+  start such threads (Mesa's software renderer starts one per core), and they run no code
+  of the program. fpc's x86-64 code reaches variables through 32-bit absolute
   addresses, so new code and data go below 2 GiB when the program is loaded there. On
   x86-64 Linux, fpc 3.3.1 makes thread variables native ELF TLS variables. An existing one
   keeps its offset, and a new one needs a restart.

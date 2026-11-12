@@ -55,12 +55,13 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $bin
 
       - name: Build
-        run: |
-          if [ "$RUNNER_OS" = Windows ]; then
-            instantfpc build.pas clean hotfpc --production -- -Twin64 -Px86_64
-          else
-            instantfpc build.pas clean hotfpc --production
-          fi
+        if: runner.os != 'Windows'
+        run: ./build.sh clean hotfpc --production
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: build.bat clean hotfpc --production -- -Twin64 -Px86_64
 
       - name: Check the version
         run: |

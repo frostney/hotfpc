@@ -2,13 +2,7 @@
 min_version: 1.5.0
 
 pre-commit:
-  piped: true
   commands:
-    embed:
-      priority: 1
-      glob: "source/HotFPC.Agent.pas"
-      run: instantfpc build.pas embed && git add source/HotFPC.AgentSource.inc
     build-and-test:
-      priority: 2
-      glob: "*.{pas,inc}"
-      run: instantfpc build.pas hotfpc tests
+      glob: "*.{pas,rc}"
+      run: ./build.sh hotfpc tests

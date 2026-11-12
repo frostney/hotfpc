@@ -6,11 +6,11 @@ hotfpc follows the native-nostalgia-stack code style. In short:
   optimisation come from the command line (docs/build-system.md), so other directives
   appear only where a file needs them, with the reason. The agent sets its own, because the
   user's compiler builds it with the user's options.
-- **Files:** few, so a copy is easy to take. `source/HotFPC.pas` is the driver,
-  `source/HotFPC.Agent.pas` the agent, and `source/HotFPC.AgentSource.inc` the agent's
-  source generated for the driver. The driver's unit tests are in
-  `source/HotFPC.Test.inc`, next to it. A new part of the driver is a new section, not a new
-  unit. End-to-end scenarios are in `tests/`.
+- **Files:** few, so a copy is easy to take. `source/HotFPC.pas` is the driver, with its unit
+  tests at the end inside `{$ifdef HOTFPC_TESTS}`, `source/HotFPC.Agent.pas` is the agent,
+  and `source/HotFPC.rc` makes the agent's source a resource of the driver. A new part of the
+  driver is a new section, not a new unit, and no `.inc` files. End-to-end scenarios are in
+  `tests/`.
 - **Sections:** a `// ------ name` ruler starts each section of a file, followed by a short
   comment on what the section owns.
 - **Names:**

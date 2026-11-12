@@ -1,36 +1,42 @@
 # Build system
 
-hotfpc has no build-tool dependency. Anyone can copy `source/` and build it with fpc
-3.2.2 or later:
+hotfpc has no build-tool dependency. Anyone can copy `source/` and build it with fpc 3.2.2
+or later and fpcres, which ships with fpc:
 
 ```sh
+fpcres -of res -o source/HotFPC.res source/HotFPC.rc
 fpc source/HotFPC.pas
 ```
 
-For working on hotfpc itself, [`build.pas`](../build.pas) is the entry point. It's a
-Pascal script that runs with InstantFPC, which ships with fpc:
+For working on hotfpc itself, [`build.sh`](../build.sh) is the entry point, and
+[`build.bat`](../build.bat) is the same for Windows:
 
 ```sh
-instantfpc build.pas                    # clean development build: hotfpc and the unit tests
-instantfpc build.pas hotfpc             # only build/hotfpc
-instantfpc build.pas tests              # build and run the unit tests
-instantfpc build.pas clean hotfpc       # remove build/ first
-instantfpc build.pas --production       # release settings
-instantfpc build.pas hotfpc -- -Twin64 -Px86_64   # options after -- go to fpc
-FPC=/path/to/fpc instantfpc build.pas   # another compiler (default: fpc on PATH)
+./build.sh                       # hotfpc and the unit tests
+./build.sh hotfpc                # only build/hotfpc
+./build.sh tests                 # build and run the unit tests
+./build.sh clean hotfpc          # remove build/ first
+./build.sh hotfpc --production   # release settings
+./build.sh hotfpc -- -Twin64 -Px86_64   # options after -- go to fpc
+FPC=/path/to/fpc ./build.sh      # another compiler (default: fpc on PATH)
+FPCRES=/path/to/fpcres ./build.sh   # another fpcres (default: fpcres on PATH)
 ```
+
+On Windows, `build.bat` takes the same arguments and variables and builds `build\hotfpc.exe`.
 
 ## Targets
 
+Targets run in the order given.
+
 | Target | What it does | Output |
 | --- | --- | --- |
-| (none) | `clean`, then `hotfpc`, then builds the tests without running them | |
-| `hotfpc` | embeds the agent, then compiles `source/HotFPC.pas` | `build/hotfpc`, `build/hotfpc.exe` for a Windows target |
-| `tests` | compiles `source/HotFPC.pas` with `-dHOTFPC_TESTS`, which includes the unit tests in `source/HotFPC.Test.inc`, and runs it; fails if a check fails | `build/tests/hotfpc-tests` |
-| `embed` | only writes `source/HotFPC.AgentSource.inc` | |
-| `clean` | removes `build/`; runs first, wherever it's named | |
+| (none) | `hotfpc`, then `tests` | |
+| `hotfpc` | writes `source/HotFPC.res`, then compiles `source/HotFPC.pas` | `build/hotfpc`, `build/hotfpc.exe` for a Windows target |
+| `tests` | writes `source/HotFPC.res`, compiles `source/HotFPC.pas` with `-dHOTFPC_TESTS`, and runs it; fails if a check fails | `build/tests/hotfpc-tests` |
+| `clean` | removes `build/` | |
 
-Units go to `build/units/<target>/`. Everything under `build/` is ignored by git.
+Units go to `build/units/<name>/`. Everything under `build/` and `source/HotFPC.res` is
+ignored by git.
 
 ## Modes
 
@@ -41,25 +47,34 @@ Units go to `build/units/<target>/`. Everything under `build/` is ignored by git
 Both modes pass `-B`, so every build compiles every unit. A plain `fpc` build gets fpc's
 defaults.
 
-There is no shared include file. `HotFPC.pas` starts with `{$mode delphi}{$H+}`,
-and the checks and optimisation come from the command line. The agent is the exception:
-the user's compiler builds it with the user's options, so it sets its own directives at
-the top of `HotFPC.Agent.pas`. It turns overflow and range checks off, because it works
-with raw addresses inside the user's program, and it turns optimisation off for fpc 3.3.1
+There is no shared include file. `HotFPC.pas` starts with `{$mode delphi}{$H+}`, and the
+checks and optimisation come from the command line. The agent is the exception: the user's
+compiler builds it with the user's options, so it sets its own directives at the top of
+`HotFPC.Agent.pas`. It turns overflow and range checks off, because it works with raw
+addresses inside the user's program, and it turns optimisation off for fpc 3.3.1
 (docs/how-it-works.md, "A compiler bug").
+
+## The unit tests
+
+The unit tests are at the end of `source/HotFPC.pas`, inside `{$ifdef HOTFPC_TESTS}`. They
+test the driver's internals, and a program can't be used as a unit, so they're compiled
+into hotfpc instead of hotfpc's own main block. A normal build leaves them out.
 
 ## The embedded agent
 
-`source/HotFPC.AgentSource.inc` holds the lines of `source/HotFPC.Agent.pas` as a string
-array. The driver writes them out and compiles the agent with the user's compiler (docs/how-it-works.md, "Why the agent's source is embedded").
+hotfpc carries the source of the agent, `source/HotFPC.Agent.pas`, as a resource
+(docs/how-it-works.md, "Why the agent's source is embedded"). `source/HotFPC.rc` names the
+file, fpcres compiles that into `source/HotFPC.res`, and `{$R HotFPC.res}` in `HotFPC.pas`
+links it in. At run time the driver reads it back with `TResourceStream`.
 
-`build.pas` regenerates the file before every build of hotfpc, and only writes it when it
-changed. It's committed so that a plain `fpc` build of a copy of `source/` works. After
-changing the agent, commit the regenerated file with it. The pre-commit
-hook does this for you.
+fpc would compile the `.rc` file itself, but fpc 3.2.2 does that with `windres`, which it
+doesn't ship on macOS or Linux. So the build scripts run fpcres first, on every system. fpc
+looks for `HotFPC.res` next to `HotFPC.pas`, which is why it's written into `source/`.
+Every build writes it again, so the binary always carries the agent it was built with.
 
 ## Release binaries
 
 `.github/workflows/release.yml` builds `hotfpc` for macOS arm64, Linux x86-64 and Windows
-x86-64 with fpc 3.2.2 (`instantfpc build.pas hotfpc --production`) when a version tag is
-pushed. It attaches the archives and a checksum file to the GitHub release.
+x86-64 with fpc 3.2.2 (`./build.sh clean hotfpc --production`, and `build.bat` on Windows)
+when a version tag is pushed. It attaches the archives and a checksum file to the GitHub
+release.

@@ -7,3 +7,5 @@
 # lwpt's local state in the example
 /examples/lwpt/.lwpt/
 /examples/lwpt/build/
+# written by build.sh and build.bat from source/HotFPC.rc
+/source/HotFPC.res

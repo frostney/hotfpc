@@ -15,5 +15,5 @@ The first release.
 - Watches the program's directory, `-Fu`/`-Fi` directories and the directories in `@file`
   response files such as lwpt's `lwpt.cfg`.
 - Checks that the compiler is fpc 3.2.2 or later before it builds.
-- Builds with plain fpc from a copy of `source/`, or with `instantfpc build.pas`; no other
-  build tool.
+- Builds with fpc and fpcres from a copy of `source/`, or with `build.sh` and `build.bat`;
+  no other build tool.
