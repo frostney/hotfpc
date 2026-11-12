@@ -823,10 +823,10 @@ type
     function Dump(const APPUPath: string): string; virtual;
   public
     constructor Create(const APPUDump: string);
-    { The ppudump next to the compiler (the named one's folder, or the first on PATH when the
-      compiler is a bare name), or '' when there is none. AExecutableExtension is '.exe' on
-      Windows. }
-    class function Locate(const ACompiler, AExecutableExtension: string): string;
+    { The ppudump next to the compiler (the named one's folder, or the first in ASearchPath
+      when the compiler is a bare name), or '' when there is none. AExecutableExtension is
+      '.exe' on Windows, where a bare name such as fpc is found as fpc.exe. }
+    class function Locate(const ACompiler, AExecutableExtension, ASearchPath: string): string;
     { A ppudump that cannot read this compiler's units (another version: "Unsupported PPU
       version") would make every interface look unchanged. Tries it on one of the units in
       AUnitsDirectory; True when it works or there is no unit yet, otherwise False and
@@ -1119,14 +1119,19 @@ begin
   RunCommand(FPPUDump, [JSONDumpOption, APPUPath], Result, [poStderrToOutPut]);
 end;
 
-class function TLayoutReader.Locate(const ACompiler, AExecutableExtension: string): string;
+class function TLayoutReader.Locate(const ACompiler, AExecutableExtension, ASearchPath: string): string;
 var
-  Directory: string;
+  Directory, Found: string;
 begin
   Result := '';
   Directory := ExtractFilePath(ACompiler);
   if Directory = '' then
-    Directory := ExtractFilePath(ExeSearch(ACompiler, GetEnvironmentVariable('PATH')));
+  begin
+    Found := ExeSearch(ACompiler, ASearchPath);
+    if (Found = '') and (ExtractFileExt(ACompiler) = '') then
+      Found := ExeSearch(ACompiler + AExecutableExtension, ASearchPath);
+    Directory := ExtractFilePath(Found);
+  end;
   if FileExists(Directory + PPUDumpName + AExecutableExtension) then
     Result := Directory + PPUDumpName + AExecutableExtension;
 end;
@@ -2070,7 +2075,8 @@ begin
   FBased := TStringList.Create;
   FPPUDump := AOptions.PPUDump;
   if FPPUDump = '' then
-    FPPUDump := TLayoutReader.Locate(AOptions.Compiler, ExtractFileExt(ParamStr(0)));
+    FPPUDump := TLayoutReader.Locate(AOptions.Compiler, ExtractFileExt(ParamStr(0)),
+      GetEnvironmentVariable('PATH'));
   FVersion := 1;
   FStart := Now;
 end;
@@ -3538,12 +3544,15 @@ var
   Root: string;
 begin
   Root := MakeTestDirectory('locate');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', ''), '', 'no ppudump next to the compiler');
+  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', '', ''), '', 'no ppudump next to the compiler');
   WriteTestFile(Root + 'ppudump', '');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', ''), Root + 'ppudump', 'a ppudump next to it');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', '.exe'), '', 'on Windows it is ppudump.exe');
+  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', '', ''), Root + 'ppudump', 'a ppudump next to it');
+  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', '.exe', ''), '', 'on Windows it is ppudump.exe');
   WriteTestFile(Root + 'ppudump.exe', '');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc.exe', '.exe'), Root + 'ppudump.exe', 'and found by that name');
+  ExpectEqual(TLayoutReader.Locate(Root + 'fpc.exe', '.exe', ''), Root + 'ppudump.exe', 'and found by that name');
+  WriteTestFile(Root + 'fpc.exe', '');
+  ExpectEqual(TLayoutReader.Locate('fpc', '.exe', ExcludeTrailingPathDelimiter(Root)), Root + 'ppudump.exe',
+    'a bare fpc on the search path is fpc.exe on Windows');
 end;
 
 procedure TestHistory;
