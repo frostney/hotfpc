@@ -124,6 +124,8 @@ const
   ParkTimeoutFailure = 'a thread of the program did not stop';
   BlockerRunningFailure = 'a thread that blocks signals kept running';
   TooManyThreadsFailure = 'the program has more threads than the agent can stop';
+  SplitEntryFailure = 'an entry to rewrite could not be written in one store while a thread that blocks signals sleeps';
+  StoreSize = 8;
   ParkTimeoutMilliseconds = 2000;
   IdleTimeoutMilliseconds = 2000;
   IdleNapMilliseconds = 3600000;
@@ -3627,6 +3629,34 @@ begin
   Result := False;   // aarch64: a patch is one instruction
 end;
 {$elseif defined(linux)}
+var
+  SleepingBlockers: Boolean;   // WorldStop let threads that block the park signal sleep on
+
+// Whether a patch lies inside one aligned 8-byte word, which one store replaces whole.
+function FitsOneStore(const APatch: TPatch): Boolean;
+begin
+  Result := APatch.Address mod StoreSize + QWord(APatch.ByteCount) <= StoreSize;
+end;
+
+// A thread that blocks the park signal and sleeps in the kernel isn't stopped: it can wake
+// while an entry is rewritten. Written in one store, the entry is either the old one or the
+// new jump for it. fpc aligns functions, so every entry fits.
+procedure WritePatch(const APatch: TPatch);
+var
+  Target: PInt64;
+  Value: Int64;
+begin
+  if not FitsOneStore(APatch) then
+  begin
+    Move(APatch.Bytes[0], PByte(PtrUInt(APatch.Address))^, APatch.ByteCount);
+    Exit;
+  end;
+  Target := PInt64(PtrUInt(APatch.Address - APatch.Address mod StoreSize));
+  Value := Target^;
+  Move(APatch.Bytes[0], (PByte(@Value) + APatch.Address mod StoreSize)^, APatch.ByteCount);
+  InterLockedExchange64(Target^, Value);
+end;
+
 // Linux: make the pages writable, write, make them executable again. The other threads are
 // stopped; on x86-64 none of them is inside the bytes written (StoppedInsidePatch).
 function ApplyPatches: Boolean;
@@ -3635,12 +3665,19 @@ var
   Address, PageLow, PageHigh: QWord;
 begin
   Result := True;
+  if SleepingBlockers then
+    for I := 0 to PatchCount - 1 do
+      if not FitsOneStore(Patches[I]) then
+      begin
+        PatchError := SplitEntryFailure;
+        Exit(False);
+      end;
   for I := 0 to PatchCount - 1 do
   begin
     Address := Patches[I].Address;
     if InJIT(Address) then
     begin
-      Move(Patches[I].Bytes[0], PByte(PtrUInt(Address))^, Patches[I].ByteCount);
+      WritePatch(Patches[I]);
       ClearCache(Pointer(PtrUInt(Address)), Patches[I].ByteCount);
       Inc(PatchedCount);
       Continue;
@@ -3652,7 +3689,7 @@ begin
       PatchError := 'cannot make a code page of the program writable';
       Exit(False);
     end;
-    Move(Patches[I].Bytes[0], PByte(PtrUInt(Address))^, Patches[I].ByteCount);
+    WritePatch(Patches[I]);
     LibCMProtect(Pointer(PtrUInt(PageLow)), PageHigh - PageLow, ProtectRead or ProtectExecute);
     ClearCache(Pointer(PtrUInt(Address)), Patches[I].ByteCount);
     Inc(PatchedCount);
@@ -3841,6 +3878,7 @@ var
   StartTime: Double;
 begin
   StopFailure := '';
+  SleepingBlockers := False;
   if not SuspendThreads then Exit;
   if not ListThreads then
   begin
@@ -3857,15 +3895,16 @@ begin
   StartTime := NowMilliseconds;
   while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
   // A thread that blocked the signal only for a moment may have unblocked since: stop it
-  // like the others. One that still blocks it must be waiting in the kernel, where it runs
-  // no code that is about to change.
+  // like the others. One that still blocks it must be waiting in the kernel. It can wake
+  // there, so ApplyPatches writes each entry in one store (WritePatch).
   for I := 0 to BlockerCount - 1 do
     if BlockerIDs[I] <> CurrentThread then
       if not BlocksParkSignal(BlockerIDs[I]) then
       begin
         if LibCTGKill(ProcessID, BlockerIDs[I], ParkSignal) = 0 then Inc(Sent);
       end
-      else if not WaitsInKernel(BlockerIDs[I]) then StopFailure := BlockerRunningFailure;
+      else if WaitsInKernel(BlockerIDs[I]) then SleepingBlockers := True
+      else StopFailure := BlockerRunningFailure;
   while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
   if InterlockedCompareExchange(Parked, 0, 0) < Sent then StopFailure := ParkTimeoutFailure;
 end;

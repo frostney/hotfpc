@@ -116,10 +116,14 @@ The program keeps running with its old code, and hotfpc names the declaration.
   real-time signals queue and would pile up. It checks again once the others have stopped:
   a thread that has unblocked the signal since gets it and is waited for, and one that
   still blocks it has to be waiting in the kernel, or the agent lets everything run and
-  tries again. A thread that doesn't stop within 2 s means the swap is refused. fpc's x86-64 code reaches variables through 32-bit absolute
-  addresses, so new code and data go below 2 GiB when the program is loaded there. On
-  x86-64 Linux, fpc 3.3.1 makes thread variables native ELF TLS variables. An existing one
-  keeps its offset, and a new one needs a restart.
+  tries again. A sleeping thread can wake during the swap, so the agent then writes each
+  entry's jump in one 8-byte store: such a thread runs either the old entry or the new
+  jump. fpc aligns functions, so the jump fits; if one didn't, the swap would be refused. A
+  thread that doesn't stop within 2 s means the swap is refused. fpc's x86-64 code
+  reaches variables through 32-bit absolute addresses, so new code and data go below
+  2 GiB when the program is loaded there. On x86-64 Linux, fpc 3.3.1 makes thread
+  variables native ELF TLS variables. An existing one keeps its offset, and a new one
+  needs a restart.
 - **Windows.** The executable keeps a COFF symbol table when it's linked with `-Xs-`, which
   hotfpc passes. `SuspendThread` stops the other threads. On x86-64 the agent also checks
   that no thread is stopped inside the five bytes of an entry it overwrites, and retries if
