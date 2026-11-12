@@ -16,8 +16,17 @@ EXPECT = {
     "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "limits": (2, 1, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
-    "include": (2, 0, 0), "rename": (1, 1, 0),
+    "include": (2, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
+    "signals": (1, 0, 0),
 }
+# case: lines the program must print, so that a swap shows its new values
+PRINTS = {
+    "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
+    "signals": ["text two"],
+}
+# case: the most a load may take inside the program, in ms; the agent must not wait for a
+# thread that cannot stop
+LOAD_LIMITS = {"signals": 1000}
 if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # fpc's internal linker for Windows always leaves out code the program does not reach,
     # so new code that calls a routine of the runtime the program never called needs a
@@ -49,8 +58,15 @@ for name in names:
     ticks = [int(x) for x in re.findall(r"tick (\d+):", body)]
     seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
     ok = ok and seq
+    missing = [text for text in PRINTS.get(name, []) if not re.search(r"tick \d+: " + re.escape(text) + "$", body, re.M)]
+    ok = ok and not missing
+    loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
+    slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
+    ok = ok and not slow
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged; ticks 1..%d %s"
-          % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS"))
+          % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
+          + "".join("; never printed %r" % text for text in missing)
+          + "".join("; a load took %s ms in the program" % x for x in slow))
     bad += 0 if ok else 1
 print("%d of %d cases as expected" % (len(names) - bad, len(names)))
 sys.exit(1 if bad else 0)

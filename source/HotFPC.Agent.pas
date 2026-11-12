@@ -134,6 +134,7 @@ const
   SignalSetSize = 128;
   MaxPort = 65535;
   MaxThreads = 4096;
+  StatusBufferSize = 4096;     // /proc/self/task/N/status
   ShutdownBoth = 2;
   LoopbackAddress = $7f000001;
   UContextRegistersOffset = 40;     // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers
@@ -143,6 +144,7 @@ const
   AnonymousDefinitionMarker = '_$$_def0';
   FPCLocalMarker = '$$fpclocal$';
   LocalDataMarker = '_$$_Ld';
+  NumberedLiteralMarker = '$_Ld';
   LocalLabelPrefix = '.L';
   PrefixVMT = 'VMT_$';
   PrefixRTTI = 'RTTI_$';
@@ -371,7 +373,7 @@ var
 begin
   QueryPerformanceCounter(Counter);
   QueryPerformanceFrequency(Frequency);
-  Result := Double(Counter) * Double(MillisecondsPerSecond) / Double(Frequency);
+  Result := Counter / Frequency * MillisecondsPerSecond;
 end;
 {$else}
 function NowMilliseconds: Double;
@@ -379,7 +381,8 @@ var
   TimeSpec: TTimeSpec;
 begin
   LibCClockGetTime(ClockMonotonic, TimeSpec);
-  Result := Double(TimeSpec.Seconds) * Double(MillisecondsPerSecond) + Double(TimeSpec.Nanoseconds) / Double(NanosecondsPerMillisecond);   // a bare 1000.0 is a Single here
+  // Arithmetic, not Double(...): a typecast of an integer to Double reinterprets its bits.
+  Result := TimeSpec.Seconds * MillisecondsPerSecond + TimeSpec.Nanoseconds / NanosecondsPerMillisecond;
 end;
 {$endif}
 
@@ -1607,9 +1610,22 @@ begin
   Result := StartsWith(AName, PDataSectionPrefix) or StartsWith(AName, XDataSectionPrefix) or (AName = EHFrameSectionName);
 end;
 
+// fpc 3.2 gives a unit's literals, such as its floating point constants, global names:
+// _$U$_Ld1, _$U$_Ld2, numbered in the order the compiler made them (3.3.1 makes them local
+// .Ld labels). The number says nothing about which constant it is, so new code gets its own.
+function IsNumberedLiteral(const AName: AnsiString): Boolean;
+var
+  Index, MarkerStart: SizeInt;
+begin
+  Index := Length(AName);
+  while (Index > 0) and (AName[Index] in ['0'..'9']) do Dec(Index);
+  MarkerStart := Index - Length(NumberedLiteralMarker) + 1;
+  Result := (Index < Length(AName)) and (MarkerStart >= 1) and (Copy(AName, MarkerStart, Length(NumberedLiteralMarker)) = NumberedLiteralMarker);
+end;
+
 function IsAnonymous(const AName: AnsiString): Boolean;
 begin
-  Result := Contains(AName, AnonymousDefinitionMarker) or Contains(AName, FPCLocalMarker) or Contains(AName, LocalDataMarker) or StartsWith(AName, LocalLabelPrefix);
+  Result := Contains(AName, AnonymousDefinitionMarker) or Contains(AName, FPCLocalMarker) or Contains(AName, LocalDataMarker) or StartsWith(AName, LocalLabelPrefix) or IsNumberedLiteral(AName);
 end;
 
 function IsAnonymousTarget(AObjectFile: PObjectFile; AIndex: LongInt): Boolean;
@@ -3693,6 +3709,44 @@ begin
   FpSigAction(ParkSignal, @Action, nil);
 end;
 
+// Whether a thread blocks the signal that parks threads. Libraries start threads of their own
+// that block every signal, such as the workers of Mesa's software renderer. Such a thread
+// never parks, so waiting for it would only run into the timeout, and it runs no code of
+// the program.
+function BlocksParkSignal(AThreadID: LongInt): Boolean;
+const
+  BlockedField = 'SigBlk:';
+  HexBase = 16;
+  HexLetterBase = 10;   // the value of 'a'
+var
+  Buffer: array[0..StatusBufferSize - 1] of AnsiChar;
+  FileDescriptor: cint;
+  Count: TSsize;
+  Text: AnsiString;
+  Index: SizeInt;
+  Mask: QWord;
+begin
+  Result := False;
+  FileDescriptor := FpOpen(PChar('/proc/self/task/' + SignedToString(AThreadID) + '/status'), O_RDONLY);
+  if FileDescriptor < 0 then Exit;
+  Count := FpRead(FileDescriptor, Buffer[0], SizeOf(Buffer));
+  FpClose(FileDescriptor);
+  if Count <= 0 then Exit;
+  SetString(Text, PAnsiChar(@Buffer[0]), Count);
+  Index := Pos(BlockedField, Text);
+  if Index = 0 then Exit;
+  Index := Index + Length(BlockedField);
+  while (Index <= Length(Text)) and (Text[Index] in [' ', #9]) do Inc(Index);
+  Mask := 0;
+  while (Index <= Length(Text)) and (Text[Index] in ['0'..'9', 'a'..'f']) do
+  begin
+    if Text[Index] <= '9' then Mask := Mask * HexBase + QWord(Ord(Text[Index]) - Ord('0'))
+    else Mask := Mask * HexBase + QWord(Ord(Text[Index]) - Ord('a') + HexLetterBase);
+    Inc(Index);
+  end;
+  Result := (Mask and (QWord(1) shl (ParkSignal - 1))) <> 0;
+end;
+
 procedure ListThreads;
 var
   Directory: pDir;
@@ -3706,7 +3760,7 @@ begin
     Entry := FpReaddir(Directory^);
     if Entry = nil then Break;
     Val(AnsiString(PChar(@Entry^.d_name[0])), ThreadID, ErrorCode);
-    if (ErrorCode = 0) and (ThreadIDCount <= High(ThreadIDs)) then
+    if (ErrorCode = 0) and (ThreadIDCount <= High(ThreadIDs)) and not BlocksParkSignal(ThreadID) then
     begin
       ThreadIDs[ThreadIDCount] := ThreadID;
       Inc(ThreadIDCount);
