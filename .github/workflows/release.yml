@@ -84,7 +84,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: dist/hotfpc-*.*
+          # only the archives: the package directories match hotfpc-*.* too
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
 
   publish:

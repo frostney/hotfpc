@@ -100,3 +100,10 @@ jobs:
 
       - name: hotfpc.exe runs
         run: build/hotfpc.exe --version
+
+      - name: Scenarios
+        timeout-minutes: 20
+        env:
+          HOT_DRIVER: build/hotfpc.exe
+          HOT_DRIVER_OPTS: -Twin64 -Px86_64
+        run: python tests/scenarios/check.py

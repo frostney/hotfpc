@@ -15,14 +15,15 @@ Only fpc is needed to build hotfpc. Everything else is for working on it.
 `lefthook.yml` runs `./build.sh hotfpc tests` before each commit that changes the source,
 which builds hotfpc and runs the unit tests.
 
-The scenarios take about a minute and a half, so CI runs them, not the hook. Don't bypass
+The scenarios take about two minutes, so CI runs them, not the hook. Don't bypass
 the hook with `--no-verify` unless the maintainer agrees.
 
 ## CI
 
 `.github/workflows/ci.yml` runs on every push and pull request. On Linux x86-64 and macOS
 arm64 with fpc 3.2.2 it builds hotfpc, runs the unit tests and runs the scenarios. On
-Windows it builds `hotfpc.exe` with `build.bat` and runs the unit tests.
+Windows it builds `hotfpc.exe` with `build.bat`, runs the unit tests and runs the scenarios
+with `hotfpc.exe`.
 
 `.github/workflows/release.yml` builds the release binaries for a version tag
 ([build-system.md](build-system.md#release-binaries)).
