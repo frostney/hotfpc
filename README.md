@@ -195,6 +195,7 @@ hotfpc runs on macOS, Linux and Windows, and hot-reloads programs built for:
 | --- | --- | --- | --- | --- |
 | macOS arm64 | natively | ✓ | ✓ | ✓ |
 | Linux x86-64 | natively | ✓ | ✓ | ✓ |
+| Windows x86-64 | natively, `hotfpc.exe` on GitHub's Windows runner | ✓ | not tried | not tried |
 | Windows x86-64 | under Wine 9.0, hotfpc on Linux | ✓ | ✓ | ✓ |
 | Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | not tried | not tried | ✓ |
 | Linux arm64 | compiles, not run yet | | | |
@@ -213,8 +214,8 @@ supported, and neither are macOS x86-64 and 32-bit targets.
 On Windows, fpc's linker always leaves out runtime routines the program never calls, so new
 code that calls one of them needs a restart there. Linux and macOS link the whole unit.
 
-The scenarios have only run under Wine so far. On Windows itself, CI builds hotfpc and runs
-its unit tests.
+On Windows itself, CI runs the unit tests and the scenarios with `hotfpc.exe` and fpc 3.2.2
+on every push.
 
 A swap usually takes 40 to 150 ms from save to running, and most of that is fpc compiling
 the unit. A unit with about 500 functions takes 0.5 to 1.1 s.
