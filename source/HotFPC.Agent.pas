@@ -123,6 +123,7 @@ const
   StopAttempts = 200;
   ParkTimeoutFailure = 'a thread of the program did not stop';
   BlockerRunningFailure = 'a thread that blocks signals kept running';
+  TooManyThreadsFailure = 'the program has more threads than the agent can stop';
   ParkTimeoutMilliseconds = 2000;
   IdleTimeoutMilliseconds = 2000;
   IdleNapMilliseconds = 3600000;
@@ -3797,12 +3798,15 @@ begin
   Result := (Index >= 0) and (Index + 2 < Count) and (Buffer[Index + 2] in ['S', 'D']);
 end;
 
-procedure ListThreads;
+// False when the program has more threads than the lists hold: a thread left off them
+// would not be stopped.
+function ListThreads: Boolean;
 var
   Directory: pDir;
   Entry: pDirent;
   ThreadID, ErrorCode: LongInt;
 begin
+  Result := True;
   ThreadIDCount := 0;
   BlockerCount := 0;
   Directory := FpOpendir('/proc/self/task');
@@ -3811,17 +3815,22 @@ begin
     Entry := FpReaddir(Directory^);
     if Entry = nil then Break;
     Val(AnsiString(PChar(@Entry^.d_name[0])), ThreadID, ErrorCode);
-    if (ErrorCode = 0) and (ThreadIDCount <= High(ThreadIDs)) then
-      if BlocksParkSignal(ThreadID) then
+    if ErrorCode <> 0 then Continue;
+    if BlocksParkSignal(ThreadID) then
+    begin
+      if BlockerCount > High(BlockerIDs) then Result := False
+      else
       begin
         BlockerIDs[BlockerCount] := ThreadID;
         Inc(BlockerCount);
-      end
-      else
-      begin
-        ThreadIDs[ThreadIDCount] := ThreadID;
-        Inc(ThreadIDCount);
       end;
+    end
+    else if ThreadIDCount > High(ThreadIDs) then Result := False
+    else
+    begin
+      ThreadIDs[ThreadIDCount] := ThreadID;
+      Inc(ThreadIDCount);
+    end;
   until False;
   FpClosedir(Directory^);
 end;
@@ -3833,7 +3842,11 @@ var
 begin
   StopFailure := '';
   if not SuspendThreads then Exit;
-  ListThreads;
+  if not ListThreads then
+  begin
+    StopFailure := TooManyThreadsFailure;
+    Exit;
+  end;
   CurrentThread := LibCGetTID;
   ProcessID := FpGetpid;
   InterLockedExchange(Hold, 1);
@@ -3924,6 +3937,7 @@ var
 begin
   ThreadHandleCount := 0;
   ProgramCounterCount := 0;
+  StopFailure := '';
   if not SuspendThreads then Exit;
   CurrentThread := GetCurrentThreadId;
   ProcessID := GetCurrentProcessId;
@@ -3932,7 +3946,9 @@ begin
   Entry.dwSize := SizeOf(Entry);
   if Thread32First(Snapshot, Entry) then
     repeat
-      if (Entry.th32OwnerProcessID = ProcessID) and (Entry.th32ThreadID <> CurrentThread) and (ThreadHandleCount <= High(ThreadHandles)) then
+      if (Entry.th32OwnerProcessID = ProcessID) and (Entry.th32ThreadID <> CurrentThread) and (ThreadHandleCount > High(ThreadHandles)) then
+        StopFailure := TooManyThreadsFailure   // a thread left off the list would not be stopped
+      else if (Entry.th32OwnerProcessID = ProcessID) and (Entry.th32ThreadID <> CurrentThread) then
       begin
         Handle := OpenThread(THREAD_SUSPEND_RESUME or THREAD_GET_CONTEXT, False, Entry.th32ThreadID);
         if Handle <> 0 then
@@ -4213,7 +4229,7 @@ begin
         Break;
       end;
       WorldStart;
-      if StopFailure = ParkTimeoutFailure then Break;   // it had its time already
+      if (StopFailure = ParkTimeoutFailure) or (StopFailure = TooManyThreadsFailure) then Break;   // trying again won't help
       Nap(1);
     end;
     if not Cleared then
