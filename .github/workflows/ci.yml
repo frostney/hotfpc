@@ -60,7 +60,7 @@ jobs:
       - name: Plain fpc build of source/
         run: |
           mkdir -p build/plain
-          fpc -Fusource -FUbuild/plain -obuild/plain/hotfpc source/HotFPC.pas
+          fpc -FUbuild/plain -obuild/plain/hotfpc source/HotFPC.pas
           build/plain/hotfpc --version
 
       - name: Scenarios

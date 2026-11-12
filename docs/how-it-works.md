@@ -2,11 +2,10 @@
 
 ## Two parts
 
-- **The driver** ([`source/HotFPC.pas`](../source/HotFPC.pas) and the `HotFPC.*` units
-  next to it) is the `hotfpc` program you run. It builds and starts your program, watches
-  its sources, compiles them, checks interfaces, and talks to the agent over TCP on
-  127.0.0.1. TCP works the same on every system, including between a program under Wine
-  and a driver outside it.
+- **The driver** ([`source/HotFPC.pas`](../source/HotFPC.pas)) is the `hotfpc` program you
+  run. It builds and starts your program, watches its sources, compiles them, checks
+  interfaces, and talks to the agent over TCP on 127.0.0.1. TCP works the same on every
+  system, including between a program under Wine and a driver outside it.
 - **The agent** ([`source/HotFPC.Agent.pas`](../source/HotFPC.Agent.pas)) is a unit that
   hotfpc compiles into your program. It does the actual swap, from inside the program.
 
@@ -56,8 +55,8 @@ One hotfpc binary therefore works with every fpc from 3.2.2 on, including cross 
 and stays a single file you can copy anywhere. It also can't be paired with an agent of
 another version.
 
-`build.pas` regenerates the include file from `HotFPC.Agent.pas` on every build. The file is committed, so `fpc -Fusource source/HotFPC.pas` builds hotfpc from a
-copy of `source/` alone.
+`build.pas` regenerates the include file from `HotFPC.Agent.pas` on every build. The file
+is committed, so `fpc source/HotFPC.pas` builds hotfpc from a copy of `source/` alone.
 
 Because your compiler builds it, the agent is written for what fpc 3.2.2 accepts. It
 doesn't use `SysUtils`, which would change how a program without it reports runtime errors.

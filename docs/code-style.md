@@ -2,13 +2,17 @@
 
 hotfpc follows the native-nostalgia-stack code style. In short:
 
-- **Delphi mode:** every unit and program starts with `{$mode delphi}{$H+}`. Checks and
+- **Delphi mode:** the program and the agent unit start with `{$mode delphi}{$H+}`. Checks and
   optimisation come from the command line (docs/build-system.md), so other directives
   appear only where a file needs them, with the reason. The agent sets its own, because the
   user's compiler builds it with the user's options.
-- **Files:** namespaced and flat in `source/`: `HotFPC.pas` is the program, and
-  `HotFPC.<Name>.pas` are its units. Unit tests sit next to the unit they test as
-  `HotFPC.<Name>.Test.pas`. End-to-end scenarios are in `tests/`.
+- **Files:** few, so a copy is easy to take. `source/HotFPC.pas` is the driver,
+  `source/HotFPC.Agent.pas` the agent, and `source/HotFPC.AgentSource.inc` the agent's
+  source generated for the driver. The driver's unit tests are in
+  `source/HotFPC.Test.inc`, next to it. A new part of the driver is a new section, not a new
+  unit. End-to-end scenarios are in `tests/`.
+- **Sections:** a `// ------ name` ruler starts each section of a file, followed by a short
+  comment on what the section owns.
 - **Names:**
   - classes `T`, interfaces `I`, exceptions `E`, private fields `F`, parameters `A`;
   - PascalCase full words with no abbreviations and no numeric suffixes;
@@ -21,10 +25,9 @@ hotfpc follows the native-nostalgia-stack code style. In short:
 - **Structure:** classes for things with behaviour and explicit responsibilities; records
   and procedures where there is none. `const` parameters unless the routine changes them.
   Named constants instead of magic literals.
-- **Uses clauses:** one unit per line, alphabetised within the groups system, third-party
-  and project (`HotFPC.*`). Dependencies go in the `implementation` uses clause where
-  possible.
-- **Comments:** say why, not what. A unit starts with a short comment on what it owns.
+- **Uses clauses:** one unit per line, alphabetised, with the platform units first in
+  `{$ifdef}` blocks.
+- **Comments:** say why, not what. A file starts with a short comment on what it is.
 
 Two rules come from how hotfpc is used:
 

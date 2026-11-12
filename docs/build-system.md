@@ -4,7 +4,7 @@ hotfpc has no build-tool dependency. Anyone can copy `source/` and build it with
 3.2.2 or later:
 
 ```sh
-fpc -Fusource source/HotFPC.pas
+fpc source/HotFPC.pas
 ```
 
 For working on hotfpc itself, [`build.pas`](../build.pas) is the entry point. It's a
@@ -26,7 +26,7 @@ FPC=/path/to/fpc instantfpc build.pas   # another compiler (default: fpc on PATH
 | --- | --- | --- |
 | (none) | `clean`, then `hotfpc`, then builds the tests without running them | |
 | `hotfpc` | embeds the agent, then compiles `source/HotFPC.pas` | `build/hotfpc`, `build/hotfpc.exe` for a Windows target |
-| `tests` | compiles every `source/*.Test.pas` and runs it; fails if any exits non-zero | `build/tests/` |
+| `tests` | compiles `source/HotFPC.pas` with `-dHOTFPC_TESTS`, which includes the unit tests in `source/HotFPC.Test.inc`, and runs it; fails if a check fails | `build/tests/hotfpc-tests` |
 | `embed` | only writes `source/HotFPC.AgentSource.inc` | |
 | `clean` | removes `build/`; runs first, wherever it's named | |
 
@@ -41,7 +41,7 @@ Units go to `build/units/<target>/`. Everything under `build/` is ignored by git
 Both modes pass `-B`, so every build compiles every unit. A plain `fpc` build gets fpc's
 defaults.
 
-There is no shared include file. Every unit and program starts with `{$mode delphi}{$H+}`,
+There is no shared include file. `HotFPC.pas` starts with `{$mode delphi}{$H+}`,
 and the checks and optimisation come from the command line. The agent is the exception:
 the user's compiler builds it with the user's options, so it sets its own directives at
 the top of `HotFPC.Agent.pas`. It turns overflow and range checks off, because it works

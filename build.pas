@@ -8,13 +8,14 @@ program Build;
   Targets:
     (none)    a clean development build of every binary: hotfpc and the unit tests
     hotfpc    build/hotfpc (build/hotfpc.exe for a Windows target)
-    tests     build the unit tests (source/*.Test.pas) into build/tests/ and run them
+    tests     build hotfpc with its unit tests (source/HotFPC.Test.inc) as build/tests/hotfpc-tests
+              and run them
     embed     only write source/HotFPC.AgentSource.inc from the agent's source
     clean     remove build/; combine it with other targets to rebuild from nothing
 
   Every compile of hotfpc first writes source/HotFPC.AgentSource.inc from
   source/HotFPC.Agent.pas, so the binary always carries the agent it was built with. The
-  file is committed, so `fpc -Fusource source/HotFPC.pas` works without this script. The
+  file is committed, so `fpc source/HotFPC.pas` works without this script. The
   compiler is `fpc` on PATH, or the FPC environment variable.
   A development build turns on the checks the sources rely on: overflow, range, stack and
   object checks, and assertions. --production builds with optimisation and without them.
@@ -33,7 +34,8 @@ const
   AgentSourcePath = 'source/HotFPC.Agent.pas';
   EmbeddedSourcePath = 'source/HotFPC.AgentSource.inc';
   DriverSourcePath = 'source/HotFPC.pas';
-  TestSuffix = '.Test.pas';
+  TestsName = 'hotfpc-tests';
+  TestsDefine = '-dHOTFPC_TESTS';
   { A string literal may not exceed 255 characters. }
   LiteralLimit = 200;
   DevelopmentOptions: array[0..6] of string = ('-gl', '-B', '-Co', '-Cr', '-Ct', '-CR', '-Sa');
@@ -179,8 +181,9 @@ begin
   end;
 end;
 
-{ Compiles one program into AOutputDirectory, with its units in their own directory. }
-procedure CompileProgram(const ASource, AOutputDirectory, AName: string);
+{ Compiles one program into AOutputDirectory, with its units in their own directory.
+  AExtraOption is added to the compiler's options when it is not empty. }
+procedure CompileProgram(const ASource, AOutputDirectory, AName, AExtraOption: string);
 var
   Arguments: TStringList;
   UnitDirectory: string;
@@ -201,6 +204,8 @@ begin
     else
       for Index := 0 to High(DevelopmentOptions) do
         Arguments.Add(DevelopmentOptions[Index]);
+    if AExtraOption <> '' then
+      Arguments.Add(AExtraOption);
     Arguments.AddStrings(CompilerOptions);
     Arguments.Add(ASource);
     WriteLn('compile ', ASource);
@@ -217,68 +222,28 @@ end;
 procedure BuildDriver;
 begin
   EmbedAgent;
-  CompileProgram(DriverSourcePath, BuildDirectory, 'hotfpc');
+  CompileProgram(DriverSourcePath, BuildDirectory, 'hotfpc', '');
 end;
 
-function TestSources: TStringList;
-var
-  Search: TSearchRec;
-begin
-  Result := TStringList.Create;
-  Result.Sorted := True;
-  if FindFirst(SourceDirectory + '/*' + TestSuffix, faAnyFile, Search) = 0 then
-  begin
-    repeat
-      Result.Add(SourceDirectory + '/' + Search.Name);
-    until FindNext(Search) <> 0;
-    FindClose(Search);
-  end;
-end;
-
-function TestName(const ASource: string): string;
-begin
-  Result := ExtractFileName(ASource);
-  Result := Copy(Result, 1, Length(Result) - Length('.pas'));
-end;
-
+{ The unit tests are hotfpc itself, compiled with HOTFPC_TESTS defined. }
 procedure BuildTests;
-var
-  Sources: TStringList;
-  Index: Integer;
 begin
   EmbedAgent;
-  Sources := TestSources;
-  try
-    for Index := 0 to Sources.Count - 1 do
-      CompileProgram(Sources[Index], BuildDirectory + '/tests', TestName(Sources[Index]));
-  finally
-    Sources.Free;
-  end;
+  CompileProgram(DriverSourcePath, BuildDirectory + '/tests', TestsName, TestsDefine);
 end;
 
 procedure RunTests;
 var
-  Sources: TStringList;
-  Index, Failed: Integer;
   Executable: string;
 begin
   BuildTests;
-  Failed := 0;
-  Sources := TestSources;
-  try
-    for Index := 0 to Sources.Count - 1 do
-    begin
-      Executable := BuildDirectory + '/tests/' + ExecutableName(TestName(Sources[Index]));
-      WriteLn('run ', Executable);
-      if Run(Executable, []) <> 0 then
-        Inc(Failed);
-    end;
-    WriteLn(Sources.Count - Failed, ' of ', Sources.Count, ' test programs passed');
-  finally
-    Sources.Free;
-  end;
-  if Failed > 0 then
+  Executable := BuildDirectory + '/tests/' + ExecutableName(TestsName);
+  WriteLn('run ', Executable);
+  if Run(Executable, []) <> 0 then
+  begin
+    WriteLn('build: the unit tests failed');
     Halt(1);
+  end;
 end;
 
 procedure DeleteTree(const APath: string);
