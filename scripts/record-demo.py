@@ -10,8 +10,8 @@ split into its parts. Needs tmux, vim, hotfpc and fpc on PATH.
 
 From the repository root:
 
-  asciinema rec --headless --window-size 130x45 --overwrite -c "python3 tools/record-demo.py ../demo-work" docs/demo.cast
-  python3 tools/record-demo.py --trim docs/demo.cast
+  asciinema rec --headless --window-size 130x45 --overwrite -c "python3 scripts/record-demo.py ../demo-work" docs/demo.cast
+  python3 scripts/record-demo.py --trim docs/demo.cast
   agg --font-size 14 --theme monokai --fps-cap 20 --last-frame-duration 5 docs/demo.cast docs/demo.gif
   ffmpeg -i docs/demo.gif -movflags +faststart -pix_fmt yuv420p \\
     -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -crf 22 docs/demo.mp4

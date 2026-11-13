@@ -7,7 +7,7 @@
 import os, shlex, re, shutil, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HOTRUN = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "bin", "hotfpc")
+HOTRUN = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc")
 
 
 def driver_cmd():
@@ -291,6 +291,50 @@ end.
     ("a second thread variable", [("u.pas", "  Calls: Integer;", "  Calls: Integer;\n  Other: Integer;"), ("u.pas", "  Inc(Calls);", "  Inc(Calls); Inc(Other);")]),
 ])
 
+# ---------------------------------------------------------------------------- a thread that blocks signals
+# Libraries start threads that block every signal, such as the workers of Mesa's software
+# renderer. On Linux the agent stops threads with a signal, so it must not wait for these.
+case("signals", {
+    "main.pas": MAIN.replace("uses SysUtils, u;", "uses {$ifdef unix}cthreads,{$endif} SysUtils, u;"),
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses {$ifdef linux}BaseUnix,{$endif} Classes, SysUtils;
+type
+  TQuiet = class(TThread)
+    procedure Execute; override;
+  end;
+var
+  Quiet: TQuiet;
+procedure TQuiet.Execute;
+{$ifdef linux}
+var
+  All: TSigSet;
+{$endif}
+begin
+  {$ifdef linux}
+  FpSigFillSet(All);
+  FpSigProcMask(SIG_BLOCK, @All, nil);
+  {$endif}
+  while not Terminated do Sleep(20);
+end;
+function Tick(n: Integer): string;
+begin
+  Result := 'text one';
+end;
+initialization
+  Quiet := TQuiet.Create(False);
+finalization
+  Quiet.Terminate;
+  Quiet.WaitFor;
+  Quiet.Free;
+end.
+'''}, [
+    ("another text, while a thread blocks every signal", [("u.pas", "'text one'", "'text two'")]),
+])
+
 # ---------------------------------------------------------------------------- initialization and finalization
 case("initfinal", {
     "main.pas": MAIN,
@@ -528,6 +572,33 @@ end.
     ("back, and the record gains a field",
      [("u.pas", "    x: Integer;\n    y: Single;", "    x, y, z: Integer;"), ("u.pas", "P.y := P.y + 2;", "Inc(P.y, 2);"), ("u.pas", "Format('x %d y %f', [P.x, P.y])", "Format('x %d y %d', [P.x, P.y])")]),
     ("back to the first layout, another text", [("u.pas", "    x, y, z: Integer;", "    x, y: Integer;"), ("u.pas", "'x %d y %d'", "'X %d Y %d'")]),
+])
+
+# ---------------------------------------------------------------------------- constants
+# fpc puts floating point constants in the unit's data as numbered literals (_$U$_Ld1 with
+# fpc 3.2, local .Ld1 labels with 3.3.1). New code needs its own copies: an edited value
+# must show, and a new literal shifts the numbers of the ones after it.
+case("constants", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+const
+  Rate = 1.5;
+  Scale = 0.25;
+function Tick(n: Integer): string;
+begin
+  Result := Format('rate %.2f scale %.2f', [Rate, Scale]);
+end;
+end.
+'''}, [
+    ("Rate = 1.5 becomes Rate = 2.5", [("u.pas", "Rate = 1.5;", "Rate = 2.5;")]),
+    ("a new constant Offset, used before the others",
+     [("u.pas", "  Rate = 2.5;", "  Offset = 9.75;\n  Rate = 2.5;"),
+      ("u.pas", "Format('rate %.2f scale %.2f', [Rate, Scale])", "Format('offset %.2f rate %.2f scale %.2f', [Offset, Rate, Scale])")]),
 ])
 
 # ---------------------------------------------------------------------------- units the program does not contain

@@ -1,0 +1,3 @@
+// The agent's source as a resource of hotfpc (HotFPC.pas reads it back as HOTFPCAGENT).
+// fpcres compiles this into HotFPC.res: fpcres -of res -o HotFPC.res HotFPC.rc
+HOTFPCAGENT RCDATA "HotFPC.Agent.pas"

@@ -1,0 +1,125 @@
+# Builds the release binaries for a version tag (1.0.0) and publishes the release with
+# them and a checksum file (docs/build-system.md).
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - asset: linux-x64
+            runner: ubuntu-24.04
+          - asset: macos-arm64
+            runner: macos-15
+          - asset: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install fpc (apt)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc
+
+      - name: Install fpc (Homebrew)
+        if: runner.os == 'macOS'
+        run: brew install fpc
+
+      - name: Install fpc (Windows installer)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://downloads.sourceforge.net/project/freepascal/Win32/3.2.2/fpc-3.2.2.win32.and.win64.exe"
+          Invoke-WebRequest -Uri $url -OutFile fpc-setup.exe -MaximumRedirection 10 -UserAgent "Wget/1.21"
+          $hash = (Get-FileHash -Algorithm SHA256 fpc-setup.exe).Hash.ToLower()
+          if ($hash -ne "8c255390544b051388b577eb61c6191a04883264afe0e3369b3600a56daf7bde") { Write-Error "installer SHA-256 mismatch: $hash"; exit 1 }
+          $proc = Start-Process -Wait -PassThru -FilePath fpc-setup.exe -ArgumentList "/VERYSILENT","/NORESTART","/SP-","/DIR=C:\fpc322"
+          if ($proc.ExitCode -ne 0) { exit 1 }
+          $bin = Split-Path (Get-ChildItem -Path C:\fpc322 -Recurse -Filter fpc.exe | Select-Object -First 1).FullName
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      - name: Build
+        if: runner.os != 'Windows'
+        run: ./build.sh clean hotfpc --production
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: build.bat clean hotfpc --production -- -Twin64 -Px86_64
+
+      - name: Check the version
+        run: |
+          version=$(build/hotfpc --version)
+          test "$version" = "hotfpc $GITHUB_REF_NAME" || { echo "::error::$version, tag $GITHUB_REF_NAME"; exit 1; }
+
+      - name: Package
+        run: |
+          name=hotfpc-$GITHUB_REF_NAME-${{ matrix.asset }}
+          mkdir -p dist/$name
+          cp README.md LICENSE dist/$name/
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp build/hotfpc.exe dist/$name/
+            (cd dist && 7z a -tzip $name.zip $name > /dev/null)
+          else
+            cp build/hotfpc dist/$name/
+            tar -C dist -czf dist/$name.tar.gz $name
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          # only the archives: the package directories match hotfpc-*.* too
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum hotfpc-* > hotfpc-$GITHUB_REF_NAME-checksums.txt
+          cat hotfpc-$GITHUB_REF_NAME-checksums.txt
+
+      - name: Release notes
+        run: |
+          awk -v v="$GITHUB_REF_NAME" '
+            $0 ~ "^## " { if (found) exit; found = ($2 == v) ; next }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "::error::no CHANGELOG.md section for $GITHUB_REF_NAME"; exit 1; }
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "hotfpc $GITHUB_REF_NAME" --notes-file notes.md dist/*
