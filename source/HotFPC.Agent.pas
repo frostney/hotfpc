@@ -633,6 +633,7 @@ type
     Name: AnsiString;
     Section: LongInt;
     Value, Size: QWord;   // value: offset in its section
+    DeclaredSize: QWord;  // the size the object file states (ELF), or 0
     External, Defined, BoundToExisting, Resolved: Boolean;
     Kind: Byte;
     IsTLS: Boolean;         // resolved to a thread variable: ResolvedAddress is its offset in the TLS segment
@@ -750,6 +751,24 @@ begin
 end;
 
 function IsAnonymous(const AName: AnsiString): Boolean; forward;
+
+// fpc 3.2.2 for x86-64 Linux gives every variable with an initial value a section of its own
+// and pads it to 16 bytes, so the distance to the section's end stays the same when an
+// Integer becomes an Int64. ELF states each symbol's size as well; the other formats don't.
+function SizeChanged(AOld, ANew: PObjectSymbol): Boolean;
+begin
+  Result := (AOld^.Size <> ANew^.Size)
+    or ((AOld^.DeclaredSize <> 0) and (ANew^.DeclaredSize <> 0) and (AOld^.DeclaredSize <> ANew^.DeclaredSize));
+end;
+
+// "from 4 to 8 bytes", in the sizes that changed
+function SizeChange(AOld, ANew: PObjectSymbol): AnsiString;
+begin
+  if (AOld^.DeclaredSize <> 0) and (ANew^.DeclaredSize <> 0) and (AOld^.DeclaredSize <> ANew^.DeclaredSize) then
+    Result := 'from ' + UnsignedToString(AOld^.DeclaredSize) + ' to ' + UnsignedToString(ANew^.DeclaredSize) + ' bytes'
+  else
+    Result := 'from ' + UnsignedToString(AOld^.Size) + ' to ' + UnsignedToString(ANew^.Size) + ' bytes';
+end;
 
 // A local symbol with a name fpc made (unit and routine or variable, always with a $) is as
 // stable across versions, and as present in the program's symbol table, as an external
@@ -1266,6 +1285,7 @@ begin
       Symbol^.Defined := True;
       Symbol^.Section := Symbols[I].st_shndx;
       Symbol^.Value := Symbols[I].st_value;
+      Symbol^.DeclaredSize := Symbols[I].st_size;
       Symbol^.Kind := AObjectFile^.Sections[Symbol^.Section].Kind;
       AddDefined(AObjectFile, I);
     end;
@@ -2834,7 +2854,7 @@ begin
       // keeps its offset, and a new one cannot be given room.
       HostSymbol := MapGet(HostSymbols, Symbol^.Name);
       if (HostSymbol = nil) or not HostSymbol^.IsTLS then Restart('unit ' + AObjectFile^.UnitName + ' gained the thread variable ' + Pretty(Symbol^.Name))
-      else if (PreviousSymbol <> nil) and (PreviousSymbol^.Size <> Symbol^.Size) then Restart('the thread variable ' + Pretty(Symbol^.Name) + ' changed size from ' + UnsignedToString(PreviousSymbol^.Size) + ' to ' + UnsignedToString(Symbol^.Size) + ' bytes')
+      else if (PreviousSymbol <> nil) and SizeChanged(PreviousSymbol, Symbol) then Restart('the thread variable ' + Pretty(Symbol^.Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol))
       else
       begin
         Symbol^.ResolvedAddress := HostSymbol^.Address;
@@ -2953,12 +2973,12 @@ begin
       Inc(VMTUpdateCount);
       Continue;
     end;
-    if Symbol^.Size <> PreviousSymbol^.Size then
+    if SizeChanged(PreviousSymbol, Symbol) then
     begin
       if StartsWith(Name, PrefixVariable) or StartsWith(Name, PrefixTypedConstant) then
-        Restart('variable ' + Pretty(Name) + ' changed size from ' + UnsignedToString(PreviousSymbol^.Size) + ' to ' + UnsignedToString(Symbol^.Size) + ' bytes')
+        Restart('variable ' + Pretty(Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol))
       else if StartsWith(Name, PrefixThreadVarList) then Restart('the thread variables of unit ' + AObjectFile^.UnitName + ' changed')
-      else Restart(Pretty(Name) + ' changed size from ' + UnsignedToString(PreviousSymbol^.Size) + ' to ' + UnsignedToString(Symbol^.Size) + ' bytes');
+      else Restart(Pretty(Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol));
       Continue;
     end;
     if Contains(Name, IndirectSuffix) then Continue;

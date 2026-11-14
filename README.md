@@ -232,6 +232,10 @@ the unit. A unit with about 500 functions takes 0.5 to 1.1 s.
   interfaces. If you swap two fields of a class declared in the implementation section,
   their values swap too.
 - A unit's initialization section doesn't run again, and a new unit needs a restart.
+- On Windows, hotfpc can't see that a variable in the implementation section changed size
+  when it has an initial value (`Calls: Integer = 0` becoming `Int64 = 0`): COFF objects
+  don't state symbol sizes, and fpc pads such a variable's section to 16 bytes. The edit is
+  swapped and the variable keeps its old size, so restart the program yourself after one.
 - Memory for new code and data is never freed.
 - Hardened and notarised macOS programs aren't supported.
 
@@ -242,7 +246,7 @@ each system needs.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 22 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 23 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```

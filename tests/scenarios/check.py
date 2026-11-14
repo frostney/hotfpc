@@ -21,6 +21,7 @@ EXPECT = {
     # the program starts over: a link that fails counts as a failed compile, and a restarted
     # program that fails is started again by the next save
     "restart": (2, 1, 0), "linkfail": (2, 2, 1), "crash": (0, 1, 0),
+    "initvar": (1, 1, 0),
 }
 # case: restarts; every other case passes --no-restart and expects none
 RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2}
@@ -41,6 +42,10 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # third step). Linux and macOS link the whole unit.
     EXPECT["interfaces"] = (1, 2, 0)
     EXPECT["newunit"] = (0, 3, 0)
+    # A COFF object has no symbol sizes, and fpc pads the section of a variable with an
+    # initial value to 16 bytes: the agent cannot see that it grew from 4 to 8 bytes, and
+    # the edit is swapped (a known gap on Windows, see README "Limits").
+    EXPECT["initvar"] = (2, 0, 0)
 names = sys.argv[1:] or list(EXPECT)
 out = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True).stdout
 if os.environ.get("HOT_TRANSCRIPT"):
