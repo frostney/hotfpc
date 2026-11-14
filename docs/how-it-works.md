@@ -102,14 +102,36 @@ An edit needs a restart when the running state depends on what it changes:
 - a new unit or a new thread variable;
 - a routine of the runtime that the program was linked without.
 
-The program keeps running with its old code, and hotfpc names the declaration.
+hotfpc names the declaration and starts the program over, the way webpack reloads a page
+when a module can't be updated in place. With `--no-restart`, the program keeps running
+its old code instead.
+
+### Starting over
+
+1. fpc links the units of the compile that needed the restart into `.hot/next/`. If the link
+   fails, hotfpc prints the errors and the program keeps running.
+2. hotfpc stops the program the way the system ends a process: `SIGTERM` and then `SIGKILL`
+   on Linux and macOS, `TerminateProcess` on Windows. Its state is gone, and its
+   finalization sections don't run. With `--run`, the process hotfpc stops is the launcher.
+   hotfpc waits up to 2 s for the agent's connection to close, which happens when the
+   program has ended, and says so if it doesn't.
+3. It moves the new program, and on Windows the linker's map, over the old one. A program's
+   file stays locked on Windows while the program runs, which is why the link goes
+   somewhere else first.
+4. It starts the program with the same arguments and environment. The agent connects to the
+   same port as before, and the units of the new program are the base of later swaps.
+
+A restarted program that ends before its agent connects, or ends later with a non-zero exit
+code or by a signal, doesn't end hotfpc: a runtime error in an initialization section is
+fixed in the next save, so the next save that builds starts the program again. A restarted
+program that ends with 0, and the first program in every case, end hotfpc as before.
 
 ## Per system
 
 - **macOS arm64.** The program's code pages are signed, so the agent copies a page, writes
   the copy, and maps it back (`VM_PROT_COPY`). New code goes into `MAP_JIT` memory. macOS
   checks a newly linked executable on its first start, which can take seconds, so the
-  driver waits up to 60 s.
+  driver waits up to 60 s. A restart links a new executable, so it waits for that check too.
 - **Linux.** The agent calls `mprotect` around the writes and stops other threads with a
   signal whose handler waits. Libraries start threads that block every signal (Mesa's
   software renderer starts one per core). The agent doesn't send those the signal, because
