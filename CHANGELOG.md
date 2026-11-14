@@ -9,6 +9,11 @@
 - A restarted program that fails, for example with a runtime error in an initialization
   section, doesn't end hotfpc: the next save that builds starts it again.
 - The closing summary also counts restarts.
+- On Linux, a variable with an initial value in a unit's implementation section that changes
+  size (`Integer = 0` to `Int64 = 0`) now needs a restart. It used to be swapped, and the
+  new code then wrote past the variable. fpc pads such a variable's section to 16 bytes, so
+  the agent now takes the size from the ELF symbol. Windows objects don't state sizes, so
+  there the gap remains (README "Limits").
 
 ## 1.0.0
 

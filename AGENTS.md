@@ -19,7 +19,7 @@ in [docs/code-style.md](docs/code-style.md), the build in
 | `source/HotFPC.Agent.pas` | the agent unit: object file readers, binding, relocation, the per-system code |
 | `source/HotFPC.rc` | makes the agent's source a resource of the driver; fpcres compiles it into `source/HotFPC.res` (not committed) |
 | `build.sh`, `build.bat` | the build entry points, for Unix and for Windows; keep them doing the same |
-| `tests/scenarios/` | end to end: `scenario.py` (22 programs and the edits saved into them), `check.py` (expected outcomes) |
+| `tests/scenarios/` | end to end: `scenario.py` (23 programs and the edits saved into them), `check.py` (expected outcomes) |
 | `examples/demo`, `examples/lwpt`, `examples/raylib` | the README's demo program; an lwpt package with a `hot` run task; a raylib program to play with |
 | `scripts/record-demo.py` | records `docs/demo.cast` in tmux; `docs/demo.gif` and `docs/demo.mp4` are made from it |
 
@@ -32,11 +32,12 @@ python3 tests/scenarios/check.py [case...] # the scenarios, against build/hotfpc
 HOT_DRIVER_OPTS="--fpc FPC" python3 tests/scenarios/check.py
 ```
 
-A change is done when the unit tests pass and `check.py` prints "22 of 22 cases as
+A change is done when the unit tests pass and `check.py` prints "23 of 23 cases as
 expected" on every system the change can affect: macOS arm64, Linux x86-64, and Windows
 x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on Windows). For Windows
-programs, `check.py` expects a restart in two cases where the other systems swap; the
-comment in it explains why. Changes to the agent are tested with fpc 3.2.2 and 3.3.1.
+programs, `check.py` expects a restart in two cases where the other systems swap, and a
+swap in one where they refuse; the comments in it explain why. Changes to the agent are
+tested with fpc 3.2.2 and 3.3.1.
 
 ## Rules
 

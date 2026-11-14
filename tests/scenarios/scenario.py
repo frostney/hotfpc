@@ -764,6 +764,32 @@ end.
      [("u.pas", "  Calls: Integer;", "  Calls: Single;"), ("u.pas", "  Inc(Calls);", "  Calls := Calls + 1;"), ("u.pas", "calls %d'", "calls %g'")]),
 ])
 
+# ---------------------------------------------------------------------------- a variable with an initial value
+# fpc 3.2.2 for x86-64 Linux gives it a section of its own, padded to 16 bytes: only the size
+# ELF states for the symbol shows that it grew
+case("initvar", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+var
+  Calls: Integer = 0;
+  Next: Integer = 100;
+function Tick(n: Integer): string;
+begin
+  Inc(Calls);
+  Inc(Next);
+  Result := Format('one calls %d next %d', [Calls, Next]);
+end;
+end.
+'''}, [
+    ("another text", [("u.pas", "'one calls", "'two calls")]),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
+])
+
 # ---------------------------------------------------------------------------- restarts
 # One unit whose text and call count the program prints. A restart starts the count over.
 # Calls has no initial value: with fpc 3.2.2 on Linux and Windows, a variable with one that

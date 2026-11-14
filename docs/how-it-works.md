@@ -158,6 +158,10 @@ program that ends with 0, and the first program in every case, end hotfpc as bef
   - fpc 3.2 gives an implementation-section variable no symbol at all, only a section
     named after it. hotfpc links Windows programs with `-Xm`, and the agent finds those
     sections' addresses in the linker's map.
+  - fpc gives a variable with an initial value a section of its own and pads it to 16
+    bytes, on Linux and Windows alike. On Linux the agent takes the variable's size from
+    the ELF symbol; COFF symbols have no size, so on Windows such a variable that grows
+    (`Integer = 0` to `Int64 = 0`) isn't caught and needs a restart by hand.
   - fpc's Windows linker always leaves out code the program never reaches. New code that
     calls a runtime routine the program never called (`SysUtils.Supports`, for example)
     needs a restart. Linux and macOS link the whole unit.
