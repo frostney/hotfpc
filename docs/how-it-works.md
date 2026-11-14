@@ -112,7 +112,9 @@ its old code instead.
    fails, hotfpc prints the errors and the program keeps running.
 2. hotfpc stops the program the way the system ends a process: `SIGTERM` and then `SIGKILL`
    on Linux and macOS, `TerminateProcess` on Windows. Its state is gone, and its
-   finalization sections don't run.
+   finalization sections don't run. With `--run`, the process hotfpc stops is the launcher.
+   hotfpc waits up to 2 s for the agent's connection to close, which happens when the
+   program has ended, and says so if it doesn't.
 3. It moves the new program, and on Windows the linker's map, over the old one. A program's
    file stays locked on Windows while the program runs, which is why the link goes
    somewhere else first.

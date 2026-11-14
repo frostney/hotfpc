@@ -156,7 +156,7 @@ hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
 | --- | --- |
 | `--fpc FPC` | The compiler to use (default: `fpc`). |
 | `--ppudump PPUDUMP` | ppudump from the same compiler, for checking interface layouts (default: the one next to the compiler). Without it, or with one that can't read the compiler's units, the check is off and hotfpc says so at the start. |
-| `--run LAUNCHER` | A program to start the built program with. The default is `wine` when the target is Windows (`-Twin64`) and hotfpc isn't running on Windows. |
+| `--run LAUNCHER` | A program to start the built program with. The default is `wine` when the target is Windows (`-Twin64`) and hotfpc isn't running on Windows. A restart stops the launcher, so a launcher that runs the program as its child has to end it too; hotfpc says so when the old program's connection stays open. |
 | `--settle MS` | How long a saved file has to stay unchanged before hotfpc compiles it (default: 2 ms). |
 | `--log FILE` | Writes a copy of every line hotfpc prints, with times. |
 | `--quiet` | Leaves out the start line and the closing summary. |

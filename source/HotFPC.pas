@@ -1313,6 +1313,9 @@ type
     { Closes the connection of a program that has ended. The driver keeps listening, so a
       restarted program connects with the same port and token. }
     procedure Disconnect;
+    { Waits up to ATimeoutSeconds for the program's end of the connection to close, which it
+      does when the program's process has ended. True once it has, or without a connection. }
+    function AwaitClosed(const ATimeoutSeconds: Double): Boolean;
     { Tells the agent to remember the code of a unit's object file as the base of later swaps. }
     procedure Base(const APath: string);
     { Asks the agent to apply object files; the reply's lines, without the closing dot. The
@@ -1348,6 +1351,7 @@ const
   GreetingPrefix = 'hello ';
   BaseCommand = 'base';
   LoadCommand = 'load';
+  CloseIntervalMilliseconds = 5;
 
 constructor TAgentLink.Create(const AWinePaths: Boolean);
 begin
@@ -1500,6 +1504,28 @@ begin
     CloseSocketHandle(FConnection);
   FConnection := InvalidSocket;
   FReceived := '';
+end;
+
+function TAgentLink.AwaitClosed(const ATimeoutSeconds: Double): Boolean;
+var
+  Deadline: Double;
+  Received: Integer;
+  Character: Char;
+begin
+  if FConnection = InvalidSocket then
+    Exit(True);
+  SetBlocking(FConnection, False);
+  Deadline := NowSeconds + ATimeoutSeconds;
+  repeat
+    Received := fpRecv(FConnection, @Character, 1, 0);
+    { 0: closed; an error other than "nothing yet": reset }
+    if (Received = 0) or ((Received < 0) and (Sockets.SocketError <> Sockets.EsockEWOULDBLOCK)) then
+      Exit(True);
+    if (Received < 0) and (NowSeconds > Deadline) then
+      Exit(False);
+    if Received < 0 then
+      Sleep(CloseIntervalMilliseconds);
+  until False;
 end;
 
 function TAgentLink.Ask(const AFields: array of string): TStringList;
@@ -2045,6 +2071,9 @@ const
     program's file locked for a moment after the program has ended. }
   ReplaceTimeoutSeconds = 5;
   ReplaceIntervalMilliseconds = 20;
+  { How long a stopped program's connection may stay open: with --run, the process hotfpc
+    stops may be a launcher, and the program its child. }
+  CloseTimeoutSeconds = 2;
   { The exit code TerminateProcess gives a program a restart stops on Windows. }
   StoppedExitCode = 1;
   MapExtension = '.map';
@@ -2539,6 +2568,9 @@ begin
     FProgram.Terminate(StoppedExitCode);
     FProgram.WaitOnExit;
     FreeAndNil(FProgram);
+    if not FLink.AwaitClosed(CloseTimeoutSeconds) then
+      FReporter.Say('the stopped program''s connection is still open: a launcher (--run) that starts the '
+        + 'program as its child has to end it too, or the old program keeps running');
   end;
   FLink.Disconnect;
   StopSeconds := NowSeconds - StopStart;
@@ -3979,9 +4011,12 @@ begin
     finally
       Reply.Free;
     end;
+    Expect(not Link.AwaitClosed(0.05), 'a connection whose program runs stays open');
     CloseSocketHandle(Client);
+    Expect(Link.AwaitClosed(2), 'and closes when the program has ended');
     { a restart: the program that ended is gone, and the new one connects to the same port }
     Link.Disconnect;
+    Expect(Link.AwaitClosed(0), 'without a connection there is nothing to wait for');
     Client := ConnectClient(Link.Port);
     SendText(Client, 'hello ' + Link.Token + #10);
     Expect(AcceptWithin(Link), 'a restarted program connects again');
