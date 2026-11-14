@@ -3,11 +3,11 @@
 Hot reloading for Free Pascal. Save a unit while your program runs, and the program carries
 on with the new code and everything it had: its variables, objects, open files and threads.
 If an edit changes something the running program depends on, such as a variable's size,
-hotfpc names the declaration in the way and leaves the program running as it was.
+hotfpc names the declaration in the way and starts the program over with the new code.
 
 ![hotfpc running examples/demo: scene.pas is edited in vim on the left while the program keeps running on the right](docs/demo.gif)
 
-This is a real run of [`examples/demo`](examples/demo) on macOS arm64 with fpc 3.3.1
+This is a real run of [`examples/demo`](examples/demo) on macOS arm64 with fpc 3.2.2
 ([video](docs/demo.mp4), [asciinema cast](docs/demo.cast)), recorded in tmux. On the right,
 a shell runs `hotfpc --log hot.log demo.pas`, and the program's output and hotfpc's `[hot]`
 lines appear there. On the left, `scene.pas` is open in vim, and four edits get typed in and
@@ -20,7 +20,8 @@ the program.
 The first three edits change a character, a step size and a colour. Each one is swapped in
 about 100 ms after the save, and the score keeps counting from where it was. The fourth
 turns the score from an `Integer` into an `Int64`. A running program can't change the size
-of a variable it already has, so hotfpc asks for a restart and the program keeps going.
+of a variable it already has, so hotfpc starts the program over with the new code, about a
+second after the save, and the score starts again from zero.
 
 [`scripts/record-demo.py`](scripts/record-demo.py) types every keystroke into the shell and
 vim with `tmux send-keys`.
@@ -120,8 +121,11 @@ Every save ends in one of these:
 - `restart needed: ...`: the edit changes something the running state depends on, such as a
   variable's size, a class's instance size or virtual method table, a record's layout, a new
   unit, a new thread variable, or a runtime routine the program was linked without. The
-  message names the declaration, and the program carries on unchanged. Stop hotfpc and start
-  it again.
+  message names the declaration, and hotfpc starts the program over.
+- `vN restarted`: the program was linked again and started over with the new code. Its
+  state is gone, as if you had stopped it and started it yourself. If the link fails, you
+  get the errors and the program keeps running. With `--no-restart`, the program carries
+  on with its old code instead, until you stop hotfpc and start it again.
 - `not swapped`: the source changed but the generated code didn't (a comment, for example).
 - `error: ... (nothing changed)`: the unit doesn't compile, and you get fpc's errors. The
   program keeps running the code it had.
@@ -144,7 +148,8 @@ it keeps its old code.
 
 ```text
 hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
-       [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]
+       [--no-restart] [--settle MS] [--log FILE] [fpc options] program.pas
+       [-- program arguments]
 ```
 
 | Option | What it does |
@@ -155,6 +160,7 @@ hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
 | `--settle MS` | How long a saved file has to stay unchanged before hotfpc compiles it (default: 2 ms). |
 | `--log FILE` | Writes a copy of every line hotfpc prints, with times. |
 | `--quiet` | Leaves out the start line and the closing summary. |
+| `--no-restart` | When an edit needs a restart, leaves the program running its old code instead of starting it over. |
 | `--version` | Prints hotfpc's version. |
 
 ## With lwpt
@@ -236,14 +242,15 @@ each system needs.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 19 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 22 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
 `tests/scenarios/scenario.py` holds the programs and their edits. `check.py` runs
 `build/hotfpc` on each one, compares the run with its expected number of swaps applied,
-refused and failed, and checks for a clean exit and that the program's output had no gaps.
+refused and failed and of restarts, and checks for a clean exit and that the program's
+output had no gaps.
 For some cases it also checks the values the program printed after a swap.
 [docs/build-system.md](docs/build-system.md) describes `build.sh` and `build.bat`.
 

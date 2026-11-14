@@ -54,7 +54,12 @@ def timings(log):
             m = re.match(r"\[hot\] restart needed: (.*) \(not applied; compile ([\d.]+) ms\)", line)
             if m:
                 print("  " + ESC + "33m" + "restart needed: " + RST + m.group(1))
-                print("      (compile %.0f ms; the program keeps running its current code)" % float(m.group(2)))
+                continue
+            m = re.match(r"\[hot\] (v\d+) restarted: .*?; ([\d.]+) ms after the save was seen \(link ([\d.]+), stop ([\d.]+), start ([\d.]+)\)", line)
+            if m:
+                v, total, link, stop, start = m.groups()
+                print("  %-3s %srestarted%s  %s%4.0f ms%s  (link %.0f, stop %.0f, start %.0f; the state starts over)"
+                      % (v, ESC + "33m", RST, ESC + "1m", float(total), RST, float(link), float(stop), float(start)))
                 continue
             m = re.match(r"\[hot\] not swapped: (.*)", line)
             if m:

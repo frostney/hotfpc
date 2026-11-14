@@ -16,7 +16,8 @@ While it runs, edit `scene.pas` and save. For example:
 
 Each save prints `[hot] vN swapped`, and the score carries on from where it was. Changing
 `Score: Integer` to `Score: Int64` prints `restart needed` instead, because a running
-program's variable can't change its size.
+program's variable can't change its size, and hotfpc starts the program over: `vN
+restarted`, with the score back at zero.
 
 [`scripts/record-demo.py`](../../scripts/record-demo.py) makes the same edits in vim inside
 tmux, which is what the recording shows.

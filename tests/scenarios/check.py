@@ -18,11 +18,18 @@ EXPECT = {
     # unit) and renamed back with another body
     "include": (2, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
     "signals": (1, 0, 0),
+    # the program starts over: a link that fails counts as a failed compile, and a restarted
+    # program that fails is started again by the next save
+    "restart": (2, 1, 0), "linkfail": (2, 2, 1), "crash": (0, 1, 0),
 }
+# case: restarts; every other case passes --no-restart and expects none
+RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2}
 # case: lines the program must print, so that a swap shows its new values
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    # a restarted program runs the new code and counts from the start
+    "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
 }
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
@@ -43,18 +50,18 @@ bad = 0
 for name in names:
     m = re.search(r"=== %s\n(.*?)(?=\n=== |\Z)" % re.escape(name), out, re.S)
     body = m.group(1) if m else ""
-    end = re.search(r"ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change", body)
+    end = re.search(r"ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts", body)
     if not end:
         print("%-11s FAIL  no closing line" % name)
         bad += 1
         continue
-    rc, applied, refused, failed, unchanged = map(int, end.groups())
+    rc, applied, refused, failed, unchanged, restarts = map(int, end.groups())
     ea, er, ef = EXPECT[name]
     # rapid: a save that lands while fpc reads the file is compiled with the one before it,
     # and the compile for it then finds the same code ("not swapped"); the program shows the
     # newest text either way
     merged = unchanged if name == "rapid" else 0
-    ok = rc == 0 and (applied + merged in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == merged and "!!! the edit does not apply" not in body
+    ok = rc == 0 and (applied + merged in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == merged and restarts == RESTARTS.get(name, 0) and "!!! the edit does not apply" not in body
     ticks = [int(x) for x in re.findall(r"tick (\d+):", body)]
     seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
     ok = ok and seq
@@ -63,8 +70,8 @@ for name in names:
     loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
-    print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged; ticks 1..%d %s"
-          % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
+    print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
+          % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
           + "".join("; never printed %r" % text for text in missing)
           + "".join("; a load took %s ms in the program" % x for x in slow))
     bad += 0 if ok else 1

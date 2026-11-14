@@ -36,8 +36,10 @@ end.
 CASES = {}
 
 
-def case(name, files, steps, ticks=None, opts=()):
-    CASES[name] = (files, steps, ticks, opts)
+def case(name, files, steps, ticks=None, opts=(), restart=False):
+    """restart: the driver starts the program over when an edit needs a restart; the other
+    cases pass --no-restart, so that the program they check keeps running."""
+    CASES[name] = (files, steps, ticks, tuple(opts) + (() if restart else ("--no-restart",)))
 
 
 # ---------------------------------------------------------------------------- globals
@@ -761,6 +763,63 @@ end.
     ("Calls: Integer in the implementation section becomes Calls: Single (same size)",
      [("u.pas", "  Calls: Integer;", "  Calls: Single;"), ("u.pas", "  Inc(Calls);", "  Calls := Calls + 1;"), ("u.pas", "calls %d'", "calls %g'")]),
 ])
+
+# ---------------------------------------------------------------------------- restarts
+# One unit whose text and call count the program prints. A restart starts the count over.
+U_COUNTED = r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+var
+  Calls: Integer = 0;
+function Tick(n: Integer): string;
+begin
+  Inc(Calls);
+  Result := Format('one calls %d', [Calls]);
+end;
+end.
+'''
+
+case("restart", {"main.pas": MAIN, "u.pas": U_COUNTED}, [
+    ("another text", [("u.pas", "'one calls", "'two calls")]),
+    ("Calls: Integer becomes Calls: Int64, and another text: the program starts over",
+     [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;"), ("u.pas", "'two calls", "'three calls")]),
+    ("another text, swapped into the restarted program", [("u.pas", "'three calls", "'four calls")]),
+], restart=True)
+
+# a routine no library has: the compile works, the link does not
+V_MISSING = r'''unit v;
+{$mode objfpc}{$H+}
+interface
+function Extra: Integer;
+implementation
+procedure Missing; external name 'hotfpc_missing';
+function Extra: Integer;
+begin
+  Missing;
+  Result := 1;
+end;
+end.
+'''
+
+case("linkfail", {"main.pas": MAIN, "u.pas": U_COUNTED}, [
+    ("another text", [("u.pas", "'one calls", "'two calls")]),
+    ("u uses a new unit whose code calls a routine no library has: the restart does not link, and the program carries on",
+     [("v.pas", None, V_MISSING), ("u.pas", "uses SysUtils;", "uses SysUtils, v;"),
+      ("u.pas", "Format('two calls %d', [Calls])", "Format('three calls %d extra %d', [Calls, Extra])")]),
+    ("the new unit no longer calls it: the program starts over", [("v.pas", "  Missing;\n", "")]),
+    ("another text, swapped into the restarted program", [("u.pas", "'three calls", "'four calls")]),
+], restart=True)
+
+case("crash", {"main.pas": MAIN, "u.pas": U_COUNTED}, [
+    ("Calls becomes Int64, and u's initialization ends the program with exit code 3: the restarted program fails",
+     [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;"), ("u.pas", "'one calls", "'two calls"),
+      ("u.pas", "\nend.", "\ninitialization\n  Halt(3);\nend.")]),
+    ("the initialization no longer ends it: the next save starts the program again",
+     [("u.pas", "initialization\n  Halt(3);\n", ""), ("u.pas", "'two calls", "'three calls")]),
+], restart=True)
 
 
 def run(name):

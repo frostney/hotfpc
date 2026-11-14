@@ -49,7 +49,8 @@ Change any of these in `scene.pas` and save. The balls carry on from where they 
   spinning hexagons;
 - the text at the top.
 
-Some edits need a restart, and hotfpc says which declaration is in the way:
+Some edits need a restart. hotfpc says which declaration is in the way and starts the game
+over, with a new set of balls:
 
 - `MaxBalls`, because it changes the size of the `Balls` array the program already has;
 - a new field in `TBall`, for the same reason.

@@ -2,13 +2,14 @@ program HotFPC;
 { hotfpc: hot reloading for Free Pascal programs, as a wrapper around fpc.
 
     hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
-           [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]
+           [--no-restart] [--settle MS] [--log FILE] [fpc options] program.pas
+           [-- program arguments]
 
   Builds the program with the given fpc and two additions: its symbols are kept (-Xs-) and
   the agent unit is loaded first (-FaHotFPC.Agent). Starts it, watches the sources, and on
   every save recompiles and hands the changed object files to the agent inside the
   program, which swaps the code in and keeps the program's state, or says why it needs a
-  restart.
+  restart. Then hotfpc links the program again and starts it over, without its state.
 
   The agent's source is part of this program. It is written out and compiled by the same
   fpc as the program, so hotfpc does not depend on the compiler's version. hotfpc needs
@@ -22,6 +23,8 @@ program HotFPC;
   --settle    how long a save must stay unchanged before it is compiled (default 2 ms)
   --log       a copy of every line this program prints, with times
   --quiet     leave out the start line and the closing summary
+  --no-restart  when an edit needs a restart, leave the program running its old code
+              instead of starting it over
   --version   print hotfpc's version
 
   This file is the whole of hotfpc apart from the agent. HotFPC.Agent.pas is the agent's
@@ -241,7 +244,7 @@ end;
 const
   HotFPCVersion = '1.0.0';
   UsageText = 'usage: hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] '
-    + '[--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]';
+    + '[--no-restart] [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]';
   { The environment variables the driver reads. }
   DebugVariable = 'HOT_DEBUG';
   TrustTimestampsVariable = 'HOT_TRUST_TIMESTAMPS';
@@ -260,6 +263,7 @@ type
     FLogPath: string;
     FSource: string;
     FQuiet: Boolean;
+    FRestart: Boolean;
     FTargetWindows: Boolean;
     FWinePaths: Boolean;
     FSettleSeconds: Double;
@@ -283,6 +287,8 @@ type
     { The full path of the program's source file. }
     property Source: string read FSource;
     property Quiet: Boolean read FQuiet;
+    { Whether an edit that needs a restart starts the program over (false with --no-restart). }
+    property Restart: Boolean read FRestart;
     property TargetWindows: Boolean read FTargetWindows;
     property WinePaths: Boolean read FWinePaths;
     property SettleSeconds: Double read FSettleSeconds;
@@ -302,6 +308,7 @@ constructor TOptions.Create;
 begin
   inherited Create;
   FCompiler := DefaultCompiler;
+  FRestart := True;
   FSettleSeconds := DefaultSettleMilliseconds / MillisecondsPerSecond;
   FCompilerOptions := TStringList.Create;
   FProgramArguments := TStringList.Create;
@@ -366,6 +373,8 @@ begin
     end
     else if Argument = '--quiet' then
       FQuiet := True
+    else if Argument = '--no-restart' then
+      FRestart := False
     else if Argument = '--version' then
       Exit(caShowVersion)
     else if (Argument = '--settle') and (Index < High(AArguments)) then
@@ -417,7 +426,9 @@ type
     FLiveDirectory: string;
     FAgentDirectory: string;
     FAgentSourceDirectory: string;
+    FNextDirectory: string;
     FExecutable: string;
+    FNextExecutable: string;
   public
     constructor Create(const ASource: string; const ATargetWindows: Boolean);
     { The directory a swap's object files are staged in before the agent loads them. }
@@ -442,8 +453,13 @@ type
     { The agent's source, written out for the compile; kept away from the program's search
       path. }
     property AgentSourceDirectory: string read FAgentSourceDirectory;
+    { Where a restart links the program, so that the running program and its file stay as
+      they are until the link has worked. }
+    property NextDirectory: string read FNextDirectory;
     { The built program (no trailing delimiter). }
     property Executable: string read FExecutable;
+    { The program a restart links, in NextDirectory. }
+    property NextExecutable: string read FNextExecutable;
   end;
 
 const
@@ -452,6 +468,7 @@ const
   LiveDirectoryName = 'live';
   AgentDirectoryName = 'agent';
   AgentSourceDirectoryName = 'agent-src';
+  NextDirectoryName = 'next';
   StageDirectoryPrefix = 'v';
   ObjectPattern = '*.o';
   WindowsExecutableExtension = '.exe';
@@ -467,9 +484,11 @@ begin
   FLiveDirectory := FHotDirectory + LiveDirectoryName + PathDelim;
   FAgentDirectory := FHotDirectory + AgentDirectoryName + PathDelim;
   FAgentSourceDirectory := FHotDirectory + AgentSourceDirectoryName + PathDelim;
+  FNextDirectory := FHotDirectory + NextDirectoryName + PathDelim;
   FExecutable := FHotDirectory + FName;
   if ATargetWindows then
     FExecutable := FExecutable + WindowsExecutableExtension;
+  FNextExecutable := FNextDirectory + ExtractFileName(FExecutable);
 end;
 
 function TWorkspace.StageDirectory(const AVersion: Integer): string;
@@ -1291,6 +1310,9 @@ type
       that connects (a program the program started, or something else) is closed. True once
       the agent is connected. }
     function TryAccept: Boolean;
+    { Closes the connection of a program that has ended. The driver keeps listening, so a
+      restarted program connects with the same port and token. }
+    procedure Disconnect;
     { Tells the agent to remember the code of a unit's object file as the base of later swaps. }
     procedure Base(const APath: string);
     { Asks the agent to apply object files; the reply's lines, without the closing dot. The
@@ -1472,6 +1494,14 @@ begin
     CloseSocketHandle(Connection);
 end;
 
+procedure TAgentLink.Disconnect;
+begin
+  if FConnection <> InvalidSocket then
+    CloseSocketHandle(FConnection);
+  FConnection := InvalidSocket;
+  FReceived := '';
+end;
+
 function TAgentLink.Ask(const AFields: array of string): TStringList;
 var
   Command, Line, Chunk: string;
@@ -1562,16 +1592,18 @@ type
     function BuildAgent(out AOutput: string): Boolean;
     { Compiles the program, linking it when ALink; without linking (-Cn) the object files
       are all that is made. AErrors holds the diagnostics that name a place in a source file,
-      or the closing lines when there are none; the caller frees the list. }
-    function Compile(const ALink: Boolean; out AErrors: TStringList; out ASeconds: Double): Boolean;
+      or the closing lines when there are none; the caller frees the list. AExecutable is
+      the program's file, the workspace's Executable when empty. }
+    function Compile(const ALink: Boolean; out AErrors: TStringList; out ASeconds: Double;
+      const AExecutable: string = ''): Boolean;
     { Makes the compiler recompile the units whose source changed, whatever it thinks. Its own
       check compares times of one-second granularity: an edit saved in the same second as its
       previous compile of the unit goes unnoticed. The driver knows from the content which
       files changed, so it removes the compiler's record of those units from its own unit
       directory. HOT_TRUST_TIMESTAMPS=1 turns this off. }
     procedure ForgetUnits(const AChangedFiles: TStrings);
-    { The arguments of the program's compile. }
-    function CompileArguments(const ALink: Boolean): TStringList;
+    { The arguments of the program's compile; AExecutable as for Compile. }
+    function CompileArguments(const ALink: Boolean; const AExecutable: string = ''): TStringList;
     { The options the agent's compile shares with the program's: the ones that decide the
       target, how code is generated and where units are. }
     class function AgentOptions(const AOptions: TStrings): TStringList;
@@ -1856,7 +1888,7 @@ begin
   end;
 end;
 
-function TCompiler.CompileArguments(const ALink: Boolean): TStringList;
+function TCompiler.CompileArguments(const ALink: Boolean; const AExecutable: string): TStringList;
 var
   I: Integer;
 begin
@@ -1865,7 +1897,10 @@ begin
   Result.Add(AgentUnitOption);
   Result.Add(UnitPathOption + ExcludeTrailingPathDelimiter(FWorkspace.AgentDirectory));
   Result.Add(UnitDirectoryOption + ExcludeTrailingPathDelimiter(FWorkspace.UnitsDirectory));
-  Result.Add(OutputOption + FWorkspace.Executable);
+  if AExecutable <> '' then
+    Result.Add(OutputOption + AExecutable)
+  else
+    Result.Add(OutputOption + FWorkspace.Executable);
   for I := 0 to FOptions.Count - 1 do
     Result.Add(FOptions[I]);
   if not ALink then
@@ -1924,14 +1959,15 @@ begin
   end;
 end;
 
-function TCompiler.Compile(const ALink: Boolean; out AErrors: TStringList; out ASeconds: Double): Boolean;
+function TCompiler.Compile(const ALink: Boolean; out AErrors: TStringList; out ASeconds: Double;
+  const AExecutable: string): Boolean;
 var
   Arguments: TStringList;
   Output: string;
   Status: Integer;
   Start: Double;
 begin
-  Arguments := CompileArguments(ALink);
+  Arguments := CompileArguments(ALink, AExecutable);
   try
     Start := NowSeconds;
     Status := Execute(Arguments.ToStringArray, Output);
@@ -1983,7 +2019,8 @@ end;
 // ---------------------------------------------------------------- the driver
 { One run of hotfpc. It builds the program with the agent, starts it, waits for its agent to
   connect, and then polls the sources: on every save it compiles, checks the interfaces, hands
-  the changed object files to the agent, and prints what happened as [hot] lines. It owns the
+  the changed object files to the agent, and prints what happened as [hot] lines. A save that
+  needs a restart links the program again and starts it over, unless --no-restart. It owns the
   order of these steps and the wording of what it prints; the work is in the units it asks. }
 
 const
@@ -2004,6 +2041,13 @@ const
   NotePrefix = 'note ';
   RestartPrefix = 'restart ';
   ReplyErrorPrefix = 'error ';
+  { How long a restart tries to put the new program in the old one's place: Windows keeps a
+    program's file locked for a moment after the program has ended. }
+  ReplaceTimeoutSeconds = 5;
+  ReplaceIntervalMilliseconds = 20;
+  { The exit code TerminateProcess gives a program a restart stops on Windows. }
+  StoppedExitCode = 1;
+  MapExtension = '.map';
 
 type
   TDriver = class
@@ -2019,6 +2063,10 @@ type
     FLayouts: TLayoutHistory;
     FDigests: TStringList;
     FBased: TStringList;
+    { The running program; nil while hotfpc waits for a save that builds to start it again. }
+    FProgram: TProcess;
+    { FProgram was started by a restart. }
+    FRestartedProgram: Boolean;
     FStart: TDateTime;
     FStartedAt: Double;
     FBuildSeconds: Double;
@@ -2027,23 +2075,30 @@ type
     FRefused: Integer;
     FFailed: Integer;
     FUnchanged: Integer;
+    FRestarted: Integer;
     function BuildProgram: Boolean;
     procedure CopyObjectsToLive;
     procedure ProbeLayouts;
     function StartProgram: TProcess;
     function AwaitAgent(const AProgram: TProcess; out AExitCode: Integer): Boolean;
-    procedure Watch(const AProgram: TProcess);
+    procedure Watch;
+    function ProgramHasEnded: Boolean;
     function Settle(const AStamps: TFileStamps): TFileStamps;
+    procedure SayErrors(const AErrors: TStringList; const AFallback: string);
     function CompileSources(out ACompileSeconds: Double): Boolean;
     function CollectChangedObjects(const AChanged: TStrings; const ACompileSeconds: Double): Boolean;
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
-    procedure Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double);
+    function Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
     procedure Accept(const AChanged: TStrings; const AStage: string);
     procedure Reject(const AReply: TStrings; const AVerdict, AStage: string; const ACompileSeconds: Double);
-    procedure Reload(const ASeen, ASettled: Double);
+    function Reload(const ASeen, ASettled: Double): Boolean;
+    function ReplaceExecutable: Boolean;
+    procedure Restart(const ASeen: Double);
     procedure SayStart;
     procedure SayEnd(const AExitCode: Integer);
+    { The program's exit code; -1 when a signal ended it. }
+    class function ExitCodeOf(const AProgram: TProcess): Integer;
   public
     constructor Create(const AOptions: TOptions);
     destructor Destroy; override;
@@ -2083,6 +2138,7 @@ end;
 
 destructor TDriver.Destroy;
 begin
+  FProgram.Free;
   FDigests.Free;
   FBased.Free;
   FLayouts.Free;
@@ -2192,21 +2248,27 @@ begin
   Result := True;
 end;
 
+{ A compile or link that failed: its first errors, or AFallback when fpc named none. }
+procedure TDriver.SayErrors(const AErrors: TStringList; const AFallback: string);
+var
+  I: Integer;
+begin
+  Inc(FFailed);
+  if AErrors.Count = 0 then
+    AErrors.Add(AFallback);
+  for I := 0 to AErrors.Count - 1 do
+    if I < MaximumShownErrors then
+      FReporter.Say('error: ' + AErrors[I] + ' (nothing changed)');
+end;
+
 function TDriver.CompileSources(out ACompileSeconds: Double): Boolean;
 var
   Errors: TStringList;
-  I: Integer;
 begin
   Result := FCompiler.Compile(False, Errors, ACompileSeconds);
   try
-    if Result then
-      Exit;
-    Inc(FFailed);
-    if Errors.Count = 0 then
-      Errors.Add('the compiler failed');
-    for I := 0 to Errors.Count - 1 do
-      if I < MaximumShownErrors then
-        FReporter.Say('error: ' + Errors[I] + ' (nothing changed)');
+    if not Result then
+      SayErrors(Errors, 'the compiler failed');
   finally
     Errors.Free;
   end;
@@ -2319,13 +2381,15 @@ begin
     FReporter.Say('error: the program did not answer (nothing changed)');
 end;
 
-procedure TDriver.Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double);
+{ True when the agent refused the swap: the edit needs a restart. }
+function TDriver.Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
 var
   Start, LoadSeconds: Double;
   I: Integer;
   Stage, Verdict, Units, Detail: string;
   Staged, Reply: TStringList;
 begin
+  Result := False;
   Start := NowSeconds;
   for I := 0 to AChanged.Count - 1 do
     if (FBased.IndexOf(AChanged[I]) < 0) and FileExists(FWorkspace.LiveDirectory + AChanged[I]) then
@@ -2362,7 +2426,7 @@ begin
     if Verdict <> VerdictOK then
     begin
       Reject(Reply, Verdict, Stage, ACompileSeconds);
-      Exit;
+      Exit(Verdict = VerdictRefused);
     end;
     Inc(FVersion);
     Inc(FApplied);
@@ -2383,30 +2447,124 @@ begin
   end;
 end;
 
-{ One save: compile, then swap what changed in the running program or say why not. }
-procedure TDriver.Reload(const ASeen, ASettled: Double);
+{ One save: compile, then swap what changed in the running program or say why not. True when
+  the save needs a restart. }
+function TDriver.Reload(const ASeen, ASettled: Double): Boolean;
 var
   Changed: TStringList;
   CompileSeconds, InterfaceSeconds: Double;
 begin
+  Result := False;
   if not CompileSources(CompileSeconds) then
     Exit;
   Changed := TStringList.Create;
   try
     if not CollectChangedObjects(Changed, CompileSeconds) then
-      Exit;
+      Exit(True);
     if not LayoutsAllowSwap(Changed, CompileSeconds, InterfaceSeconds) then
-      Exit;
+      Exit(True);
     if Changed.Count = 0 then
     begin
       Inc(FUnchanged);
       FReporter.Say('not swapped: the generated code is the same (compile ' + FormatMilliseconds(CompileSeconds) + ' ms)');
       Exit;
     end;
-    Swap(Changed, ASeen, ASettled, CompileSeconds, InterfaceSeconds);
+    Result := Swap(Changed, ASeen, ASettled, CompileSeconds, InterfaceSeconds);
   finally
     Changed.Free;
   end;
+end;
+
+{ Puts the program a restart linked in the place of the one that ran, with the linker's map
+  on Windows, where the agent looks for it. Windows keeps a program's file locked for a moment
+  after the program has ended. }
+function TDriver.ReplaceExecutable: Boolean;
+var
+  Deadline: Double;
+  NextMap, Map: string;
+begin
+  Deadline := NowSeconds + ReplaceTimeoutSeconds;
+  repeat
+    if FileExists(FWorkspace.Executable) then
+      DeleteFile(FWorkspace.Executable);
+    Result := RenameFile(FWorkspace.NextExecutable, FWorkspace.Executable);
+    if Result or (NowSeconds > Deadline) then
+      Break;
+    Sleep(ReplaceIntervalMilliseconds);
+  until False;
+  NextMap := ChangeFileExt(FWorkspace.NextExecutable, MapExtension);
+  Map := ChangeFileExt(FWorkspace.Executable, MapExtension);
+  if Result and FileExists(NextMap) then
+  begin
+    DeleteFile(Map);
+    RenameFile(NextMap, Map);
+  end;
+end;
+
+{ Starts the program over with the units of the last compile. The program is linked into
+  NextDirectory first, so a link that fails leaves the running program as it is. A restart
+  stops the program the way the system ends a process (SIGTERM, then SIGKILL; TerminateProcess
+  on Windows): its state is gone and its finalization sections don't run. A restarted program
+  that ends before its agent connects leaves hotfpc waiting for the next save that builds. }
+procedure TDriver.Restart(const ASeen: Double);
+var
+  Errors: TStringList;
+  Linked: Boolean;
+  ProgramExitCode: Integer;
+  LinkSeconds, StopStart, StopSeconds: Double;
+begin
+  RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.NextDirectory));
+  ForceDirectories(FWorkspace.NextDirectory);
+  Linked := FCompiler.Compile(True, Errors, LinkSeconds, FWorkspace.NextExecutable);
+  try
+    if not Linked then
+      SayErrors(Errors, 'the program did not link');
+  finally
+    Errors.Free;
+  end;
+  if not Linked then
+    Exit;
+  StopStart := NowSeconds;
+  if FProgram <> nil then
+  begin
+    { it ended on its own during the link: Watch sees to that }
+    if not FProgram.Running then
+      Exit;
+    FProgram.Terminate(StoppedExitCode);
+    FProgram.WaitOnExit;
+    FreeAndNil(FProgram);
+  end;
+  FLink.Disconnect;
+  StopSeconds := NowSeconds - StopStart;
+  if not ReplaceExecutable then
+  begin
+    FReporter.Say('error: cannot replace ' + FWorkspace.Executable
+      + ' (the program is not running; the next save that builds starts it again)');
+    Exit;
+  end;
+  { the new program's units are the running ones now }
+  RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.LiveDirectory));
+  ForceDirectories(FWorkspace.LiveDirectory);
+  CopyObjectsToLive;
+  FBased.Clear;
+  if FLayouts <> nil then
+  begin
+    FLayouts.Free;
+    FLayouts := TLayoutHistory.Create(FReader, FWorkspace.LiveDirectory, FWorkspace.UnitsDirectory);
+  end;
+  Inc(FVersion);
+  Inc(FRestarted);
+  FProgram := StartProgram;
+  FRestartedProgram := True;
+  if not AwaitAgent(FProgram, ProgramExitCode) then
+  begin
+    FReporter.Say('the next save that builds starts the program again');
+    FreeAndNil(FProgram);
+    Exit;
+  end;
+  FReporter.Say(Format('v%d restarted: the program starts over; %s ms after the save was seen (link %s, stop %s, start %s)',
+    [FVersion, FormatMilliseconds(NowSeconds - ASeen), FormatMilliseconds(LinkSeconds), FormatMilliseconds(StopSeconds),
+     FormatMilliseconds(NowSeconds - FStartedAt)]));
 end;
 
 { Waits for the save to stop changing the files. }
@@ -2424,20 +2582,38 @@ begin
   until False;
 end;
 
+{ True when the program has ended and hotfpc ends with it. A program that a restart started
+  and that then failed (a runtime error in an initialization section, say) does not end
+  hotfpc: the next save that builds starts it again. }
+function TDriver.ProgramHasEnded: Boolean;
+var
+  ProgramExitCode: Integer;
+begin
+  Result := False;
+  if (FProgram = nil) or FProgram.Running then
+    Exit;
+  ProgramExitCode := ExitCodeOf(FProgram);
+  if not FRestartedProgram or (ProgramExitCode = 0) then
+    Exit(True);
+  FReporter.Say(Format('the program ended with %d; the next save that builds starts it again', [ProgramExitCode]));
+  FreeAndNil(FProgram);
+  FLink.Disconnect;
+end;
+
 { Polls the sizes and times of the sources every few milliseconds and their contents twice a
   second: the content check catches an edit of the same size within the same second. }
-procedure TDriver.Watch(const AProgram: TProcess);
+procedure TDriver.Watch;
 var
   Seen, Current: TFileStamps;
   Digests, Changed: TStringList;
-  LastDigest, SeenAt: Double;
+  LastDigest, SeenAt, CompileSeconds: Double;
 begin
   Seen := FWatcher.Stamps;
   LastDigest := NowSeconds;
   while True do
   begin
     Sleep(PollIntervalMilliseconds);
-    if not AProgram.Running then
+    if ProgramHasEnded then
       Break;
     Current := FWatcher.Stamps;
     if TSourceWatcher.SameStamps(Current, Seen) and (NowSeconds - LastDigest < DigestIntervalSeconds) then
@@ -2462,8 +2638,14 @@ begin
     Changed.Free;
     FDigests.Free;
     FDigests := Digests;
-    Reload(SeenAt, NowSeconds);
-    if not AProgram.Running then
+    if FProgram = nil then
+    begin
+      if CompileSources(CompileSeconds) then
+        Restart(SeenAt);
+    end
+    else if Reload(SeenAt, NowSeconds) and FOptions.Restart then
+      Restart(SeenAt);
+    if ProgramHasEnded then
       Break;
   end;
 end;
@@ -2488,14 +2670,20 @@ end;
 procedure TDriver.SayEnd(const AExitCode: Integer);
 begin
   if not FOptions.Quiet then
-    FReporter.Say(Format('the program ended with %d after %s s; %d reloads applied, %d refused, %d failed to compile, %d without a change in code',
-      [AExitCode, FormatSeconds(SecondsSince(FStart)), FApplied, FRefused, FFailed, FUnchanged]));
+    FReporter.Say(Format('the program ended with %d after %s s; %d reloads applied, %d refused, %d failed to compile, %d without a change in code, %d restarts',
+      [AExitCode, FormatSeconds(SecondsSince(FStart)), FApplied, FRefused, FFailed, FUnchanged, FRestarted]));
+end;
+
+class function TDriver.ExitCodeOf(const AProgram: TProcess): Integer;
+begin
+  Result := AProgram.ExitCode;
+  if (Result = 0) and (AProgram.ExitStatus <> 0) then
+    Result := -1;
 end;
 
 function TDriver.Run: Integer;
 var
   Problem, Output: string;
-  Running: TProcess;
 begin
   if not FCompiler.VerifyVersion(Problem) then
   begin
@@ -2523,21 +2711,14 @@ begin
     Exit(1);
   end;
   FWatcher.ReadDigests(FDigests);
-  Running := StartProgram;
-  try
-    if not AwaitAgent(Running, Result) then
-      Exit;
-    SayStart;
-    Watch(Running);
-    Running.WaitOnExit;
-    Result := Running.ExitCode;
-    { ended by a signal }
-    if (Result = 0) and (Running.ExitStatus <> 0) then
-      Result := -1;
-    SayEnd(Result);
-  finally
-    Running.Free;
-  end;
+  FProgram := StartProgram;
+  if not AwaitAgent(FProgram, Result) then
+    Exit;
+  SayStart;
+  Watch;
+  FProgram.WaitOnExit;
+  Result := ExitCodeOf(FProgram);
+  SayEnd(Result);
 end;
 
 // ---------------------------------------------------------------- main
@@ -2756,6 +2937,7 @@ begin
     ExpectEqual(Options.Launcher, '', 'no launcher');
     ExpectEqual(Options.LogPath, '', 'no log');
     Expect(not Options.Quiet, 'not quiet');
+    Expect(Options.Restart, 'an edit that needs a restart starts the program over');
     Expect(not Options.TargetWindows, 'not a Windows target');
     Expect(not Options.WinePaths, 'no Wine paths');
     Expect(Abs(Options.SettleSeconds - 0.002) < 1E-9, 'the default settle time is 2 ms');
@@ -2772,7 +2954,7 @@ var
   Action: TCommandAction;
 begin
   Options := ParseArguments(['--fpc', '/opt/fpc/bin/fpc', '--ppudump', '/opt/fpc/bin/ppudump', '--run', 'wrapper',
-    '--quiet', '--settle', '50', '--log', 'hot.log', 'demo.pas'], False, Action);
+    '--quiet', '--no-restart', '--settle', '50', '--log', 'hot.log', 'demo.pas'], False, Action);
   try
     Expect(Action = caRun, 'every option with a value runs');
     ExpectEqual(Options.Compiler, '/opt/fpc/bin/fpc', '--fpc');
@@ -2780,6 +2962,7 @@ begin
     ExpectEqual(Options.Launcher, 'wrapper', '--run');
     ExpectEqual(Options.LogPath, 'hot.log', '--log');
     Expect(Options.Quiet, '--quiet');
+    Expect(not Options.Restart, '--no-restart');
     Expect(Abs(Options.SettleSeconds - 0.05) < 1E-9, '--settle takes milliseconds');
     ExpectEqual(Options.CompilerOptions.Count, 0, 'hotfpc options are not fpc options');
     ExpectEqual(Options.Source, ExpandFileName('demo.pas'), 'the source');
@@ -2946,6 +3129,8 @@ begin
     ExpectEqual(Workspace.AgentDirectory, Hot + 'agent' + PathDelim, 'agent');
     ExpectEqual(Workspace.AgentSourceDirectory, Hot + 'agent-src' + PathDelim, 'agent-src');
     ExpectEqual(Workspace.Executable, Hot + 'scene', 'the program without an extension');
+    ExpectEqual(Workspace.NextDirectory, Hot + 'next' + PathDelim, 'where a restart links');
+    ExpectEqual(Workspace.NextExecutable, Hot + 'next' + PathDelim + 'scene', 'the program a restart links');
     ExpectEqual(Workspace.StageDirectory(2), Hot + 'v2' + PathDelim, 'the stage of a swap');
     ExpectEqual(Workspace.StageDirectory(13), Hot + 'v13' + PathDelim, 'by version');
   finally
@@ -2956,6 +3141,8 @@ begin
     ExpectEqual(Workspace.Name, 'Main', 'a .lpr source');
     ExpectEqual(Workspace.Executable, PathDelim + 'work' + PathDelim + '.hot' + PathDelim + 'Main.exe',
       'a Windows program has its extension');
+    ExpectEqual(Workspace.NextExecutable, PathDelim + 'work' + PathDelim + '.hot' + PathDelim + 'next' + PathDelim + 'Main.exe',
+      'and so does the one a restart links');
   finally
     Workspace.Free;
   end;
@@ -3787,6 +3974,17 @@ begin
       Reply.Free;
     end;
     CloseSocketHandle(Client);
+    { a restart: the program that ended is gone, and the new one connects to the same port }
+    Link.Disconnect;
+    Client := ConnectClient(Link.Port);
+    SendText(Client, 'hello ' + Link.Token + #10);
+    Expect(AcceptWithin(Link), 'a restarted program connects again');
+    SetBlocking(Client, True);
+    SendText(Client, 'ok' + #10 + '.' + #10);
+    Link.Base('/p/.hot/live/c.o');
+    Command := 'base' + #9 + '/p/.hot/live/c.o' + #10;
+    ExpectEqual(ReceiveText(Client, Length(Command)), Command, 'and gets the commands');
+    CloseSocketHandle(Client);
   finally
     Link.Free;
   end;
@@ -4024,6 +4222,13 @@ begin
       ExpectEqual(Arguments[5], '-O2', 'then the user''s options');
       ExpectEqual(Arguments[6], '-Fulib', 'in their order');
       ExpectEqual(Arguments[7], Options.Source, 'ends with the source');
+    finally
+      Arguments.Free;
+    end;
+    Arguments := Compiler.CompileArguments(True, Workspace.NextExecutable);
+    try
+      ExpectEqual(Arguments[4], '-o' + Workspace.NextExecutable, 'a restart names another program file');
+      ExpectEqual(Arguments.Count, 8, 'and passes nothing else');
     finally
       Arguments.Free;
     end;

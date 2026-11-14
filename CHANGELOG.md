@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- An edit that needs a restart now starts the program over, like webpack's full reload
+  when a module can't be updated in place: hotfpc names the declaration, links the program
+  again and starts it with the new code. If the link fails, the program keeps running.
+  `--no-restart` keeps the 1.0.0 behaviour, where the program carries on with its old code.
+- A restarted program that fails, for example with a runtime error in an initialization
+  section, doesn't end hotfpc: the next save that builds starts it again.
+- The closing summary also counts restarts.
+
 ## 1.0.0
 
 The first release.
