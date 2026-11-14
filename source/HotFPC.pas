@@ -2483,22 +2483,28 @@ var
   Deadline: Double;
   NextMap, Map: string;
 begin
+  NextMap := ChangeFileExt(FWorkspace.NextExecutable, MapExtension);
+  Map := ChangeFileExt(FWorkspace.Executable, MapExtension);
   Deadline := NowSeconds + ReplaceTimeoutSeconds;
   repeat
-    if FileExists(FWorkspace.Executable) then
-      DeleteFile(FWorkspace.Executable);
-    Result := RenameFile(FWorkspace.NextExecutable, FWorkspace.Executable);
+    if FileExists(FWorkspace.NextExecutable) then
+    begin
+      if FileExists(FWorkspace.Executable) then
+        DeleteFile(FWorkspace.Executable);
+      RenameFile(FWorkspace.NextExecutable, FWorkspace.Executable);
+    end;
+    { a stale map would make the agent bind later swaps wrongly }
+    if FileExists(NextMap) then
+    begin
+      if FileExists(Map) then
+        DeleteFile(Map);
+      RenameFile(NextMap, Map);
+    end;
+    Result := not FileExists(FWorkspace.NextExecutable) and not FileExists(NextMap);
     if Result or (NowSeconds > Deadline) then
       Break;
     Sleep(ReplaceIntervalMilliseconds);
   until False;
-  NextMap := ChangeFileExt(FWorkspace.NextExecutable, MapExtension);
-  Map := ChangeFileExt(FWorkspace.Executable, MapExtension);
-  if Result and FileExists(NextMap) then
-  begin
-    DeleteFile(Map);
-    RenameFile(NextMap, Map);
-  end;
 end;
 
 { Starts the program over with the units of the last compile. The program is linked into
