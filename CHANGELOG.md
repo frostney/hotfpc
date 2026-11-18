@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - An edit that needs a restart now starts the program over, like webpack's full reload
   when a module can't be updated in place: hotfpc names the declaration, links the program
