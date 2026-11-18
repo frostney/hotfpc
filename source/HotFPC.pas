@@ -16,7 +16,7 @@ program HotFPC;
   fpc 3.2.2 or later.
 
   --fpc       the compiler (default: fpc)
-  --ppudump   ppudump of the same compiler, for the check of interface layouts
+  --ppudump   ppudump of the same compiler, for the check of layouts
               (default: next to the compiler; without one the check is off)
   --run       a program to start the built program with, such as wine (default: wine
               when the target is Windows and this is not)
@@ -172,6 +172,11 @@ begin
     until FindNext(Search) <> 0;
     FindClose(Search);
   end;
+end;
+
+function StartsWith(const AText, APrefix: string): Boolean; inline;
+begin
+  Result := Copy(AText, 1, Length(APrefix)) = APrefix;
 end;
 
 
@@ -822,13 +827,16 @@ begin
 end;
 
 
-// ---------------------------------------------------------------- interface layouts (ppudump)
-{ The check of interface layouts. A field that moved or changed its type without changing a
-  size is invisible in the object file, so hotfpc reads the interface of each changed unit
-  with ppudump (JSON output) and compares it with the one of the unit that is running.  A
-  layout is the interface of one unit as the compiler wrote it down: name=text for the layout
-  of each record or class type and the type of each variable. Two texts differ exactly when a
-  field was added, removed, moved or retyped, or a variable changed its type. }
+// ---------------------------------------------------------------- layouts (ppudump)
+{ The check of layouts. A field that moved or changed its type without changing a
+  size is invisible in the object file, so hotfpc reads each changed unit with ppudump and
+  compares it with the unit that is running. A layout is one unit as the compiler wrote it
+  down: name=text for the layout of each record or class type and the type of each variable,
+  of the interface (ppudump's JSON) and of the implementation section (its text, as the JSON
+  leaves the section out). Two texts differ exactly when a field was added, removed, moved
+  or retyped, or a variable changed its type. The implementation section matters most on
+  Windows: a COFF object states no sizes, so it is the only place that shows a variable with
+  an initial value growing inside the 16 bytes fpc pads its section to. }
 
 type
   TLayout = TStringList;
@@ -838,8 +846,10 @@ type
   private
     FPPUDump: string;
   protected
-    { The text ppudump prints for a unit file, errors included. }
+    { The JSON ppudump prints for a unit file, errors included. }
     function Dump(const APPUPath: string): string; virtual;
+    { The text ppudump prints for a unit file by default, errors included. }
+    function DumpText(const APPUPath: string): string; virtual;
   public
     constructor Create(const APPUDump: string);
     { The ppudump next to the compiler (the named one's folder, or the first in ASearchPath
@@ -851,12 +861,16 @@ type
       AUnitsDirectory; True when it works or there is no unit yet, otherwise False and
       AReason is the first line it printed. }
     function Probe(const AUnitsDirectory: string; out AReason: string): Boolean;
-    { The layout of a unit file. Units of the program that it refers to are looked for in
-      AOwnDirectory: their numbering moves between compiles, their names do not. The caller
-      frees the layout. }
+    { The layout of a unit file, its interface and its implementation section. Units of the
+      program that it refers to are looked for in AOwnDirectory: their numbering moves
+      between compiles, their names do not. The caller frees the layout. }
     function Read(const APPUPath, AOwnDirectory: string): TLayout;
-    { Reads ppudump's JSON, as Dump returns it, as a layout; AOwnDirectory as for Read. }
+    { Reads ppudump's JSON, as Dump returns it, as the layout of the interface; AOwnDirectory
+      as for Read. }
     function ReadJSON(const AJSON, AOwnDirectory: string): TLayout;
+    { Reads ppudump's text, as DumpText returns it, as the layout of the implementation
+      section; AOwnDirectory as for Read. }
+    function ReadText(const AText, AOwnDirectory: string): TLayout;
     property PPUDump: string read FPPUDump;
   end;
 
@@ -917,6 +931,93 @@ type
     constructor Create(const AReader: TLayoutReader; const AOwnDirectory: string);
     destructor Destroy; override;
     function Build(const AJSON: string): TLayout;
+  end;
+
+{ ppudump's text is a list of blocks: "** Definition Id 5 **" or "** Symbol Id 8 **", a line
+  that says what it is ("Record definition", "Global Variable symbol Calls") and "key : value"
+  lines. A block indented by four more is inside the one before it, as a record's fields are.
+  A reference is "(offset) DefId 5" for a definition of the unit and "(offset) Unit 0, DefId
+  8" for one of the unit that the DerefMap numbers 0. The numbers move between compiles. }
+
+const
+  DefinitionHeader = '** Definition Id ';
+  SymbolHeader = '** Symbol Id ';
+  HeaderEnd = ' **';
+  DerefMapEntry = 'DerefMap[';
+  StaticSymbolsTitle = 'Static Symbols';
+  NestingIndent = 4;
+  MaximumNesting = 8;
+  UnitReference = 'Unit ';
+  DefinitionReference = 'DefId ';
+  NilReference = 'Nil';
+  SymbolReferenceText = 'symbol';
+  VariableKind = 'Global Variable symbol ';
+  TypeKind = 'Type symbol ';
+  FieldKind = 'Field Variable symbol ';
+  RecordKind = 'Record definition';
+  ClassKind = 'Object/Class definition';
+  VariableTypeKey = 'Var Type';
+  ResultTypeKey = 'Result Type';
+  AddressKey = 'Address';
+  RecordNameKey = 'Name of Record';
+  ClassNameKey = 'Name of Class';
+  { Keys that differ between compiles, follow from how the code uses a type, or are names. }
+  IgnoredTextKeys: array[0..18] of string = ('Type symbol', 'DefOptions', 'DefStates', 'File Pos',
+    'Visibility', 'SymOptions', 'Procsym', 'Class', 'VmtField', 'Import Nr', 'Number', 'Level',
+    'Mangled name', 'Alias names', 'Symtable options', 'Symtable count', 'Symtable level',
+    RecordNameKey, ClassNameKey);
+
+type
+  { One block of ppudump's text. }
+  TDumpBlock = class
+  private
+    FKind: string;
+    FValues: TStringList;
+    FChildren: TList;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    property Kind: string read FKind write FKind;
+    { The "key : value" lines as key=value, in their order. }
+    property Values: TStringList read FValues;
+    { The blocks inside this one. }
+    property Children: TList read FChildren;
+  end;
+
+  { One unit file as ppudump's text describes it. }
+  TUnitText = class
+  private
+    FBlocks: TObjectList;
+    FUnits: TStringList;
+    FDefinitions: TStringList;
+    FStaticSymbols: TList;
+    procedure Parse(const AText: string);
+  public
+    constructor Create(const AText: string);
+    destructor Destroy; override;
+    { The unit's definition with that number, or nil. }
+    function Definition(const AIdentifier: string): TDumpBlock;
+    { The units that references number, from the DerefMap. }
+    property Units: TStringList read FUnits;
+    { The symbols of the implementation section. }
+    property StaticSymbols: TList read FStaticSymbols;
+  end;
+
+  { One reading of the implementation section of one unit file, with the units of the
+    program it refers to. }
+  TImplementationBuilder = class
+  private
+    FReader: TLayoutReader;
+    FOwnDirectory: string;
+    FOthers: TStringList;
+    function Other(const AUnitName: string): TUnitText;
+    function Reference(const AText: TUnitText; const AValue: string; const ADepth: Integer): string;
+    function Describe(const AText: TUnitText; const AIdentifier, APrefix: string; const ADepth: Integer): string;
+    function Canonical(const AText: TUnitText; const ABlock: TDumpBlock; const ADepth: Integer): string;
+  public
+    constructor Create(const AReader: TLayoutReader; const AOwnDirectory: string);
+    destructor Destroy; override;
+    function Build(const AText: string): TLayout;
   end;
 
 { A JSON value as text: strings as they are, numbers and the rest as JSON. }
@@ -1126,6 +1227,317 @@ begin
   end;
 end;
 
+{ A value without the offset that ppudump puts in front of a reference. }
+function WithoutOffset(const AValue: string): string;
+begin
+  Result := Trim(AValue);
+  if (Result <> '') and (Result[1] = '(') and (Pos(')', Result) > 0) then
+    Result := Trim(Copy(Result, Pos(')', Result) + 1, MaxInt));
+end;
+
+function IsIgnoredTextKey(const AKey: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to High(IgnoredTextKeys) do
+    if AKey = IgnoredTextKeys[I] then
+      Exit(True);
+end;
+
+constructor TDumpBlock.Create;
+begin
+  inherited Create;
+  FValues := TStringList.Create;
+  FChildren := TList.Create;
+end;
+
+destructor TDumpBlock.Destroy;
+begin
+  FChildren.Free;
+  FValues.Free;
+  inherited Destroy;
+end;
+
+constructor TUnitText.Create(const AText: string);
+begin
+  inherited Create;
+  FBlocks := TObjectList.Create(True);
+  FUnits := TStringList.Create;
+  FDefinitions := TStringList.Create;
+  FDefinitions.Sorted := True;
+  FDefinitions.Duplicates := dupIgnore;
+  FStaticSymbols := TList.Create;
+  Parse(AText);
+end;
+
+destructor TUnitText.Destroy;
+begin
+  FStaticSymbols.Free;
+  FDefinitions.Free;
+  FUnits.Free;
+  FBlocks.Free;
+  inherited Destroy;
+end;
+
+procedure TUnitText.Parse(const AText: string);
+var
+  Lines: TStringList;
+  I, K, Depth, Separator, UnitIndex: Integer;
+  Line, Trimmed, Section, Identifier: string;
+  Block: TDumpBlock;
+  Open: array[0..MaximumNesting] of TDumpBlock;
+  KindNext: Boolean;
+begin
+  for K := 0 to MaximumNesting do
+    Open[K] := nil;
+  Section := '';
+  Block := nil;
+  KindNext := False;
+  Lines := TStringList.Create;
+  try
+    Lines.Text := AText;
+    for I := 0 to Lines.Count - 1 do
+    begin
+      Line := Lines[I];
+      Trimmed := Trim(Line);
+      if Trimmed = '' then
+        Continue;
+      { a title is underlined from the start of the line; it ends the block before it }
+      if (Line[1] = '-') and (Trimmed = StringOfChar('-', Length(Trimmed))) then
+      begin
+        if I > 0 then
+          Section := Trim(Lines[I - 1]);
+        Block := nil;
+        Continue;
+      end;
+      if StartsWith(Trimmed, DefinitionHeader) or StartsWith(Trimmed, SymbolHeader) then
+      begin
+        Depth := (Length(Line) - Length(TrimLeft(Line))) div NestingIndent;
+        if Depth > MaximumNesting then
+          Depth := MaximumNesting;
+        Block := TDumpBlock.Create;
+        FBlocks.Add(Block);
+        Open[Depth] := Block;
+        for K := Depth + 1 to MaximumNesting do
+          Open[K] := nil;
+        if (Depth > 0) and (Open[Depth - 1] <> nil) then
+          Open[Depth - 1].Children.Add(Block);
+        if StartsWith(Trimmed, DefinitionHeader) then
+        begin
+          Identifier := Copy(Trimmed, Length(DefinitionHeader) + 1,
+            Length(Trimmed) - Length(DefinitionHeader) - Length(HeaderEnd));
+          FDefinitions.AddObject(Identifier, Block);
+        end
+        else if (Depth = 0) and (Section = StaticSymbolsTitle) then
+          FStaticSymbols.Add(Block);
+        KindNext := True;
+        Continue;
+      end;
+      if Block = nil then
+      begin
+        if StartsWith(Trimmed, DerefMapEntry) then
+        begin
+          UnitIndex := StrToIntDef(Copy(Trimmed, Length(DerefMapEntry) + 1,
+            Pos(']', Trimmed) - Length(DerefMapEntry) - 1), -1);
+          if UnitIndex >= 0 then
+          begin
+            while FUnits.Count <= UnitIndex do
+              FUnits.Add('');
+            FUnits[UnitIndex] := Trim(Copy(Trimmed, Pos('=', Trimmed) + 1, MaxInt));
+          end;
+        end;
+        Continue;
+      end;
+      if KindNext then
+      begin
+        Block.Kind := Trimmed;
+        KindNext := False;
+        Continue;
+      end;
+      Separator := Pos(':', Trimmed);
+      if Separator > 0 then
+        Block.Values.Add(Trim(Copy(Trimmed, 1, Separator - 1)) + '=' + Trim(Copy(Trimmed, Separator + 1, MaxInt)));
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+function TUnitText.Definition(const AIdentifier: string): TDumpBlock;
+var
+  Index: Integer;
+begin
+  Index := FDefinitions.IndexOf(AIdentifier);
+  if Index < 0 then
+    Result := nil
+  else
+    Result := TDumpBlock(FDefinitions.Objects[Index]);
+end;
+
+constructor TImplementationBuilder.Create(const AReader: TLayoutReader; const AOwnDirectory: string);
+begin
+  inherited Create;
+  FReader := AReader;
+  FOwnDirectory := AOwnDirectory;
+  FOthers := TStringList.Create;
+end;
+
+destructor TImplementationBuilder.Destroy;
+var
+  I: Integer;
+begin
+  for I := 0 to FOthers.Count - 1 do
+    FOthers.Objects[I].Free;
+  FOthers.Free;
+  inherited Destroy;
+end;
+
+{ The text of a unit of the program, or nil for a unit that is not the program's (the
+  runtime's units don't change while it runs). }
+function TImplementationBuilder.Other(const AUnitName: string): TUnitText;
+var
+  Index: Integer;
+  UnitRecord: string;
+begin
+  Index := FOthers.IndexOf(AUnitName);
+  if Index < 0 then
+  begin
+    UnitRecord := FindFileIgnoringCase(FOwnDirectory, AUnitName + PPUExtension);
+    if UnitRecord = '' then
+      Index := FOthers.AddObject(AUnitName, nil)
+    else
+      Index := FOthers.AddObject(AUnitName, TUnitText.Create(FReader.DumpText(UnitRecord)));
+  end;
+  Result := TUnitText(FOthers.Objects[Index]);
+end;
+
+function TImplementationBuilder.Reference(const AText: TUnitText; const AValue: string;
+  const ADepth: Integer): string;
+var
+  Value, UnitName: string;
+  Comma, UnitIndex: Integer;
+  OtherText: TUnitText;
+begin
+  Value := WithoutOffset(AValue);
+  if Value = NilReference then
+    Exit(NilReference);
+  if StartsWith(Value, UnitReference) then
+  begin
+    Comma := Pos(',', Value);
+    UnitIndex := StrToIntDef(Copy(Value, Length(UnitReference) + 1, Comma - Length(UnitReference) - 1), -1);
+    if (Comma = 0) or (UnitIndex < 0) or (UnitIndex >= AText.Units.Count) then
+      Exit(UnknownType);
+    UnitName := AText.Units[UnitIndex];
+    Value := Trim(Copy(Value, Comma + 1, MaxInt));
+    if not StartsWith(Value, DefinitionReference) then
+      Exit(SymbolReferenceText);
+    Value := Copy(Value, Length(DefinitionReference) + 1, MaxInt);
+    OtherText := Other(UnitName);
+    if OtherText = nil then
+      Exit(UnitName + '#' + Value);
+    Exit(Describe(OtherText, Value, UnitName + '.', ADepth));
+  end;
+  if StartsWith(Value, DefinitionReference) then
+    Exit(Describe(AText, Copy(Value, Length(DefinitionReference) + 1, MaxInt), '', ADepth));
+  Result := SymbolReferenceText;
+end;
+
+{ A definition as its name when it is a named record or class, which has a layout of its
+  own, and as its whole text otherwise: an array's or a set's size is in its text. }
+function TImplementationBuilder.Describe(const AText: TUnitText; const AIdentifier, APrefix: string;
+  const ADepth: Integer): string;
+var
+  Block: TDumpBlock;
+  Name: string;
+begin
+  Block := AText.Definition(AIdentifier);
+  if Block = nil then
+    Exit(APrefix + '#' + AIdentifier);
+  Name := Block.Values.Values[RecordNameKey];
+  if Name = '' then
+    Name := Block.Values.Values[ClassNameKey];
+  if (Name <> '') and (Name[1] <> '$') then
+    Exit(APrefix + Name);
+  Result := Canonical(AText, Block, ADepth + 1);
+end;
+
+function TImplementationBuilder.Canonical(const AText: TUnitText; const ABlock: TDumpBlock;
+  const ADepth: Integer): string;
+var
+  Lines: TStringList;
+  I: Integer;
+  Key, Value: string;
+  Field: TDumpBlock;
+begin
+  if ADepth > MaximumDepth then
+    Exit(DepthLimitMarker);
+  Lines := TStringList.Create;
+  try
+    { ppudump prints some keys twice in different case (RecordAlignMin, recordalignmin) }
+    Lines.CaseSensitive := True;
+    for I := 0 to ABlock.Values.Count - 1 do
+    begin
+      Key := ABlock.Values.Names[I];
+      if IsIgnoredTextKey(Key) then
+        Continue;
+      Value := ABlock.Values.ValueFromIndex[I];
+      if (Value <> '') and (Value[1] = '(') then
+        Value := Reference(AText, Value, ADepth);
+      Lines.Add(Key + '=' + Value);
+    end;
+    Lines.Sort;
+    Result := '{' + ABlock.Kind;
+    for I := 0 to Lines.Count - 1 do
+      Result := Result + ' ' + Lines[I];
+    for I := 0 to ABlock.Children.Count - 1 do
+    begin
+      Field := TDumpBlock(ABlock.Children[I]);
+      if StartsWith(Field.Kind, FieldKind) then
+        Result := Result + ' ' + Copy(Field.Kind, Length(FieldKind) + 1, MaxInt) + ':'
+          + Reference(AText, Field.Values.Values[VariableTypeKey], ADepth) + '@' + Field.Values.Values[AddressKey];
+    end;
+    Result := Result + ' }';
+  finally
+    Lines.Free;
+  end;
+end;
+
+function TImplementationBuilder.Build(const AText: string): TLayout;
+var
+  Text: TUnitText;
+  I: Integer;
+  Symbol, Definition: TDumpBlock;
+  Name, Value: string;
+begin
+  Result := TLayout.Create;
+  Text := TUnitText.Create(AText);
+  try
+    for I := 0 to Text.StaticSymbols.Count - 1 do
+    begin
+      Symbol := TDumpBlock(Text.StaticSymbols[I]);
+      if StartsWith(Symbol.Kind, VariableKind) then
+      begin
+        Name := Copy(Symbol.Kind, Length(VariableKind) + 1, MaxInt);
+        if (Name <> '') and (Name[1] <> '$') then
+          Result.Values[VariablePrefix + Name] := Reference(Text, Symbol.Values.Values[VariableTypeKey], 0);
+      end
+      else if StartsWith(Symbol.Kind, TypeKind) then
+      begin
+        Name := Copy(Symbol.Kind, Length(TypeKind) + 1, MaxInt);
+        Value := WithoutOffset(Symbol.Values.Values[ResultTypeKey]);
+        if (Name = '') or (Name[1] = '$') or not StartsWith(Value, DefinitionReference) then
+          Continue;
+        Definition := Text.Definition(Copy(Value, Length(DefinitionReference) + 1, MaxInt));
+        if (Definition <> nil) and ((Definition.Kind = RecordKind) or (Definition.Kind = ClassKind)) then
+          Result.Values[TypePrefix + Name] := Canonical(Text, Definition, 0);
+      end;
+    end;
+  finally
+    Text.Free;
+  end;
+end;
+
 constructor TLayoutReader.Create(const APPUDump: string);
 begin
   inherited Create;
@@ -1136,6 +1548,12 @@ function TLayoutReader.Dump(const APPUPath: string): string;
 begin
   Result := '';
   RunCommand(FPPUDump, [JSONDumpOption, APPUPath], Result, [poStderrToOutPut]);
+end;
+
+function TLayoutReader.DumpText(const APPUPath: string): string;
+begin
+  Result := '';
+  RunCommand(FPPUDump, [APPUPath], Result, [poStderrToOutPut]);
 end;
 
 class function TLayoutReader.Locate(const ACompiler, AExecutableExtension, ASearchPath: string): string;
@@ -1180,8 +1598,28 @@ begin
 end;
 
 function TLayoutReader.Read(const APPUPath, AOwnDirectory: string): TLayout;
+var
+  Section: TLayout;
 begin
   Result := ReadJSON(Dump(APPUPath), AOwnDirectory);
+  Section := ReadText(DumpText(APPUPath), AOwnDirectory);
+  try
+    Result.AddStrings(Section);
+  finally
+    Section.Free;
+  end;
+end;
+
+function TLayoutReader.ReadText(const AText, AOwnDirectory: string): TLayout;
+var
+  Builder: TImplementationBuilder;
+begin
+  Builder := TImplementationBuilder.Create(Self, AOwnDirectory);
+  try
+    Result := Builder.Build(AText);
+  finally
+    Builder.Free;
+  end;
 end;
 
 function TLayoutReader.ReadJSON(const AJSON, AOwnDirectory: string): TLayout;
@@ -1256,6 +1694,7 @@ begin
     Index := FLive.AddObject(APPUName, FReader.Read(FLiveDirectory + APPUName, FLiveDirectory));
   Fresh := FReader.Read(FUnitsDirectory + APPUName, FUnitsDirectory);
   Result := DifferingDeclarations(TLayout(FLive.Objects[Index]), Fresh);
+
   if Result.Count > 0 then
     Fresh.Free
   else
@@ -1687,11 +2126,6 @@ const
   AgentOptionPrefixes: array[0..13] of string = ('-T', '-P', '-Cp', '-Cf', '-Ca', '-XP', '-Fl', '-Fu',
     '-k', '-XR', '-Xd', '-n', '@', '-V');
   RequirementText = ' or later';
-
-function StartsWith(const AText, APrefix: string): Boolean; inline;
-begin
-  Result := Copy(AText, 1, Length(APrefix)) = APrefix;
-end;
 
 function StartsWithAny(const AText: string; const APrefixes: array of string): Boolean;
 var
@@ -2335,7 +2769,7 @@ begin
   Result := True;
 end;
 
-{ The interface of each changed unit, as the compiler wrote it down: a field that moved or
+{ Each changed unit as the compiler wrote it down: a field that moved or a variable that
   changed its type without changing a size is invisible in the object file. }
 function TDriver.LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
   out AInterfaceSeconds: Double): Boolean;
@@ -3482,10 +3916,10 @@ begin
   end;
 end;
 
-// ---------------------------------------------------------------- tests: interface layouts (ppudump)
-{ The check of interface layouts on ppudump's JSON as text: what a layout holds, what makes
-  two layouts differ and what does not, how the units of the program are referred to, the
-  probe of a ppudump, and the history of layouts across swaps. ppudump itself is not run: a
+// ---------------------------------------------------------------- tests: layouts (ppudump)
+{ The check of layouts on ppudump's JSON and text output as text: what a layout holds, what
+  makes two layouts differ and what does not, how the units of the program are referred to,
+  the probe of a ppudump, and the history of layouts across swaps. ppudump itself is not run: a
   reader that answers from a table takes its place. }
 
 type
@@ -3496,11 +3930,18 @@ type
     FOutputs: TStringList;
   protected
     function Dump(const APPUPath: string): string; override;
+    function DumpText(const APPUPath: string): string; override;
   public
     constructor Create;
     destructor Destroy; override;
+    { The JSON for the file. }
     procedure Register(const APath, AOutput: string);
+    { The text for the file. }
+    procedure RegisterText(const APath, AOutput: string);
   end;
+
+const
+  TextDumpSuffix = '#text';
 
 constructor TTableReader.Create;
 begin
@@ -3539,6 +3980,16 @@ begin
     Result := 'Error: no such unit'
   else
     Result := FOutputs[Index];
+end;
+
+function TTableReader.DumpText(const APPUPath: string): string;
+begin
+  Result := Dump(APPUPath + TextDumpSuffix);
+end;
+
+procedure TTableReader.RegisterText(const APath, AOutput: string);
+begin
+  Register(APath + TextDumpSuffix, AOutput);
 end;
 
 { A unit with a record of two fields, a class that has one of them and an integer, a compiler
@@ -3780,6 +4231,239 @@ begin
     'a bare fpc on the search path is fpc.exe on Windows');
 end;
 
+{ The lines of a text, each ended. }
+function TextOfLines(const ALines: array of string): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to High(ALines) do
+    Result := Result + ALines[I] + LineEnding;
+end;
+
+{ ppudump's text for a unit whose implementation section has a record TR with the fields
+  AFirst and ASecond, and the variables Calls (of the system unit's type ACallsType), Rec (a
+  TR), Table (an array of TR) and the compiler's $hidden. ARecord numbers TR and the array
+  comes after it: a definition added above them renumbers both. }
+function UnitText(const AFirst, ASecond: string; const ACallsType: Integer; const ARecord: Integer = 2): string;
+begin
+  Result := TextOfLines([
+    'PPU-Analyser Version 3.2.2',
+    '',
+    'Interface section',
+    '------------------',
+    'Module Name: a',
+    'DerefMapsize: 1',
+    'DerefMap[0] = SYSTEM',
+    '',
+    'Implementation symtable',
+    '----------------------',
+    'Symtable options: none',
+    '',
+    'Static definitions',
+    '----------------------',
+    '** Definition Id ' + IntToStr(ARecord) + ' **',
+    'Record definition',
+    '      Type symbol : (48) SymId 9',
+    '        DefStates : ',
+    '   Name of Record : TR',
+    '         DataSize : 8',
+    '    ------ fields ------',
+    '    Symtable count: 2',
+    '    ** Symbol Id 4 **',
+    '    Field Variable symbol ' + AFirst,
+    '         File Pos : 1 (5,18)',
+    '         Var Type : (56) Unit 0, DefId 8',
+    '          Address : 0',
+    '    ** Symbol Id 5 **',
+    '    Field Variable symbol ' + ASecond,
+    '         File Pos : 1 (5,21)',
+    '         Var Type : (65) Unit 0, DefId 8',
+    '          Address : 4',
+    '** Definition Id ' + IntToStr(ARecord + 1) + ' **',
+    'Array definition',
+    '      Type symbol : (649) Nil',
+    '     Element type : (653) DefId ' + IntToStr(ARecord),
+    '            Range : 0 to 3',
+    'Symtable options: none',
+    '',
+    'Static Symbols',
+    '------------------',
+    'Symtable count: 5',
+    '** Symbol Id 6 **',
+    'Global Variable symbol Calls',
+    '     File Pos : 1 (7,3)',
+    '     Var Type : (86) Unit 0, DefId ' + IntToStr(ACallsType),
+    '      Options : TypedConst',
+    '** Symbol Id 7 **',
+    'Global Variable symbol Rec',
+    '     Var Type : (99) DefId ' + IntToStr(ARecord),
+    '** Symbol Id 8 **',
+    'Global Variable symbol Table',
+    '     Var Type : (112) DefId ' + IntToStr(ARecord + 1),
+    '** Symbol Id 9 **',
+    'Type symbol TR',
+    '  Result Type : (80) DefId ' + IntToStr(ARecord),
+    '** Symbol Id 10 **',
+    'Global Variable symbol $hidden',
+    '     Var Type : (120) Unit 0, DefId 8',
+    '',
+    'WPO info',
+    '--------']);
+end;
+
+{ ppudump's text for a unit whose implementation section has a variable of a record type of
+  another unit of the program, which numbers that type AOtherId; the other unit comes second
+  in the DerefMap. }
+function ReferringText(const AOtherId: Integer): string;
+begin
+  Result := TextOfLines([
+    'Interface section',
+    '------------------',
+    'DerefMap[0] = SYSTEM',
+    'DerefMap[1] = OTHER',
+    'Static Symbols',
+    '------------------',
+    '** Symbol Id 3 **',
+    'Global Variable symbol Shared',
+    '     Var Type : (40) Unit 1, DefId ' + IntToStr(AOtherId)]);
+end;
+
+function OtherText(const AOtherId: Integer): string;
+begin
+  Result := TextOfLines([
+    'Interface definitions',
+    '----------------------',
+    '** Definition Id ' + IntToStr(AOtherId) + ' **',
+    'Record definition',
+    '   Name of Record : TShared',
+    '         DataSize : 4']);
+end;
+
+procedure TestImplementationContent;
+var
+  Reader: TLayoutReader;
+  Layout: TLayout;
+begin
+  Reader := TLayoutReader.Create('ppudump');
+  try
+    Layout := Reader.ReadText(UnitText('X', 'Y', 8), '');
+    try
+      ExpectEqual(Layout.Count, 4, 'three variables and a record; the compiler''s own variable is left out');
+      ExpectEqual(Layout.Values['variable Calls'], 'SYSTEM#8', 'a variable of a type of the runtime');
+      ExpectEqual(Layout.Values['variable Rec'], 'TR', 'a variable of a record of the unit is its name');
+      ExpectEqual(Layout.Values['variable Table'], '{Array definition Element type=TR Range=0 to 3 }',
+        'a variable of another type is that type''s text');
+      ExpectEqual(Layout.Values['type TR'], '{Record definition DataSize=8 X:SYSTEM#8@0 Y:SYSTEM#8@4 }',
+        'a record is its size and its fields with their types and places');
+    finally
+      Layout.Free;
+    end;
+    Layout := Reader.ReadText('Error: Unsupported PPU version', '');
+    try
+      ExpectEqual(Layout.Count, 0, 'an error message is an empty layout');
+    finally
+      Layout.Free;
+    end;
+  finally
+    Reader.Free;
+  end;
+end;
+
+procedure TestImplementationDifferences;
+var
+  Reader: TLayoutReader;
+  Original, Changed: TLayout;
+  Differing: TStringList;
+  Shifted: string;
+begin
+  Reader := TLayoutReader.Create('ppudump');
+  Original := Reader.ReadText(UnitText('X', 'Y', 8), '');
+  try
+    Changed := Reader.ReadText(UnitText('X', 'Y', 8, 5), '');
+    Differing := TLayoutHistory.DifferingDeclarations(Original, Changed);
+    ExpectEqual(Differing.Count, 0, 'definitions that were numbered again');
+    Differing.Free;
+    Changed.Free;
+    { the same unit after an edit above it: positions, offsets and symbol numbers moved }
+    Shifted := StringReplace(UnitText('X', 'Y', 8), '(5,', '(50,', [rfReplaceAll]);
+    Shifted := StringReplace(Shifted, '(56)', '(156)', [rfReplaceAll]);
+    Shifted := StringReplace(Shifted, 'SymId 9', 'SymId 19', [rfReplaceAll]);
+    Changed := Reader.ReadText(Shifted, '');
+    Differing := TLayoutHistory.DifferingDeclarations(Original, Changed);
+    ExpectEqual(Differing.Count, 0, 'positions, offsets and symbol numbers are not part of a layout');
+    Differing.Free;
+    Changed.Free;
+    Changed := Reader.ReadText(UnitText('X', 'Y', 9), '');
+    Differing := TLayoutHistory.DifferingDeclarations(Original, Changed);
+    ExpectEqual(Differing.CommaText, '"variable Calls"', 'a variable of another type, such as Integer to Int64');
+    Differing.Free;
+    Changed.Free;
+    Changed := Reader.ReadText(UnitText('Y', 'X', 8), '');
+    Differing := TLayoutHistory.DifferingDeclarations(Original, Changed);
+    ExpectEqual(Differing.CommaText, '"type TR"', 'fields that swapped places');
+    Differing.Free;
+    Changed.Free;
+    Changed := Reader.ReadText(StringReplace(UnitText('X', 'Y', 8), '0 to 3', '0 to 7', []), '');
+    Differing := TLayoutHistory.DifferingDeclarations(Original, Changed);
+    ExpectEqual(Differing.CommaText, '"variable Table"', 'an array that grew');
+    Differing.Free;
+    Changed.Free;
+  finally
+    Original.Free;
+  end;
+  { ppudump prints a record's minimum alignment twice, as RecordAlignMin and recordalignmin }
+  Original := Reader.ReadText(StringReplace(UnitText('X', 'Y', 8), '         DataSize : 8',
+    '         DataSize : 8' + LineEnding + '   RecordAlignMin : 0' + LineEnding + '     recordalignmin: 0', []), '');
+  Changed := Reader.ReadText(StringReplace(UnitText('X', 'Y', 8), '         DataSize : 8',
+    '         DataSize : 8' + LineEnding + '     recordalignmin: 0' + LineEnding + '   RecordAlignMin : 0', []), '');
+  try
+    Differing := TLayoutHistory.DifferingDeclarations(Original, Changed);
+    ExpectEqual(Differing.Count, 0, 'keys that differ only in case are in the same order whatever order ppudump prints them in');
+    Differing.Free;
+  finally
+    Changed.Free;
+    Original.Free;
+    Reader.Free;
+  end;
+end;
+
+procedure TestImplementationUnitsOfTheProgram;
+var
+  Reader: TTableReader;
+  Root: string;
+  Layout: TLayout;
+begin
+  Root := MakeTestDirectory('implementation');
+  WriteTestFile(Root + 'other.ppu', '');
+  Reader := TTableReader.Create;
+  try
+    Reader.RegisterText(Root + 'other.ppu', OtherText(5));
+    Layout := Reader.ReadText(ReferringText(5), Root);
+    try
+      ExpectEqual(Layout.Values['variable Shared'], 'OTHER.TShared', 'a record of another unit of the program is named');
+    finally
+      Layout.Free;
+    end;
+    Reader.RegisterText(Root + 'other.ppu', OtherText(9));
+    Layout := Reader.ReadText(ReferringText(9), Root);
+    try
+      ExpectEqual(Layout.Values['variable Shared'], 'OTHER.TShared', 'whatever its number');
+    finally
+      Layout.Free;
+    end;
+    Layout := Reader.ReadText(ReferringText(9), Root + 'nowhere' + PathDelim);
+    try
+      ExpectEqual(Layout.Values['variable Shared'], 'OTHER#9',
+        'a unit that is not among the program''s is referred to by number');
+    finally
+      Layout.Free;
+    end;
+  finally
+    Reader.Free;
+  end;
+end;
+
 procedure TestHistory;
 var
   Reader: TTableReader;
@@ -3819,6 +4503,14 @@ begin
     ExpectEqual(Differing.CommaText, '"type TPoint"', 'after a swap the next change is compared with it');
     Differing.Free;
     History.Accept('b.ppu');
+    { the implementation section is part of the layout }
+    Reader.Register(Live + 'c.ppu', UnitJSON('X', 'Y', 10));
+    Reader.RegisterText(Live + 'c.ppu', UnitText('X', 'Y', 8));
+    Reader.Register(Units + 'c.ppu', UnitJSON('X', 'Y', 10));
+    Reader.RegisterText(Units + 'c.ppu', UnitText('X', 'Y', 9));
+    Differing := History.Differences('c.ppu');
+    ExpectEqual(Differing.CommaText, '"variable Calls"', 'a variable of the implementation section that changed its type');
+    Differing.Free;
   finally
     History.Free;
     Reader.Free;
@@ -4476,6 +5168,9 @@ begin
     TestDifferences;
     TestPositionsDoNotMatter;
     TestUnitsOfTheProgram;
+    TestImplementationContent;
+    TestImplementationDifferences;
+    TestImplementationUnitsOfTheProgram;
     TestProbe;
     TestLocate;
     TestHistory;
