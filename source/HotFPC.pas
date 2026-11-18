@@ -247,7 +247,7 @@ end;
   the program's. }
 
 const
-  HotFPCVersion = '1.0.0';
+  HotFPCVersion = '1.1.0';
   UsageText = 'usage: hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet] '
     + '[--no-restart] [--settle MS] [--log FILE] [fpc options] program.pas [-- program arguments]';
   { The environment variables the driver reads. }
@@ -3529,7 +3529,7 @@ begin
   Options := ParseArguments(['--', 'a.pas'], False, Action);
   Options.Free;
   Expect(Action = caShowUsage, 'a source after the separator is the program''s');
-  ExpectEqual(HotFPCVersion, '1.0.0', 'the version');
+  ExpectEqual(HotFPCVersion, '1.1.0', 'the version');
   Expect(Pos('usage: hotfpc [--version]', UsageText) = 1, 'the usage line starts as before');
 end;
 
