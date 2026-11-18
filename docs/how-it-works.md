@@ -75,8 +75,12 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    record of the changed units so they're recompiled. A changed include file causes every
    unit to be recompiled; units whose object file comes out the same are left alone.
 2. fpc compiles without linking (`-Cn`).
-3. ppudump reads the interface of each changed unit. A field that moved or changed its type
-   without changing a size is invisible in the object file, so this check catches it.
+3. ppudump reads each changed unit: the interface from its JSON output, and the
+   implementation section from its text output, which the JSON leaves out. A field that
+   moved, or a field or variable that changed its type without changing a size, is
+   invisible in the object file, so this check catches it. The check compares each record
+   and class and the type of each variable with the running unit's, by name, because the
+   compiler numbers types again on every compile.
 4. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
    next to the program. Like a linker, it works out which parts the program can reach.
    Type information that nothing uses is never read, because it may refer to things the
@@ -96,9 +100,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
 
 An edit needs a restart when the running state depends on what it changes:
 
-- a variable's size;
+- a variable's size or type;
 - a class's instance size or virtual method table shape;
-- a record's or object's layout in an interface;
+- a record's or class's layout;
 - a new unit or a new thread variable;
 - a routine of the runtime that the program was linked without.
 
@@ -160,8 +164,11 @@ program that ends with 0, and the first program in every case, end hotfpc as bef
     sections' addresses in the linker's map.
   - fpc gives a variable with an initial value a section of its own and pads it to 16
     bytes, on Linux and Windows alike. On Linux the agent takes the variable's size from
-    the ELF symbol; COFF symbols have no size, so on Windows such a variable that grows
-    (`Integer = 0` to `Int64 = 0`) isn't caught and needs a restart by hand.
+    the ELF symbol. COFF symbols have no size, so on Windows it's the unit file that shows
+    such a variable growing (`Integer = 0` to `Int64 = 0`): its type changed. fpc writes
+    no unit file for the program, and fpc 3.2 leaves an implementation section's typed
+    constant out of it, so on Windows such a variable of the program, or with fpc 3.2
+    such a constant, that grows isn't caught and needs a restart by hand.
   - fpc's Windows linker always leaves out code the program never reaches. New code that
     calls a runtime routine the program never called (`SysUtils.Supports`, for example)
     needs a restart. Linux and macOS link the whole unit.

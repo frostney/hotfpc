@@ -155,7 +155,7 @@ hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
 | Option | What it does |
 | --- | --- |
 | `--fpc FPC` | The compiler to use (default: `fpc`). |
-| `--ppudump PPUDUMP` | ppudump from the same compiler, for checking interface layouts (default: the one next to the compiler). Without it, or with one that can't read the compiler's units, the check is off and hotfpc says so at the start. |
+| `--ppudump PPUDUMP` | ppudump from the same compiler, for checking the layouts of records, classes and variables (default: the one next to the compiler). Without it, or with one that can't read the compiler's units, the check is off and hotfpc says so at the start. |
 | `--run LAUNCHER` | A program to start the built program with. The default is `wine` when the target is Windows (`-Twin64`) and hotfpc isn't running on Windows. A restart stops the launcher, so a launcher that runs the program as its child has to end it too; hotfpc says so when the old program's connection stays open. |
 | `--settle MS` | How long a saved file has to stay unchanged before hotfpc compiles it (default: 2 ms). |
 | `--log FILE` | Writes a copy of every line hotfpc prints, with times. |
@@ -228,14 +228,14 @@ the unit. A unit with about 500 functions takes 0.5 to 1.1 s.
 
 ## Limits
 
-- The interface check only covers types in a unit's interface, because ppudump only sees
-  interfaces. If you swap two fields of a class declared in the implementation section,
-  their values swap too.
 - A unit's initialization section doesn't run again, and a new unit needs a restart.
-- On Windows, hotfpc can't see that a variable in the implementation section changed size
-  when it has an initial value (`Calls: Integer = 0` becoming `Int64 = 0`): COFF objects
-  don't state symbol sizes, and fpc pads such a variable's section to 16 bytes. The edit is
-  swapped and the variable keeps its old size, so restart the program yourself after one.
+- On Windows, hotfpc can't see that a variable with an initial value in the program file
+  changed size (`Calls: Integer = 0` becoming `Int64 = 0`), and with fpc 3.2 the same for
+  a typed constant in a unit's implementation section (`const Calls: Integer = 0`). COFF
+  objects don't state symbol sizes, and fpc pads such a variable's section to 16 bytes, so
+  only the unit file shows the new type: fpc writes none for the program, and fpc 3.2
+  leaves such a constant out of it. The edit is swapped and the variable keeps its old
+  size, so restart the program yourself after one.
 - Memory for new code and data is never freed.
 - Hardened and notarised macOS programs aren't supported.
 
@@ -246,7 +246,7 @@ each system needs.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 23 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 25 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```

@@ -6,14 +6,14 @@ $HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
 
   check.py [case ...]
 """
-import os, re, subprocess, sys
+import os, re, shlex, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # case: (reloads applied, refused, failed to compile); rapid may merge two quick saves into one reload
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
-    "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "limits": (2, 1, 0),
+    "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
     "include": (2, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
@@ -21,7 +21,10 @@ EXPECT = {
     # the program starts over: a link that fails counts as a failed compile, and a restarted
     # program that fails is started again by the next save
     "restart": (2, 1, 0), "linkfail": (2, 2, 1), "crash": (0, 1, 0),
-    "initvar": (1, 1, 0),
+    # a variable with an initial value and a typed constant that grow: fpc pads the section
+    # of each to 16 bytes, so the type in the unit file shows it, or the size an ELF object
+    # states (a COFF object on Windows states none)
+    "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (1, 1, 0),
 }
 # case: restarts; every other case passes --no-restart and expects none
 RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2}
@@ -35,6 +38,15 @@ PRINTS = {
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
 LOAD_LIMITS = {"signals": 1000}
+
+
+def fpc_version():
+    """The version of the fpc the driver uses: --fpc in $HOT_DRIVER_OPTS, or fpc."""
+    opts = shlex.split(os.environ.get("HOT_DRIVER_OPTS", ""))
+    fpc = opts[opts.index("--fpc") + 1] if "--fpc" in opts[:-1] else "fpc"
+    return subprocess.run([fpc, "-iV"], capture_output=True, text=True).stdout.strip()
+
+
 if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # fpc's internal linker for Windows always leaves out code the program does not reach,
     # so new code that calls a routine of the runtime the program never called needs a
@@ -42,10 +54,13 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # third step). Linux and macOS link the whole unit.
     EXPECT["interfaces"] = (1, 2, 0)
     EXPECT["newunit"] = (0, 3, 0)
-    # A COFF object has no symbol sizes, and fpc pads the section of a variable with an
-    # initial value to 16 bytes: the agent cannot see that it grew from 4 to 8 bytes, and
-    # the edit is swapped (a known gap on Windows, see README "Limits").
-    EXPECT["initvar"] = (2, 0, 0)
+    # A COFF object states no sizes, so a variable with an initial value that grows inside
+    # the 16 bytes fpc pads its section to shows only in a unit file. fpc writes none for
+    # the program, and fpc 3.2 leaves an implementation section's typed constant out of it:
+    # those edits are swapped (see README "Limits").
+    EXPECT["progvar"] = (2, 0, 0)
+    if fpc_version().startswith("3.2"):
+        EXPECT["typedconst"] = (2, 0, 0)
 names = sys.argv[1:] or list(EXPECT)
 out = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True).stdout
 if os.environ.get("HOT_TRANSCRIPT"):

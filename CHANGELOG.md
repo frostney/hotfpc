@@ -9,11 +9,17 @@
 - A restarted program that fails, for example with a runtime error in an initialization
   section, doesn't end hotfpc: the next save that builds starts it again.
 - The closing summary also counts restarts.
-- On Linux, a variable with an initial value in a unit's implementation section that changes
-  size (`Integer = 0` to `Int64 = 0`) now needs a restart. It used to be swapped, and the
-  new code then wrote past the variable. fpc pads such a variable's section to 16 bytes, so
-  the agent now takes the size from the ELF symbol. Windows objects don't state sizes, so
-  there the gap remains (README "Limits").
+- A variable with an initial value in a unit's implementation section that changes size
+  (`Integer = 0` to `Int64 = 0`) now needs a restart. It used to be swapped on Linux and
+  Windows, and the new code then wrote past the variable: fpc pads such a variable's
+  section to 16 bytes. The agent now takes the size from the ELF symbol on Linux, and the
+  check of layouts finds the new type on every system. On Windows, such a variable in the
+  program file, and with fpc 3.2 a typed constant, still has the gap (README "Limits").
+- The check of layouts now covers a unit's implementation section too, from ppudump's text
+  output: its variables and its records and classes. Swapping two fields of a class
+  declared there, or giving a variable there another type of the same size (`Integer` to
+  `Single`), now needs a restart. Both used to be swapped, and the program then read its
+  old values wrongly. The check takes about 8 ms more per save (macOS, fpc 3.2.4).
 
 ## 1.0.0
 

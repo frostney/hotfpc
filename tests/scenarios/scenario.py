@@ -723,8 +723,10 @@ case("rename", {
      [("u.pas", None, "unit u;\n" + U_RENAMED.replace("first text", "second text")), ("main.pas", "uses SysUtils, w;", "uses SysUtils, u;"), ("w.pas", None, None)]),
 ])
 
-# ---------------------------------------------------------------------------- what the rule cannot see
-case("limits", {
+# ---------------------------------------------------------------------------- the implementation section
+# ppudump's JSON describes only the interface; the implementation section's declarations come
+# from its text
+case("hidden", {
     "main.pas": MAIN,
     "u.pas": r"""unit u;
 {$mode objfpc}{$H+}
@@ -760,8 +762,12 @@ end.
      [("u.pas", "    First: Integer;\n    Second: Integer;", "    Second: Integer;\n    First: Integer;")]),
     ("undone; two fields of a class in the implementation section swap places",
      [("u.pas", "    Second: Integer;\n    First: Integer;", "    First: Integer;\n    Second: Integer;"), ("u.pas", "    A: Integer;\n    B: Integer;", "    B: Integer;\n    A: Integer;")]),
-    ("Calls: Integer in the implementation section becomes Calls: Single (same size)",
-     [("u.pas", "  Calls: Integer;", "  Calls: Single;"), ("u.pas", "  Inc(Calls);", "  Calls := Calls + 1;"), ("u.pas", "calls %d'", "calls %g'")]),
+    ("undone; Calls: Integer in the implementation section becomes Calls: Single (same size)",
+     [("u.pas", "    B: Integer;\n    A: Integer;", "    A: Integer;\n    B: Integer;"),
+      ("u.pas", "  Calls: Integer;", "  Calls: Single;"), ("u.pas", "  Inc(Calls);", "  Calls := Calls + 1;"), ("u.pas", "calls %d'", "calls %g'")]),
+    ("undone, with another text",
+     [("u.pas", "  Calls: Single;", "  Calls: Integer;"), ("u.pas", "  Calls := Calls + 1;", "  Inc(Calls);"), ("u.pas", "calls %g'", "calls %d'"),
+      ("u.pas", "'pair %d", "'PAIR %d")]),
 ])
 
 # ---------------------------------------------------------------------------- a variable with an initial value
@@ -788,6 +794,70 @@ end.
 '''}, [
     ("another text", [("u.pas", "'one calls", "'two calls")]),
     ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
+])
+
+# ---------------------------------------------------------------------------- a typed constant
+# like a variable with an initial value, but fpc 3.2 leaves an implementation section's typed
+# constant out of the unit file
+case("typedconst", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}{$J+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+const
+  Calls: Integer = 0;
+function Tick(n: Integer): string;
+begin
+  Inc(Calls);
+  Result := Format('one calls %d', [Calls]);
+end;
+end.
+'''}, [
+    ("another text", [("u.pas", "'one calls", "'two calls")]),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
+])
+
+# ---------------------------------------------------------------------------- a variable of the program
+# like initvar, but in the program file, for which fpc writes no unit file
+case("progvar", {
+    "main.pas": r'''program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+var
+  Count: Integer = 0;
+  Calls: Integer = 0;
+function Line(n: Integer): string;
+begin
+  Inc(Calls);
+  Result := Tick(n) + Format(' main one %d', [Calls]);
+end;
+begin
+  while Count < StrToInt(ParamStr(1)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Line(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+''',
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+function Tick(n: Integer): string;
+begin
+  Result := Format('n %d', [n]);
+end;
+end.
+'''}, [
+    ("another text", [("main.pas", "' main one", "' main two")]),
+    ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
 ])
 
 # ---------------------------------------------------------------------------- restarts
