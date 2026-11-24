@@ -33,6 +33,8 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2}
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
+    "rapid": [re.compile(r"text five \d+")],
     # a restarted program runs the new code and counts from the start
     "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
 }
@@ -88,7 +90,8 @@ for name in names:
     ticks = [int(tick) for tick, _ in records]
     seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
     ok = ok and seq
-    missing = [text for text in PRINTS.get(name, []) if not re.search(r"tick \d+: " + re.escape(text) + "$", body, re.M)]
+    missing = [text for text in PRINTS.get(name, [])
+               if not re.search(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", body, re.M)]
     ok = ok and not missing
     drift = []
     for tick, text in records if name in COUNTERS else []:
@@ -101,7 +104,7 @@ for name in names:
     ok = ok and not slow
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
-          + "".join("; never printed %r" % text for text in missing)
+          + "".join("; never printed %r" % getattr(text, "pattern", text) for text in missing)
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow))
