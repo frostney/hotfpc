@@ -68,8 +68,8 @@ uses
   sockets;
 {$endif}
 
-{$if not (defined(darwin) and defined(cpuaarch64)) and not (defined(linux) and (defined(cpuaarch64) or defined(cpux86_64))) and not (defined(win64) and defined(cpux86_64))}
-  {$error HotFPC.Agent: Darwin on aarch64, Linux on aarch64 or x86-64, Windows on x86-64 so far}
+{$if not ((defined(darwin) or defined(linux)) and (defined(cpuaarch64) or defined(cpux86_64))) and not (defined(win64) and defined(cpux86_64))}
+  {$error HotFPC.Agent: Darwin and Linux on aarch64 or x86-64, Windows on x86-64 so far}
 {$endif}
 
 const
@@ -203,7 +203,11 @@ const
   MapPrivate = 2;
 {$if defined(darwin)}
   MapAnonymous = $1000;
-  MapJIT = $800;
+{$ifdef cpuaarch64}
+  MapJIT = $800;     // Apple silicon: memory that is writable and executable must be MAP_JIT
+{$else}
+  MapJIT = 0;
+{$endif}
   LowBound = QWord(4) shl 30;     // __PAGEZERO
   ClockMonotonic = 6;
   SignalBlockHow = 1;
@@ -325,7 +329,11 @@ function MachPortDeallocate(ATask, AName: TMachPort): TKernelReturn; cdecl; exte
 function VMDeallocate(ATask: TMachPort; AAddress, ASize: PtrUInt): TKernelReturn; cdecl; external 'c' name 'vm_deallocate';
 function MachErrorString(AKernelResult: TKernelReturn): PChar; cdecl; external 'c' name 'mach_error_string';
 procedure SysICacheInvalidate(AStart: Pointer; ASize: PtrUInt); cdecl; external 'c' name 'sys_icache_invalidate';
+{$ifdef cpuaarch64}
 procedure PThreadJITWriteProtectNP(AEnabled: LongInt); cdecl; external 'c' name 'pthread_jit_write_protect_np';
+{$else}
+function ThreadGetState(AThread: TMachPort; AFlavor: LongInt; AState: Pointer; var ACount: LongWord): TKernelReturn; cdecl; external 'c' name 'thread_get_state';
+{$endif}
 function DyldImageCount: LongWord; cdecl; external 'c' name '_dyld_image_count';
 function DyldGetImageHeader(AIndex: LongWord): Pointer; cdecl; external 'c' name '_dyld_get_image_header';
 function DyldGetImageVMAddrSlide(AIndex: LongWord): PtrInt; cdecl; external 'c' name '_dyld_get_image_vmaddr_slide';
@@ -339,6 +347,9 @@ const
   VM_FLAGS_ANYWHERE = 1;
   VM_FLAGS_OVERWRITE = $4000;
   VM_INHERIT_NONE = 2;
+  X86ThreadState64 = 4;          // x86_THREAD_STATE64
+  X86ThreadStateCount = 42;      // x86_THREAD_STATE64_COUNT: 21 registers of 8 bytes, in 4-byte words
+  X86ThreadStateRIPIndex = 16;   // rax rbx rcx rdx rdi rsi rbp rsp r8..r15, then rip
 {$endif}
 {$ifdef linux}
 function LibCGetTID: LongInt; cdecl; external 'c' name 'gettid';
@@ -834,6 +845,14 @@ const
   MH_OBJECT = 1;
   MH_EXECUTE = 2;
   CPU_TYPE_ARM64 = $0100000C;
+  CPU_TYPE_X86_64 = $01000007;
+{$ifdef cpuaarch64}
+  MachHostCPU = CPU_TYPE_ARM64;
+  MachHostName = 'arm64';
+{$else}
+  MachHostCPU = CPU_TYPE_X86_64;
+  MachHostName = 'x86-64';
+{$endif}
   LC_SEGMENT_64 = $19;
   LC_SYMTAB = 2;
   N_STAB = $e0;
@@ -856,6 +875,16 @@ const
   ARM64_RELOC_GOT_LOAD_PAGEOFF12 = 6;
   ARM64_RELOC_POINTER_TO_GOT = 7;
   ARM64_RELOC_ADDEND = 10;
+  X86_64_RELOC_UNSIGNED = 0;
+  X86_64_RELOC_SIGNED = 1;
+  X86_64_RELOC_BRANCH = 2;
+  X86_64_RELOC_GOT_LOAD = 3;
+  X86_64_RELOC_GOT = 4;
+  X86_64_RELOC_SUBTRACTOR = 5;
+  X86_64_RELOC_SIGNED_1 = 6;
+  X86_64_RELOC_SIGNED_2 = 7;
+  X86_64_RELOC_SIGNED_4 = 8;
+  X86PCRelativeFieldSize = 4;
   MachRelocSymbolMask = $ffffff;
   MachRelocPCRelativeShift = 24;
   MachRelocLengthShift = 25;
@@ -878,6 +907,181 @@ begin
   Result := AName;
 end;
 
+// The relocations of one section, into the neutral form. ASectionAddresses: each section's
+// address in the object file, which a reference without a symbol holds.
+{$ifdef cpuaarch64}
+function ReadMachRelocations(AObjectFile: PObjectFile; ASection: PSection; ASectionAddress: QWord; ARaw: PMachRelocation; ACount: LongWord; const ASectionAddresses: array of QWord): Boolean;
+var
+  RelocationIndex, Bits, SymbolNumber, LengthCode, IsExternal, RelocationType: LongWord;
+  PendingAddend, StoredAddend: Int64;
+  Relocation: TRelocation;
+begin
+  Result := False;
+  PendingAddend := 0;
+  RelocationIndex := 0;
+  while RelocationIndex < ACount do
+  begin
+    Bits := ARaw[RelocationIndex].Bits;
+    SymbolNumber := Bits and MachRelocSymbolMask;
+    LengthCode := (Bits shr MachRelocLengthShift) and MachRelocLengthMask;
+    IsExternal := (Bits shr MachRelocExternalShift) and 1;
+    RelocationType := Bits shr MachRelocTypeShift;
+    FillChar(Relocation, SizeOf(Relocation), 0);
+    Relocation.Offset := LongWord(ARaw[RelocationIndex].r_address);
+    Relocation.Symbol := -1;
+    Relocation.Section := -1;
+    if RelocationType = ARM64_RELOC_ADDEND then   // for the relocation that follows
+    begin
+      PendingAddend := SarLongint(LongInt(SymbolNumber shl MachRelocAddendShift), MachRelocAddendShift);
+      Inc(RelocationIndex);
+      Continue;
+    end;
+    if IsExternal = 1 then Relocation.Symbol := SymbolNumber else Relocation.Section := LongInt(SymbolNumber) - 1;
+    case RelocationType of
+      ARM64_RELOC_UNSIGNED, ARM64_RELOC_SUBTRACTOR:   // the addend is in the bytes
+        begin
+          if ASection^.ZeroFill then StoredAddend := 0
+          else if LengthCode = MachRelocLengthQuad then StoredAddend := PInt64(ASection^.Data + Relocation.Offset)^
+          else StoredAddend := PLongInt(ASection^.Data + Relocation.Offset)^;
+          if RelocationType = ARM64_RELOC_UNSIGNED then
+          begin
+            if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkAbsolute64 else Relocation.Kind := rkAbsolute32;
+            if IsExternal = 1 then Relocation.Addend := StoredAddend
+            else if (Relocation.Section >= 0) and (Relocation.Section < Length(ASectionAddresses)) then
+            begin
+              Relocation.Addend := StoredAddend - Int64(ASectionAddresses[Relocation.Section]);
+              Relocation.TargetOffset := Relocation.Addend;
+              Relocation.HasTargetOffset := True;
+            end
+            else Relocation.Kind := rkUnsupported;
+          end
+          else
+          begin
+            if (RelocationIndex + 1 >= ACount) or ((ARaw[RelocationIndex + 1].Bits shr MachRelocTypeShift) <> ARM64_RELOC_UNSIGNED) or (((ARaw[RelocationIndex + 1].Bits shr MachRelocExternalShift) and 1) = 0) or (IsExternal = 0) then
+            begin
+              Say('error ' + AObjectFile^.UnitName + ': malformed subtractor relocation');
+              Exit;
+            end;
+            if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkSubtract64 else Relocation.Kind := rkSubtract32;
+            Relocation.SecondarySymbol := ARaw[RelocationIndex + 1].Bits and MachRelocSymbolMask;
+            Relocation.Addend := StoredAddend;
+            Inc(RelocationIndex);
+          end;
+        end;
+      ARM64_RELOC_BRANCH26: Relocation.Kind := rkBranch26;
+      ARM64_RELOC_PAGE21: Relocation.Kind := rkPage21;
+      ARM64_RELOC_PAGEOFF12: Relocation.Kind := rkPageOffset12;
+      ARM64_RELOC_GOT_LOAD_PAGE21: Relocation.Kind := rkGOTPage21;
+      ARM64_RELOC_GOT_LOAD_PAGEOFF12: Relocation.Kind := rkGOTPageOffset12;
+      ARM64_RELOC_POINTER_TO_GOT: if ((Bits shr MachRelocPCRelativeShift) and 1) = 1 then Relocation.Kind := rkGOTPCRelative32 else Relocation.Kind := rkGOTAbsolute64;
+    else
+      Relocation.Kind := rkUnsupported;
+    end;
+    if (RelocationType >= ARM64_RELOC_BRANCH26) then
+    begin
+      Relocation.Addend := PendingAddend;
+      if IsExternal = 0 then Relocation.Kind := rkUnsupported;
+    end;
+    if Relocation.Kind = rkUnsupported then Relocation.SecondarySymbol := RelocationType;
+    PendingAddend := 0;
+    AddRelocation(ASection^, Relocation);
+    Inc(RelocationIndex);
+  end;
+  Result := True;
+end;
+{$else}
+// x86-64 keeps every addend in the bytes. A pc-relative field counts from the end of its
+// instruction: 4 bytes after the field, plus an immediate that follows it, which SIGNED_1,
+// SIGNED_2 and SIGNED_4 name. With a symbol, the stored addend already allows for that
+// immediate. Without one, the bytes hold the distance from the end of the instruction to the
+// target, which gives the target's offset in its section.
+function ReadMachRelocations(AObjectFile: PObjectFile; ASection: PSection; ASectionAddress: QWord; ARaw: PMachRelocation; ACount: LongWord; const ASectionAddresses: array of QWord): Boolean;
+var
+  RelocationIndex, Bits, SymbolNumber, LengthCode, IsExternal, IsPCRelative, RelocationType: LongWord;
+  StoredAddend: Int64;
+  ImmediateSize: LongInt;
+  Relocation: TRelocation;
+begin
+  Result := False;
+  RelocationIndex := 0;
+  while RelocationIndex < ACount do
+  begin
+    Bits := ARaw[RelocationIndex].Bits;
+    SymbolNumber := Bits and MachRelocSymbolMask;
+    IsPCRelative := (Bits shr MachRelocPCRelativeShift) and 1;
+    LengthCode := (Bits shr MachRelocLengthShift) and MachRelocLengthMask;
+    IsExternal := (Bits shr MachRelocExternalShift) and 1;
+    RelocationType := Bits shr MachRelocTypeShift;
+    FillChar(Relocation, SizeOf(Relocation), 0);
+    Relocation.Offset := LongWord(ARaw[RelocationIndex].r_address);
+    Relocation.Symbol := -1;
+    Relocation.Section := -1;
+    if IsExternal = 1 then Relocation.Symbol := SymbolNumber else Relocation.Section := LongInt(SymbolNumber) - 1;
+    if ASection^.ZeroFill then StoredAddend := 0
+    else if LengthCode = MachRelocLengthQuad then StoredAddend := PInt64(ASection^.Data + Relocation.Offset)^
+    else StoredAddend := PLongInt(ASection^.Data + Relocation.Offset)^;
+    case RelocationType of
+      X86_64_RELOC_UNSIGNED:
+        begin
+          if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkAbsolute64 else Relocation.Kind := rkAbsolute32;
+          if IsExternal = 1 then Relocation.Addend := StoredAddend
+          else if (Relocation.Section >= 0) and (Relocation.Section < Length(ASectionAddresses)) then
+          begin
+            Relocation.Addend := StoredAddend - Int64(ASectionAddresses[Relocation.Section]);
+            Relocation.TargetOffset := Relocation.Addend;
+            Relocation.HasTargetOffset := True;
+          end
+          else Relocation.Kind := rkUnsupported;
+        end;
+      X86_64_RELOC_SUBTRACTOR:   // with the UNSIGNED that follows: that target minus this one
+        begin
+          if (RelocationIndex + 1 >= ACount) or ((ARaw[RelocationIndex + 1].Bits shr MachRelocTypeShift) <> X86_64_RELOC_UNSIGNED) or (((ARaw[RelocationIndex + 1].Bits shr MachRelocExternalShift) and 1) = 0) or (IsExternal = 0) then
+          begin
+            Say('error ' + AObjectFile^.UnitName + ': malformed subtractor relocation');
+            Exit;
+          end;
+          if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkSubtract64 else Relocation.Kind := rkSubtract32;
+          Relocation.SecondarySymbol := ARaw[RelocationIndex + 1].Bits and MachRelocSymbolMask;
+          Relocation.Addend := StoredAddend;
+          Inc(RelocationIndex);
+        end;
+      X86_64_RELOC_SIGNED, X86_64_RELOC_SIGNED_1, X86_64_RELOC_SIGNED_2, X86_64_RELOC_SIGNED_4, X86_64_RELOC_BRANCH:
+        begin
+          if RelocationType = X86_64_RELOC_BRANCH then Relocation.Kind := rkBranch32 else Relocation.Kind := rkPCRelative32;
+          case RelocationType of
+            X86_64_RELOC_SIGNED_1: ImmediateSize := 1;
+            X86_64_RELOC_SIGNED_2: ImmediateSize := 2;
+            X86_64_RELOC_SIGNED_4: ImmediateSize := 4;
+          else
+            ImmediateSize := 0;
+          end;
+          if IsExternal = 1 then Relocation.Addend := StoredAddend - X86PCRelativeFieldSize
+          else if (Relocation.Section >= 0) and (Relocation.Section < Length(ASectionAddresses)) then
+          begin
+            Relocation.TargetOffset := Int64(ASectionAddress + Relocation.Offset) + X86PCRelativeFieldSize + ImmediateSize + StoredAddend - Int64(ASectionAddresses[Relocation.Section]);
+            Relocation.HasTargetOffset := True;
+            Relocation.Addend := Relocation.TargetOffset - X86PCRelativeFieldSize - ImmediateSize;
+          end
+          else Relocation.Kind := rkUnsupported;
+        end;
+      X86_64_RELOC_GOT_LOAD, X86_64_RELOC_GOT:
+        if (IsExternal = 1) and (IsPCRelative = 1) then
+        begin
+          Relocation.Kind := rkGOTPCRelative32;
+          Relocation.Addend := StoredAddend - X86PCRelativeFieldSize;
+        end
+        else Relocation.Kind := rkUnsupported;
+    else
+      Relocation.Kind := rkUnsupported;   // TLV: fpc gives Darwin thread variables its own scheme
+    end;
+    if Relocation.Kind = rkUnsupported then Relocation.SecondarySymbol := RelocationType;
+    AddRelocation(ASection^, Relocation);
+    Inc(RelocationIndex);
+  end;
+  Result := True;
+end;
+{$endif}
+
 function ParseMachO(AObjectFile: PObjectFile): Boolean;
 var
   Header: PMachHeader64;
@@ -887,23 +1091,18 @@ var
   SymtabCommand: PMachSymtabCommand;
   NameList: PMachSymbol64;
   Strings: PChar;
-  I, J, RelocationIndex, RawCount: LongWord;
+  I, J: LongWord;
   SectionAddresses: array of QWord;
   RelocationInfo: array of record Offset, Count: LongWord; end;
   Section: PSection;
   SectionType: LongWord;
-  RawRelocations: PMachRelocation;
-  Bits, SymbolNumber, LengthCode, IsExternal, RelocationType: LongWord;
-  PendingAddend: Int64;
-  Relocation: TRelocation;
-  StoredAddend: Int64;
   Symbol: PObjectSymbol;
 begin
   Result := False;
   Header := PMachHeader64(AObjectFile^.Buffer);
-  if (AObjectFile^.BufferSize < SizeOf(TMachHeader64)) or (Header^.magic <> MH_MAGIC_64) or (Header^.filetype <> MH_OBJECT) or (Header^.cputype <> CPU_TYPE_ARM64) then
+  if (AObjectFile^.BufferSize < SizeOf(TMachHeader64)) or (Header^.magic <> MH_MAGIC_64) or (Header^.filetype <> MH_OBJECT) or (Header^.cputype <> MachHostCPU) then
   begin
-    Say('error ' + AObjectFile^.Path + ' is not an arm64 Mach-O object');
+    Say('error ' + AObjectFile^.Path + ' is not an ' + MachHostName + ' Mach-O object');
     Exit;
   end;
   SymtabCommand := nil;
@@ -966,78 +1165,7 @@ begin
   begin
     Section := @AObjectFile^.Sections[I];
     if (Section^.Kind = 0) or (RelocationInfo[I].Count = 0) then Continue;
-    RawRelocations := PMachRelocation(AObjectFile^.Buffer + RelocationInfo[I].Offset);
-    RawCount := RelocationInfo[I].Count;
-    PendingAddend := 0;
-    RelocationIndex := 0;
-    while RelocationIndex < RawCount do
-    begin
-      Bits := RawRelocations[RelocationIndex].Bits;
-      SymbolNumber := Bits and MachRelocSymbolMask;
-      LengthCode := (Bits shr MachRelocLengthShift) and MachRelocLengthMask;
-      IsExternal := (Bits shr MachRelocExternalShift) and 1;
-      RelocationType := Bits shr MachRelocTypeShift;
-      FillChar(Relocation, SizeOf(Relocation), 0);
-      Relocation.Offset := LongWord(RawRelocations[RelocationIndex].r_address);
-      Relocation.Symbol := -1;
-      Relocation.Section := -1;
-      if RelocationType = ARM64_RELOC_ADDEND then   // for the relocation that follows
-      begin
-        PendingAddend := SarLongint(LongInt(SymbolNumber shl MachRelocAddendShift), MachRelocAddendShift);
-        Inc(RelocationIndex);
-        Continue;
-      end;
-      if IsExternal = 1 then Relocation.Symbol := SymbolNumber else Relocation.Section := LongInt(SymbolNumber) - 1;
-      case RelocationType of
-        ARM64_RELOC_UNSIGNED, ARM64_RELOC_SUBTRACTOR:   // the addend is in the bytes
-          begin
-            if Section^.ZeroFill then StoredAddend := 0
-            else if LengthCode = MachRelocLengthQuad then StoredAddend := PInt64(Section^.Data + Relocation.Offset)^
-            else StoredAddend := PLongInt(Section^.Data + Relocation.Offset)^;
-            if RelocationType = ARM64_RELOC_UNSIGNED then
-            begin
-              if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkAbsolute64 else Relocation.Kind := rkAbsolute32;
-              if IsExternal = 1 then Relocation.Addend := StoredAddend
-              else if (Relocation.Section >= 0) and (Relocation.Section < Length(SectionAddresses)) then
-              begin
-                Relocation.Addend := StoredAddend - Int64(SectionAddresses[Relocation.Section]);
-                Relocation.TargetOffset := Relocation.Addend;
-                Relocation.HasTargetOffset := True;
-              end
-              else Relocation.Kind := rkUnsupported;
-            end
-            else
-            begin
-              if (RelocationIndex + 1 >= RawCount) or ((RawRelocations[RelocationIndex + 1].Bits shr MachRelocTypeShift) <> ARM64_RELOC_UNSIGNED) or (((RawRelocations[RelocationIndex + 1].Bits shr MachRelocExternalShift) and 1) = 0) or (IsExternal = 0) then
-              begin
-                Say('error ' + AObjectFile^.UnitName + ': malformed subtractor relocation');
-                Exit;
-              end;
-              if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkSubtract64 else Relocation.Kind := rkSubtract32;
-              Relocation.SecondarySymbol := RawRelocations[RelocationIndex + 1].Bits and MachRelocSymbolMask;
-              Relocation.Addend := StoredAddend;
-              Inc(RelocationIndex);
-            end;
-          end;
-        ARM64_RELOC_BRANCH26: Relocation.Kind := rkBranch26;
-        ARM64_RELOC_PAGE21: Relocation.Kind := rkPage21;
-        ARM64_RELOC_PAGEOFF12: Relocation.Kind := rkPageOffset12;
-        ARM64_RELOC_GOT_LOAD_PAGE21: Relocation.Kind := rkGOTPage21;
-        ARM64_RELOC_GOT_LOAD_PAGEOFF12: Relocation.Kind := rkGOTPageOffset12;
-        ARM64_RELOC_POINTER_TO_GOT: if ((Bits shr MachRelocPCRelativeShift) and 1) = 1 then Relocation.Kind := rkGOTPCRelative32 else Relocation.Kind := rkGOTAbsolute64;
-      else
-        Relocation.Kind := rkUnsupported;
-      end;
-      if (RelocationType >= ARM64_RELOC_BRANCH26) then
-      begin
-        Relocation.Addend := PendingAddend;
-        if IsExternal = 0 then Relocation.Kind := rkUnsupported;
-      end;
-      if Relocation.Kind = rkUnsupported then Relocation.SecondarySymbol := RelocationType;
-      PendingAddend := 0;
-      AddRelocation(Section^, Relocation);
-      Inc(RelocationIndex);
-    end;
+    if not ReadMachRelocations(AObjectFile, Section, SectionAddresses[I], PMachRelocation(AObjectFile^.Buffer + RelocationInfo[I].Offset), RelocationInfo[I].Count, SectionAddresses) then Exit;
   end;
   FinishObjectFile(AObjectFile);
   Result := True;
@@ -2352,7 +2480,7 @@ end;
 // ================================================================ the system: memory and code
 procedure JITWritable(AEnabled: Boolean);
 begin
-{$ifdef darwin}
+{$if defined(darwin) and defined(cpuaarch64)}
   if AEnabled then PThreadJITWriteProtectNP(0) else PThreadJITWriteProtectNP(1);
 {$endif}
 end;
@@ -2533,7 +2661,7 @@ begin
 {$ifdef cpux86_64}
   // One block for islands, code and data: an island reaches its slot, and new code the
   // program's variables, through 32-bit offsets, so everything must be within 2 GiB of
-  // everything else. (Linux does not stop a mapping from being writable and executable.)
+  // everything else. (Linux and macOS on Intel let a mapping be writable and executable.)
   Islands := ReserveNear(IslandAreaSize + JITSize + DataAreaSize, RegionKindCode, RegionReach);
   Code := nil;
   Data := nil;
@@ -3561,13 +3689,15 @@ var
 // Overwrite one instruction each at a set of addresses, with the other threads stopped
 // and without allocating.
 {$if defined(darwin)}
-// Pages of the program's __TEXT are replaced atomically: copy the page elsewhere, write the
+// Pages of the program's __TEXT are replaced atomically: copy the pages elsewhere, write the
 // copy, map it back over the original. The copy with VM_PROT_COPY is what code signing allows.
+// An x86-64 entry's jump is 5 bytes and may cross into the next page, so a copy covers every
+// page the patches that start in it reach.
 function ApplyPatches: Boolean;
 var
   Task: TMachPort;
-  Index, First: SizeInt;
-  Address, Page, PageCopy, Destination: QWord;
+  Index, First, K: SizeInt;
+  Address, Page, PageEnd, SpanSize, PageCopy, Destination: QWord;
   CurrentProtection, MaximumProtection: LongInt;
   KernelResult: TKernelReturn;
 begin
@@ -3587,24 +3717,30 @@ begin
       Continue;
     end;
     Page := Address and not (PageSize - 1);
+    PageEnd := Page + PageSize;
     First := Index;
+    // the patches sorted by address: those that start before the span ends, and the pages they reach
+    while (Index < PatchCount) and (Patches[Index].Address < PageEnd) and not InJIT(Patches[Index].Address) do
+    begin
+      if Patches[Index].Address + QWord(Patches[Index].ByteCount) > PageEnd then
+        PageEnd := (Patches[Index].Address + QWord(Patches[Index].ByteCount) + PageSize - 1) and not (PageSize - 1);
+      Inc(Index);
+    end;
+    SpanSize := PageEnd - Page;
     PageCopy := 0;
-    KernelResult := MachVMRemap(Task, PageCopy, PageSize, 0, VM_FLAGS_ANYWHERE, Task, Page, 1, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
-    if KernelResult = 0 then KernelResult := MachVMProtect(Task, PageCopy, PageSize, 0, VM_PROT_READ or VM_PROT_WRITE or VM_PROT_COPY);
+    KernelResult := MachVMRemap(Task, PageCopy, SpanSize, 0, VM_FLAGS_ANYWHERE, Task, Page, 1, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
+    if KernelResult = 0 then KernelResult := MachVMProtect(Task, PageCopy, SpanSize, 0, VM_PROT_READ or VM_PROT_WRITE or VM_PROT_COPY);
     if KernelResult <> 0 then
     begin
       PatchKernelResult := KernelResult;
       PatchError := 'cannot copy a code page of the program';
       Exit(False);
     end;
-    while (Index < PatchCount) and ((Patches[Index].Address and not (PageSize - 1)) = Page) do
-    begin
-      Move(Patches[Index].Bytes[0], PByte(PtrUInt(PageCopy + (Patches[Index].Address - Page)))^, Patches[Index].ByteCount);
-      Inc(Index);
-    end;
-    KernelResult := MachVMProtect(Task, PageCopy, PageSize, 0, VM_PROT_READ or VM_PROT_EXECUTE);
+    for K := First to Index - 1 do
+      Move(Patches[K].Bytes[0], PByte(PtrUInt(PageCopy + (Patches[K].Address - Page)))^, Patches[K].ByteCount);
+    KernelResult := MachVMProtect(Task, PageCopy, SpanSize, 0, VM_PROT_READ or VM_PROT_EXECUTE);
     Destination := Page;
-    if KernelResult = 0 then KernelResult := MachVMRemap(Task, Destination, PageSize, 0, VM_FLAGS_FIXED or VM_FLAGS_OVERWRITE, Task, PageCopy, 0, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
+    if KernelResult = 0 then KernelResult := MachVMRemap(Task, Destination, SpanSize, 0, VM_FLAGS_FIXED or VM_FLAGS_OVERWRITE, Task, PageCopy, 0, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
     if KernelResult <> 0 then
     begin
       PatchKernelResult := KernelResult;
@@ -3612,8 +3748,8 @@ begin
       Exit(False);
     end;
     Inc(PatchedCount, Index - First);
-    MachVMDeallocate(Task, PageCopy, PageSize);
-    ClearCache(Pointer(PtrUInt(Page)), PageSize);
+    MachVMDeallocate(Task, PageCopy, SpanSize);
+    ClearCache(Pointer(PtrUInt(Page)), SpanSize);
   end;
 end;
 
@@ -3622,15 +3758,29 @@ begin
   MachVMProtect(mach_task_self_, AAddress and not (PageSize - 1), PageSize, 0, VM_PROT_READ or VM_PROT_WRITE);
 end;
 
+// thread_suspend for every other thread of the task. On x86-64, thread_get_state then says
+// where each one stopped (StoppedInsidePatch); it waits until the thread has stopped.
 var
   Threads: PLongWord;
   ThreadCount: LongWord;
+{$ifdef cpux86_64}
+  ProgramCounters: array[0..MaxThreads - 1] of QWord;
+  ProgramCounterCount: LongInt;
+  ThreadState: array[0..X86ThreadStateCount - 1] of LongWord;   // x86_thread_state64_t
+{$endif}
 
 procedure WorldStop;
 var
   CurrentThread: TMachPort;
   I: LongWord;
+{$ifdef cpux86_64}
+  StateCount: LongWord;
+{$endif}
 begin
+  StopFailure := '';
+{$ifdef cpux86_64}
+  ProgramCounterCount := 0;
+{$endif}
   if not SuspendThreads then Exit;
   CurrentThread := MachThreadSelf;
   if TaskThreads(mach_task_self_, Threads, ThreadCount) <> 0 then
@@ -3639,7 +3789,18 @@ begin
     Exit;
   end;
   for I := 0 to ThreadCount - 1 do
-    if Threads[I] <> CurrentThread then ThreadSuspend(Threads[I]);
+    if (Threads[I] <> CurrentThread) and (ThreadSuspend(Threads[I]) = 0) then
+    begin
+{$ifdef cpux86_64}
+      StateCount := X86ThreadStateCount;
+      if ProgramCounterCount > High(ProgramCounters) then StopFailure := TooManyThreadsFailure
+      else if ThreadGetState(Threads[I], X86ThreadState64, @ThreadState[0], StateCount) = 0 then
+      begin
+        ProgramCounters[ProgramCounterCount] := PQWord(@ThreadState[X86ThreadStateRIPIndex * 2])^;
+        Inc(ProgramCounterCount);
+      end;
+{$endif}
+    end;
   MachPortDeallocate(mach_task_self_, CurrentThread);
 end;
 
@@ -3664,10 +3825,24 @@ procedure SetupWorldStop;
 begin
 end;
 
+// A thread stopped after the first byte of an entry about to be overwritten would resume in
+// the middle of the new jump. On aarch64 a patch is one instruction.
 function StoppedInsidePatch: Boolean;
+{$ifdef cpux86_64}
+var
+  K: LongInt;
+  I: SizeInt;
 begin
-  Result := False;   // aarch64: a patch is one instruction
+  Result := False;
+  for K := 0 to ProgramCounterCount - 1 do
+    for I := 0 to PatchCount - 1 do
+      if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
 end;
+{$else}
+begin
+  Result := False;
+end;
+{$endif}
 {$elseif defined(linux)}
 var
   SleepingBlockers: Boolean;   // WorldStop let threads that block the park signal sleep on
