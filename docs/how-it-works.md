@@ -81,7 +81,14 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    invisible in the object file, so this check catches it. The check compares each record
    and class and the type of each variable with the running unit's, by name, because the
    compiler numbers types again on every compile.
-4. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
+4. For a Windows program whose changed units have a variable with an initial value or a
+   typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
+   `.hot/asm/`, which keeps units of its own. The driver counts each one's bytes there and
+   compares them with the running unit's: a COFF object doesn't show one that grows (see
+   [Per system](#per-system)). The running program's sizes come from the same compile when
+   the program starts and when it starts over. It costs about as much as the first
+   compile.
+5. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
    next to the program. Like a linker, it works out which parts the program can reach.
    Type information that nothing uses is never read, because it may refer to things the
    program doesn't have. Then the agent binds every name:
@@ -162,13 +169,15 @@ program that ends with 0, and the first program in every case, end hotfpc as bef
   - fpc 3.2 gives an implementation-section variable no symbol at all, only a section
     named after it. hotfpc links Windows programs with `-Xm`, and the agent finds those
     sections' addresses in the linker's map.
-  - fpc gives a variable with an initial value a section of its own and pads it to 16
-    bytes, on Linux and Windows alike. On Linux the agent takes the variable's size from
-    the ELF symbol. COFF symbols have no size, so on Windows it's the unit file that shows
-    such a variable growing (`Integer = 0` to `Int64 = 0`): its type changed. fpc writes
-    no unit file for the program, and fpc 3.2 leaves an implementation section's typed
-    constant out of it, so on Windows such a variable of the program, or with fpc 3.2
-    such a constant, that grows isn't caught and needs a restart by hand.
+  - fpc gives a variable with an initial value, and a typed constant, a section of its own
+    and pads it to 16 bytes, on Linux and Windows alike. On Linux the agent takes the size
+    from the ELF symbol. COFF symbols have no size, and the unit file doesn't cover every
+    case: fpc writes none for the program, a routine's typed constant is never in it, and
+    fpc 3.2 leaves out an implementation section's typed constant too. fpc's assembler
+    output lists each one's data, so for a
+    Windows program the driver compiles to assembler as well (step 4 of [One
+    save](#one-save)) and finds such a variable growing (`Integer = 0` to `Int64 = 0`)
+    there.
   - fpc's Windows linker always leaves out code the program never reaches. New code that
     calls a runtime routine the program never called (`SysUtils.Supports`, for example)
     needs a restart. Linux and macOS link the whole unit.

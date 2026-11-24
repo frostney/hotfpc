@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- On Windows, a variable with an initial value in the program file that changes size
+  (`Calls: Integer = 0` to `Int64 = 0`) now needs a restart, as on the other systems, and
+  so does a typed constant declared in a routine, or with fpc 3.2 in a unit's
+  implementation section. They used to be swapped, and the new code then wrote past the
+  variable. COFF objects state no sizes, so hotfpc now also compiles a Windows program to
+  assembler (`-s -Aas`, into `.hot/asm/`) when a changed unit has such a variable, and
+  compares the sizes there.
+
 ## 1.1.0
 
 - An edit that needs a restart now starts the program over, like webpack's full reload

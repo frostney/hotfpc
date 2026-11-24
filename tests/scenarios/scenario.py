@@ -771,8 +771,9 @@ end.
 ])
 
 # ---------------------------------------------------------------------------- a variable with an initial value
-# fpc 3.2.2 for x86-64 Linux gives it a section of its own, padded to 16 bytes: only the size
-# ELF states for the symbol shows that it grew
+# fpc gives it a section of its own, padded to 16 bytes, so the object file's section looks the
+# same when it grows: the size ELF states for the symbol shows it, and on Windows, where COFF
+# states none, the unit file and fpc's assembler output
 case("initvar", {
     "main.pas": MAIN,
     "u.pas": r'''unit u;
@@ -858,6 +859,29 @@ end.
 '''}, [
     ("another text", [("main.pas", "' main one", "' main two")]),
     ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
+])
+
+# ---------------------------------------------------------------------------- a routine's typed constant
+# like typedconst, but declared in a routine, which no unit file has with any fpc
+case("localconst", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}{$J+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+function Tick(n: Integer): string;
+const
+  Calls: Integer = 0;
+begin
+  Inc(Calls);
+  Result := Format('one calls %d', [Calls]);
+end;
+end.
+'''}, [
+    ("another text", [("u.pas", "'one calls", "'two calls")]),
+    ("Calls: Integer = 0 in Tick becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
 ])
 
 # ---------------------------------------------------------------------------- restarts
