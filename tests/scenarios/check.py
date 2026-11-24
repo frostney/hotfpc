@@ -36,6 +36,9 @@ EXPECT = {
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
     "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
+    # a save while hotfpc builds the program to start it: the program starts with it, and the
+    # save after it swaps
+    "startsave": (1, 0, 0),
 }
 # case: restarts; every other case passes --no-restart and expects none
 RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1, "sighandler": 1, "sigmasked": 1}
@@ -51,6 +54,8 @@ PRINTS = {
     "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
     "shortentry": ["small 3 next 7"], "shortcall": ["relay 2"],
     "sighandler": ["entry 2, resumed"], "sigmasked": ["entry 2, resumed"],
+    # the program runs the save made during the start from its first tick
+    "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code

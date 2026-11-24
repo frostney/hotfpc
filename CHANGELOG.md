@@ -46,10 +46,10 @@
   could report errors or a needed restart for a state nobody saved, and then compile the
   same save a second time. The same goes for a save's compile to assembler on Windows and
   the link of a restart. A save that landed during the first build, after fpc had read the
-  file, used to be left out until the next save; it is now compiled as soon as the program
-  runs. After three such compiles, links or compiles to assembler in a row, hotfpc uses the
-  next one as it is, and it waits at most a second for the files to settle before a
-  compile, so a file that keeps changing can't hold back every save, nor keep hotfpc
+  file, used to be left out until the next save; hotfpc now builds the program again before
+  it starts it. After three such compiles, links or compiles to assembler in a row, hotfpc
+  uses the next one as it is, and it waits at most a second for the files to settle before
+  a compile, so a file that keeps changing can't hold back every save, nor keep hotfpc
   running after the program has ended. On Windows a save whose sizes of variables with
   initial values are checked then needs a restart, as its compile and its compile to
   assembler may have read different sources. hotfpc reads the times of the sources as
@@ -69,9 +69,11 @@
   implementation section. They used to be swapped, and the new code then wrote past the
   variable. COFF objects state no sizes, so hotfpc now also compiles a Windows program to
   assembler (`-s -Aas`, into `.hot/asm/`) when a changed unit has such a variable, and
-  compares the sizes there. A save whose sizes it can't compare, because fpc didn't write
-  the assembler or the assembler has no size for a variable the object file defines, needs
-  a restart too.
+  compares the sizes there. The running program's sizes come from such a compile before the
+  program starts or starts over, checked with its build or link against saves that land
+  meanwhile, so they are the sizes of the sources the program was built from. A save whose
+  sizes it can't compare, because fpc didn't write the assembler or the assembler has no
+  size for a variable the object file defines, needs a restart too.
 - Linux arm64: the releases have a `linux-arm64` archive, and CI builds hotfpc, runs the
   unit tests and runs the scenarios on GitHub's arm64 runner.
 - On Linux arm64, new code now uses the variables of its unit's implementation section

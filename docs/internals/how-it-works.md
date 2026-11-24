@@ -88,18 +88,18 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    moment after the first, or the next save, may be read before or after its change. When
    the sources changed, the driver neither swaps nor reports what fpc made: it waits for
    them to settle and compiles again. It checks a save's compile to assembler (step 4), the
-   link of a restart and the first build the same way: a save during the first build is
-   compiled as soon as the program runs. A source that changes faster than fpc compiles, such
-   as a file a generator keeps rewriting, holds a save back for three compiles, links or
-   compiles to assembler at most, each after a wait of a second at most for the files to
-   settle: the fourth is used as it is. For a Windows program whose
-   sizes step 4 checks, such a save needs a restart instead: its object files and its
-   assembler may come from different sources, so the sizes counted may not be the code's.
-   The same goes when the times of the sources can't show a save that came and was put
-   back during the compiles, at the same size: the time of a file written less than 20 ms
-   before the compile, about a tick of the clock behind file times, or less than two
-   seconds before when the file system keeps whole seconds. For such a program the driver
-   waits 22 ms for the files to settle, so that a save it saw isn't one of them.
+   link of a restart and the first build the same way: a save during the first build makes
+   the driver build the program again before it starts it. A source that changes faster
+   than fpc compiles, such as a file a generator keeps rewriting, holds a save back for three
+   compiles, links or compiles to assembler at most, each after a wait of a second at most
+   for the files to settle: the fourth is used as it is. For a Windows program whose sizes
+   step 4 checks, such a save needs a restart instead: its object files and its assembler
+   may come from different sources, so the sizes counted may not be the code's. The same
+   goes when the times of the sources can't show a save that came and was put back during
+   the compiles, at the same size: the time of a file written less than 20 ms before the
+   compile, about a tick of the clock behind file times, or less than two seconds before
+   when the file system keeps whole seconds. For such a program the driver waits 22 ms for
+   the files to settle, so that a save it saw isn't one of them.
 3. ppudump reads each changed unit: the interface from its JSON output, and the
    implementation section from its text output, which the JSON leaves out. A field that
    moved, or a field or variable that changed its type without changing a size, is
@@ -113,17 +113,18 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    there again, and their assembler from before is removed first, so one that fpc doesn't
    write has no size rather than an earlier one. The driver counts each one's bytes there and
    compares them with the running program's: a COFF object doesn't show one that grows (see
-   [Per system](#per-system)). The running program's sizes come from the same compile when
-   the program starts and when it starts over, and a swap adds those of the variables it
-   brings. A variable keeps its first size until the program starts over, also when a save
-   removed it: the agent keeps it at its first address, so bringing it back larger needs a
-   restart. When fpc can't write the assembler at the start, the check is off for the run
-   and hotfpc says so. When it can't for a save, or couldn't when the program started over,
-   that save needs a restart: a size it can't see may have grown. The object file names the
-   data the assembler must give a size for, a section of its own for each: one it names
-   that the assembler has no size for, for this save or when the program started, needs a
-   restart too, and so does a save when an object file can't be read. It costs about as
-   much as the first compile.
+   [Per system](#per-system)). The running program's sizes come from a compile to assembler
+   before the first build's check of the sources, or before the link of a restart, so the
+   same check covers it: they come from the sources the program was built from. A swap adds
+   the sizes of the variables it brings. A variable keeps its first size until the program
+   starts over, also when a save removed it: the agent keeps it at its first address, so
+   bringing it back larger needs a restart. When fpc can't write the assembler at the start,
+   the check is off for the run and hotfpc says so. When it can't for a save, or couldn't
+   when the program started over, that save needs a restart: a size it can't see may have
+   grown. The object file names the data the assembler must give a size for, a section of
+   its own for each: one it names that the assembler has no size for, for this save or when
+   the program started, needs a restart too, and so does a save when an object file can't
+   be read. It costs about as much as the first compile.
 5. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
    next to the program. Like a linker, it works out which parts the program can reach.
    Type information that nothing uses is never read, because it may refer to things the

@@ -3324,6 +3324,7 @@ type
     FUnchanged: Integer;
     FRestarted: Integer;
     function BuildProgram: Boolean;
+    function BuildToStart: Boolean;
     procedure CopyObjectsToLive;
     procedure ProbeLayouts;
     function StartProgram: TProcess;
@@ -3340,8 +3341,8 @@ type
       out AInterfaceSeconds: Double): Boolean;
     function HasInitialisedData(const AObjects: TStrings): Boolean;
     function ReadAssembly(const AObjects: TStrings; out AProblem: string): TStringList;
-    function RefreshLiveAssembly(out AProblem: string): Boolean;
-    procedure StartSizeCheck;
+    function WriteLiveAssembly(out AProblem: string): Boolean;
+    procedure KeepLiveSizes(const ASizesKnown: Boolean; const AProblem: string);
     function NotAssembled(const AProblem: string): string;
     procedure RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
     function SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
@@ -3431,6 +3432,51 @@ begin
   finally
     Errors.Free;
   end;
+end;
+
+{ Builds the program to start it, and for a Windows program compiles it to assembler for the
+  sizes of its initialised data (FCheckSizes). The same check of the sources covers both: a
+  save that fpc read only in part, or after it read the file, would start a program that is no
+  state anybody saved, or one whose sizes come from other sources than its code. The program
+  is then built again once the sources settle; after MaximumUnusedCompiles such builds in a
+  row, the next one is used as it is, and Watch compiles the sources as they are then. False
+  when the build failed. }
+function TDriver.BuildToStart: Boolean;
+var
+  Problem: string;
+begin
+  FCheckSizes := FOptions.TargetWindows;
+  FSettled := FWatcher.Stamps;
+  FSettledAt := FWatcher.StampedAt;
+  FWatcher.ReadDigests(FDigests);
+  repeat
+    if not BuildProgram then
+      Exit(False);
+    RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.LiveDirectory));
+    ForceDirectories(FWorkspace.LiveDirectory);
+    CopyObjectsToLive;
+    { before the check of the sources, which may remove the records ppudump is probed with }
+    if FReader = nil then
+      ProbeLayouts;
+    FAssemblyWritten := False;
+    if FCheckSizes and not WriteLiveAssembly(Problem) then
+    begin
+      FCheckSizes := False;
+      FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + Problem
+        + '): the check of sizes of variables with initial values is off');
+    end;
+    if not SourcesChangedDuringCompile then
+      Break;
+    FStale := False;
+    FSettled := Settle(FWatcher.Stamps);
+    FSettledAt := FWatcher.StampedAt;
+    FreeAndNil(FDigests);
+    FWatcher.ReadDigests(FDigests);
+  until False;
+  FUnusedCompiles := 0;
+  if FCheckSizes then
+    KeepLiveSizes(True, '');
+  Result := True;
 end;
 
 procedure TDriver.CopyObjectsToLive;
@@ -3722,49 +3768,53 @@ begin
   end;
 end;
 
-{ The sizes of the units the program was just started with become the running program's
-  (FSizes), from fpc's assembler when one of them has initialised data. After a compile to
-  assembler, every unit's file in the assembly directory is current: the units whose source
-  changed since were made to recompile there too. False when fpc failed; the sizes are then
-  unknown (FSizesProblem), as they are when an object file cannot be read. }
-function TDriver.RefreshLiveAssembly(out AProblem: string): Boolean;
+{ Compiles the program to assembler for the sizes of the program that is about to start, from
+  the sources it is built or linked from, unless this save already did or no unit has
+  initialised data. Before the build or link, so that the same check of the sources covers
+  both (SourcesChangedDuringCompile). False when fpc failed; AProblem then says why. }
+function TDriver.WriteLiveAssembly(out AProblem: string): Boolean;
 var
   Objects: TStringList;
   Seconds: Double;
 begin
   AProblem := '';
   Result := True;
-  FreeAndNil(FSizes);
+  if FAssemblyWritten then
+    Exit;
   Objects := FWorkspace.UnitObjects;
   try
-    if not FAssemblyWritten and HasInitialisedData(Objects) then
+    if HasInitialisedData(Objects) then
     begin
       FAssemblyWritten := FCompiler.WriteAssembler(nil, AProblem, Seconds);
       Result := FAssemblyWritten;
       if GetEnvironmentVariable(DebugVariable) <> '' then
         WriteLn('[hot debug] assembler of the running program in ', FormatMilliseconds(Seconds), ' ms');
     end;
-    if Result then
-      FSizes := ReadAssembly(Objects, FSizesProblem)
-    else
-      FSizesProblem := NotAssembled(AProblem);
   finally
     Objects.Free;
   end;
 end;
 
-{ A Windows program's sizes of initialised data are checked from fpc's assembler, unless fpc
-  cannot write it. }
-procedure TDriver.StartSizeCheck;
+{ The sizes of the units the program starts with become the running program's (FSizes), from
+  the assembler WriteLiveAssembly wrote, or are unknown when it failed or an object file
+  cannot be read (FSizesProblem). After a compile to assembler, every unit's file in the
+  assembly directory is current: the units whose source changed since were made to recompile
+  there too. }
+procedure TDriver.KeepLiveSizes(const ASizesKnown: Boolean; const AProblem: string);
 var
-  Problem: string;
+  Objects: TStringList;
 begin
-  FCheckSizes := FOptions.TargetWindows;
-  if FCheckSizes and not RefreshLiveAssembly(Problem) then
+  FreeAndNil(FSizes);
+  if not ASizesKnown then
   begin
-    FCheckSizes := False;
-    FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + Problem
-      + '): the check of sizes of variables with initial values is off');
+    FSizesProblem := NotAssembled(AProblem);
+    Exit;
+  end;
+  Objects := FWorkspace.UnitObjects;
+  try
+    FSizes := ReadAssembly(Objects, FSizesProblem);
+  finally
+    Objects.Free;
   end;
 end;
 
@@ -4044,15 +4094,17 @@ procedure TDriver.Restart(const ASeen: Double);
 var
   Errors: TStringList;
   Problem: string;
-  Linked: Boolean;
+  Linked, SizesKnown: Boolean;
   ProgramExitCode: Integer;
   LinkSeconds, StopStart, StopSeconds: Double;
 begin
   RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.NextDirectory));
   ForceDirectories(FWorkspace.NextDirectory);
+  SizesKnown := not FCheckSizes or WriteLiveAssembly(Problem);
   Linked := FCompiler.Compile(True, Errors, LinkSeconds, FWorkspace.NextExecutable);
   try
-    { the program keeps running; the next compile decides again }
+    { the program keeps running; the next compile decides again. This covers the compile to
+      assembler too. }
     if SourcesChangedDuringCompile then
       Exit;
     if not Linked then
@@ -4087,6 +4139,8 @@ begin
   RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.LiveDirectory));
   ForceDirectories(FWorkspace.LiveDirectory);
   CopyObjectsToLive;
+  if FCheckSizes then
+    KeepLiveSizes(SizesKnown, Problem);
   FBased.Clear;
   if FLayouts <> nil then
   begin
@@ -4106,10 +4160,6 @@ begin
   FReporter.Say(Format('v%d restarted: the program starts over; %s ms after the save was seen (link %s, stop %s, start %s)',
     [FVersion, FormatMilliseconds(NowSeconds - ASeen), FormatMilliseconds(LinkSeconds), FormatMilliseconds(StopSeconds),
      FormatMilliseconds(NowSeconds - FStartedAt)]));
-  { the sizes the next save is checked against, once the program runs; when fpc fails, a save
-    that needs them is refused until the program starts over again }
-  if FCheckSizes then
-    RefreshLiveAssembly(Problem);
 end;
 
 { Waits for the save to stop changing the files, for MaximumSettleSeconds at most, or for
@@ -4208,9 +4258,6 @@ begin
   Known := Seen;
   Emptied := TStringList.Create;
   try
-    { the sources changed during the first build }
-    if FStale then
-      Seen := nil;
     LastDigest := NowSeconds;
     while True do
     begin
@@ -4324,17 +4371,8 @@ begin
     WriteLn(Output);
     Exit(1);
   end;
-  { the state the build starts from: a save fpc reads only in part, or after it read the file,
-    is compiled as soon as Watch starts }
-  FSettled := FWatcher.Stamps;
-  FSettledAt := FWatcher.StampedAt;
-  FWatcher.ReadDigests(FDigests);
-  if not BuildProgram then
+  if not BuildToStart then
     Exit(1);
-  CopyObjectsToLive;
-  { before the check of the sources, which may remove the records ppudump is probed with }
-  ProbeLayouts;
-  SourcesChangedDuringCompile;
   if not FLink.Listen then
   begin
     WriteLn('[hot] cannot listen on 127.0.0.1');
@@ -4344,7 +4382,6 @@ begin
   if not AwaitAgent(FProgram, Result) then
     Exit;
   SayStart;
-  StartSizeCheck;
   Watch;
   FProgram.WaitOnExit;
   Result := ExitCodeOf(FProgram);

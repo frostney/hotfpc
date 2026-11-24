@@ -7,14 +7,14 @@ scenarios that run real programs under hotfpc and save edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 31 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 32 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
 ## When a change is done
 
-A change is done when the unit tests pass and `check.py` prints "31 of 31 cases as
+A change is done when the unit tests pass and `check.py` prints "32 of 32 cases as
 expected" on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
 Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
 Windows). Changes to the agent or to the checks of layouts and sizes are tested with fpc
@@ -33,13 +33,16 @@ with 1 when a check failed. `./build.sh tests` compiles `source/HotFPC.pas` with
 
 ## The scenarios
 
-`tests/scenarios/scenario.py` holds 31 cases. Each is a small program, `main.pas` and its
+`tests/scenarios/scenario.py` holds 32 cases. Each is a small program, `main.pas` and its
 units, and a list of steps: the edits the script saves into the files while the program
 runs. The script saves a step once hotfpc has reported its outcome for the step before (a
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
 how fast the machine compiles. A step marked `+` comes 0.12 s after the one before instead,
-while hotfpc is still busy with it. An edit `(path, None, BLOCKED)` puts a directory where
-hotfpc writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
+while hotfpc is still busy with it. A step marked `WHILE_COMPILING` writes its second file
+once hotfpc has started to compile the first, and a step marked `AT_START` is saved while
+hotfpc builds the program to start it, once fpc has written the program's object file: the
+program starts with it. An edit `(path, None, BLOCKED)` puts a directory where hotfpc
+writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
 `(path, None, None)` removes it again. After the last step the script tells the program to
 end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
 
@@ -97,8 +100,8 @@ case("records", {
 ```
 
 Each step is a description and a list of `(file, old text, new text)` replacements, saved
-together. A description that starts with `+` is saved 0.12 s after the step before it.
-`restart=True` lets hotfpc start the program over. Then add the case's expected numbers to
+together. A description that starts with `+` is saved 0.12 s after the step before it, and
+a third element, `WHILE_COMPILING` or `AT_START`, times the save as above. `restart=True` lets hotfpc start the program over. Then add the case's expected numbers to
 `EXPECT` in `check.py`, from a run on every system the case can differ on, and say in a
 comment why where it isn't obvious.
 

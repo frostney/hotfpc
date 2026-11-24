@@ -47,10 +47,14 @@ WHILE_COMPILING = "while compiling"
 # writes it: the step's other files are written 0.1 s later, and the first file's text 0.3 s
 # after it was emptied
 EMPTIED_FIRST = "emptied first"
+# A step saved while the driver builds the program to start it: once fpc has written the
+# program's object file, .hot/units/main.o, so fpc has read main.pas and is linking. It comes
+# first, and has no outcome of its own: the program starts with it.
+AT_START = "at the start"
 
 
 def case(name, files, steps, opts=(), restart=False):
-    """steps: (description, edits) or (description, edits, WHILE_COMPILING or EMPTIED_FIRST). restart: the driver
+    """steps: (description, edits) or (description, edits, WHILE_COMPILING, EMPTIED_FIRST or AT_START). restart: the driver
     starts the program over when an edit needs a restart; the other cases pass --no-restart, so
     that the program they check keeps running."""
     CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
@@ -863,8 +867,7 @@ end.
 # like initvar, but in the program file, for which fpc writes no unit file. The second save
 # lands while fpc cannot write the program's assembler: on Windows its sizes are then unknown,
 # so it needs a restart, and the running program's sizes stay what they were for the third
-case("progvar", {
-    "main.pas": r'''program main;
+PROGVAR_MAIN = r'''program main;
 {$mode objfpc}{$H+}
 uses SysUtils, u;
 var
@@ -884,8 +887,9 @@ begin
     Sleep(300);
   end;
 end.
-''',
-    "u.pas": r'''unit u;
+'''
+
+PROGVAR_U = r'''unit u;
 {$mode objfpc}{$H+}
 interface
 function Tick(n: Integer): string;
@@ -896,12 +900,28 @@ begin
   Result := Format('n %d', [n]);
 end;
 end.
-'''}, [
+'''
+
+case("progvar", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
     ("another text", [("main.pas", "' main one", "' main two")]),
     ("another text, while fpc cannot write the program's assembler",
      [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "' main two", "' main three")]),
     ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0",
      [(".hot/asm/main.s", None, None), ("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
+])
+
+# ---------------------------------------------------------------------------- a save during the start
+# progvar's program; the first save lands while the driver builds the program to start it, after
+# fpc has read main.pas. The program must start from what was saved, and on Windows its sizes
+# must come from the same sources, so that the save after it swaps
+case("startsave", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0, and another text, while hotfpc builds the program to start it",
+     [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;"), ("main.pas", "' main one", "' main two")], AT_START),
+    ("another text", [("main.pas", "' main two", "' main three")]),
 ])
 
 # ---------------------------------------------------------------------------- a routine's typed constant
@@ -1358,8 +1378,38 @@ def run(name):
                 return True
         return False
 
+    def texts_of(edits):
+        """The files the edits make, by path, in the order the edits name them."""
+        texts = {}
+        for f, old, new in edits:
+            path = os.path.join(work, f)
+            if old is None:
+                texts[path] = new
+                continue
+            if path not in texts:
+                with open(path) as fh:
+                    texts[path] = fh.read()
+            if old not in texts[path]:
+                out("!!! the edit does not apply: %r" % old)
+            texts[path] = texts[path].replace(old, new)
+        return texts
+
     th = threading.Thread(target=pump)
     th.start()
+    # a step at the start is saved once fpc has written the program's object file
+    while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
+        desc, edits = steps[0][:2]
+        steps = steps[1:]
+        built = os.path.join(work, ".hot", "units", "main.o")
+        deadline = time.time() + OUTCOME_TIMEOUT
+        while not os.path.exists(built) and p.poll() is None and time.time() < deadline:
+            time.sleep(0.001)
+        if not os.path.exists(built):
+            out("!!! the driver did not build main.pas within %d s" % OUTCOME_TIMEOUT)
+        out("--- the script saves: " + desc)
+        for path, text in texts_of(edits).items():
+            with open(path, "w") as fh:
+                fh.write(text)
     # Wait until the driver watches the files and the program runs: the steps must not depend
     # on how long the build or the start took. (Waiting for the build's object file was not
     # enough: under load a new executable took up to 9 s to start, and early saves merged.)
@@ -1375,18 +1425,7 @@ def run(name):
         # one before, as someone who saves, looks at the result and edits again
         quick_next = i + 1 < len(steps) and steps[i + 1][0].startswith("+")
         out("--- the script saves: " + desc.lstrip("+"))
-        texts = {}
-        for f, old, new in edits:
-            path = os.path.join(work, f)
-            if old is None:
-                texts[path] = new
-                continue
-            if path not in texts:
-                with open(path) as fh:
-                    texts[path] = fh.read()
-            if old not in texts[path]:
-                out("!!! the edit does not apply: %r" % old)
-            texts[path] = texts[path].replace(old, new)
+        texts = texts_of(edits)
         with lock:
             since = len(lines)
         saved = time.time()
