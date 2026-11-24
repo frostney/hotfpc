@@ -79,7 +79,7 @@ sequenceDiagram
         hotfpc-->>You: [hot] restart needed: scene.Score: ...
         hotfpc->>fpc: link the program again
         hotfpc->>Program: stop it, start the new one
-        hotfpc-->>You: [hot] v2 restarted: the program starts over; ...
+        hotfpc-->>You: [hot] v2 restarted: the program starts over
     end
 ```
 
