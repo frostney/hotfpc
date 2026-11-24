@@ -20,4 +20,5 @@ program's variable can't change its size, and hotfpc starts the program over: `v
 restarted`, with the score back at zero.
 
 [`scripts/record-demo.py`](../../scripts/record-demo.py) makes the same edits in vim inside
-tmux, which is what the recording shows.
+tmux, which is what the recording shows. The [quick start](../../docs/guides/quick-start.md)
+walks through them with the lines hotfpc prints.

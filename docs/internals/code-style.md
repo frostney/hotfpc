@@ -1,5 +1,7 @@
 # Code style
 
+> **Audience: contributors.** How hotfpc's own source is written.
+
 hotfpc follows the native-nostalgia-stack code style. In short:
 
 - **Delphi mode:** the program and the agent unit start with `{$mode delphi}{$H+}`. Checks

@@ -30,3 +30,4 @@ tick 9: hello again, reloaded
 ```
 
 `lwpt build` still builds the program on its own, without hotfpc.
+[With lwpt](../../docs/guides/lwpt.md) has more.

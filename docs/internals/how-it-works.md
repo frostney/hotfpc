@@ -1,5 +1,8 @@
 # How hotfpc works
 
+> **Audience: contributors.** How hotfpc does what the [guides](../guides/introduction.md)
+> describe. Using hotfpc needs none of it.
+
 ## Two parts
 
 - **The driver** ([`source/HotFPC.pas`](../../source/HotFPC.pas)) is the `hotfpc` program you
@@ -133,14 +136,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
 
 ### When a restart is needed
 
-An edit needs a restart when the running state depends on what it changes:
-
-- a variable's size or type;
-- a class's instance size or virtual method table shape;
-- a record's or class's layout;
-- a new unit or a new thread variable;
-- a routine of the runtime that the program was linked without.
-
+An edit needs a restart when the running state depends on what it changes. The driver
+finds most cases in steps 3 and 4, and the agent the rest in step 5;
+[What a save does](../guides/saves-and-restarts.md#what-needs-a-restart) lists them, and
+[Output](../reference/output.md#restart-needed) gives every reason as hotfpc prints it.
 hotfpc names the declaration and starts the program over, the way webpack reloads a page
 when a module can't be updated in place. With `--no-restart`, the program keeps running
 its old code instead.

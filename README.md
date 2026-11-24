@@ -3,7 +3,14 @@
 Hot reloading for Free Pascal. Save a unit while your program runs, and the program carries
 on with the new code and everything it had: its variables, objects, open files and threads.
 If an edit changes something the running program depends on, such as a variable's size,
-hotfpc names the declaration in the way and starts the program over with the new code.
+hotfpc names the declaration in the way and starts the program over.
+
+```sh
+brew install fpc frostney/tap/hotfpc
+```
+
+Homebrew covers macOS on Apple silicon and Linux on x86-64. For Windows, Linux arm64 or a
+build from source, see [Install](#install).
 
 ![hotfpc running examples/demo: scene.pas is edited in vim on the left while the program keeps running on the right](docs/demo.gif)
 
@@ -26,149 +33,35 @@ second after the save, and the score starts again from zero.
 [`scripts/record-demo.py`](scripts/record-demo.py) types every keystroke into the shell and
 vim with `tmux send-keys`.
 
-## For rapid development
-
-hotfpc is for the edit-and-run loop while you develop. Change a routine, save, and see the
-result in the running program, without rebuilding, restarting and finding your way back to
-where you were. It pays off most in programs that run for a while and build up state: games,
-servers, simulations, tools with a long setup, and anything you tune by eye.
-
-Build what you ship with plain fpc. A program built by hotfpc carries the agent and keeps
-its symbols, which you don't want in a release.
-
-hotfpc wraps fpc and nothing else. You don't need a build tool or a C compiler, and you
-don't change your program for it. It's a single program written in Pascal.
-
-## Why there's an agent
-
-Free Pascal has no way to replace code in a running program. There's no runtime linker for
-units, and shared libraries only help if you write your program around them, with the code
-to reload in a library and its state somewhere else. hotfpc is meant for the program you
-already have.
-
-So the new code has to go in from inside the process. Another process isn't always allowed
-to write there: macOS signs a program's code pages, and Linux often restricts ptrace. The
-program itself can, with ordinary calls, and it also knows where it was loaded and which of
-its threads are running. hotfpc compiles a small unit into your program with fpc's `-Fa`
-option, and that unit is the agent. You don't change your source for it. On every save, the
-agent loads the new code, binds it to the variables the program already has and points the
-old routines at it.
-
-A compiled unit only works with the exact compiler, target and code generation options that
-made it. Shipping compiled agents would mean one for every fpc version, target and option
-set. So hotfpc carries the agent's source in its own binary and compiles it with your fpc
-and your options when it starts. That's how one hotfpc binary works with every fpc from
-3.2.2 on, and with cross-compiled programs too, such as a Windows program built on Linux. It
-also can't end up with an agent from another version.
-[docs/internals/how-it-works.md](docs/internals/how-it-works.md) has the details.
-
-## Install
-
-You need Free Pascal 3.2.2 or later. hotfpc checks the version when it starts.
-
-Download a binary for macOS arm64, Linux x86-64, Linux arm64 or Windows x86-64 from the
-[releases](https://github.com/frostney/hotfpc/releases), or build it yourself. It's plain
-Pascal and needs nothing beyond what ships with fpc:
-
-```sh
-git clone https://github.com/frostney/hotfpc
-cd hotfpc
-./build.sh hotfpc     # build/hotfpc
-```
-
-On Windows, `build.bat hotfpc` builds `build\hotfpc.exe`.
-
-You don't need the whole repository to build it. All of hotfpc is in `source/`:
-
-- `HotFPC.pas` is hotfpc itself, with its unit tests at the end.
-- `HotFPC.Agent.pas` is the agent.
-- `HotFPC.rc` makes the agent's source part of the hotfpc binary.
-
-Copy them into your own tree and build them with fpc 3.2.2, or with fpc-toolchain's 3.3.1+4
-or later. Its earlier 3.3.1 builds miscompile hotfpc when optimising
-([docs/internals/how-it-works.md](docs/internals/how-it-works.md#a-compiler-bug) has the story). First fpcres,
-which comes with fpc, turns `HotFPC.rc` into `HotFPC.res`, and then fpc builds the rest:
-
-```sh
-fpcres -of res -o HotFPC.res HotFPC.rc
-fpc HotFPC.pas
-```
-
-Put the binary on your `PATH`, or copy it somewhere that is.
-
 ## Use
 
+### Your program
+
+Put `hotfpc` in front of your fpc command line:
+
 ```sh
-hotfpc program.pas
+hotfpc -Fusrc -dDEBUG src/server.pas -- --port 8080
 ```
 
-hotfpc builds the program, starts it and watches its sources. Leave it running, edit a unit
-in your editor and save. Your program's output goes to the terminal as usual, and hotfpc's
-own lines start with `[hot]`:
-
-```text
-[hot] v1: built in 142.0 ms, started in 172.0 ms, 2 units of its own, watching 2 files
-score    1  ##
-score    2  ###
-...
-[hot] v2 swapped: scene: 2 functions redirected (1 with other code, 0 new), 1 variables and tables kept, 0 new, 390 bytes; 105.0 ms after the save was seen (settle 7.0, compile 87.0, interface check 6.0, load 5.0 of which in the program 4.177)
-...
-```
-
-Every save ends in one of these:
+hotfpc builds the program with your fpc, starts it and watches its sources. Leave it
+running, edit a unit and save. Every save ends in one of these:
 
 - `vN swapped`: the new code runs from the next call on, and the program keeps its state.
-- `restart needed: ...`: the edit changes something the running state depends on, such as a
-  variable's size, a class's instance size or virtual method table, a record's layout, a new
-  unit, a new thread variable, or a runtime routine the program was linked without. The
-  message names the declaration, and hotfpc starts the program over.
-- `vN restarted`: the program was linked again and started over with the new code. Its
-  state is gone, as if you had stopped it and started it yourself. If the link fails, you
-  get the errors and the program keeps running. With `--no-restart`, the program carries
-  on with its old code instead, until you stop hotfpc and start it again.
-- `not swapped`: the source changed but the generated code didn't (a comment, for example).
+- `restart needed: ...` and `vN restarted`: the edit changes something the running state
+  depends on. hotfpc names the declaration and starts the program over with the new code.
+- `not swapped`: the source changed but the generated code didn't.
 - `error: ... (nothing changed)`: the unit doesn't compile, and you get fpc's errors. The
   program keeps running the code it had.
 
-hotfpc passes your fpc options to fpc as they are and adds the few it needs, such as `-Xs-`,
-`-Fa`, `-FU` and `-o`. Anything after `--` goes to your program:
+Keep the code you want to change in units: the main program's block is already running.
+[Your own program](docs/guides/your-program.md) has the options and what hotfpc watches,
+and [what a save does](docs/guides/saves-and-restarts.md) has every case.
 
-```sh
-hotfpc -Fusrc -Fiinclude -dDEBUG src/server.pas -- --port 8080
-```
+### With lwpt
 
-It watches the program's directory, every `-Fu` and `-Fi` directory, and the directories in
-any `@file` response file. It builds into `.hot/` next to the program's source, so add
-`.hot/` to your `.gitignore`.
-
-Keep the code you want to change in units. The main program's block is already running, so
-it keeps its old code.
-
-### Options
-
-```text
-hotfpc [--version] [--fpc FPC] [--ppudump PPUDUMP] [--run LAUNCHER] [--quiet]
-       [--no-restart] [--settle MS] [--log FILE] [fpc options] program.pas
-       [-- program arguments]
-```
-
-| Option | What it does |
-| --- | --- |
-| `--fpc FPC` | The compiler to use (default: `fpc`). |
-| `--ppudump PPUDUMP` | ppudump from the same compiler, for checking the layouts of records, classes and variables (default: the one next to the compiler). Without it, or with one that can't read the compiler's units, the check is off and hotfpc says so at the start. |
-| `--run LAUNCHER` | A program to start the built program with. The default is `wine` when the target is Windows (`-Twin64`) and hotfpc isn't running on Windows. A restart stops the launcher, so a launcher that runs the program as its child has to end it too; hotfpc says so when the old program's connection stays open. |
-| `--settle MS` | How long a saved file has to stay unchanged before hotfpc compiles it (default: 2 ms). |
-| `--log FILE` | Writes a copy of every line hotfpc prints, with times. |
-| `--quiet` | Leaves out the start line and the closing summary. |
-| `--no-restart` | When an edit needs a restart, leaves the program running its old code instead of starting it over. |
-| `--version` | Prints hotfpc's version. |
-
-## With lwpt
-
-hotfpc doesn't need [lwpt](https://github.com/frostney/lwpt), but the two get along. lwpt
-writes the unit paths of your package and its dependencies to `lwpt.cfg`, an fpc response
-file. hotfpc passes that file to fpc and watches every directory listed in it, so edits to a
-dependency's units are swapped in too. Add a run task to `lwpt.toml`:
+hotfpc passes [lwpt](https://github.com/frostney/lwpt)'s `lwpt.cfg` to fpc and watches every
+directory in it, so a run task starts your package under hotfpc and edits to dependencies
+are swapped in too:
 
 ```toml
 [hot]
@@ -176,87 +69,77 @@ command = "hotfpc"
 args = ["@lwpt.cfg", "source/greeter.pas"]
 ```
 
-Then run it with lwpt:
+See [with lwpt](docs/guides/lwpt.md) and [`examples/lwpt`](examples/lwpt).
 
-```sh
-lwpt install     # writes lwpt.cfg
-lwpt run hot
-```
+### With raylib
 
-[`examples/lwpt`](examples/lwpt) is a complete project. In it, run `lwpt install` and `lwpt
-run hot`, then change the text in `source/greeting.pas` and save.
+![hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes each save without losing its balls](docs/raylib-demo.gif)
 
-## With raylib
+This is a real run of [`examples/raylib`](examples/raylib) on macOS arm64 with Homebrew's
+fpc 3.2.2 and raylib ([video](docs/raylib-demo.mp4)), recorded with hotfpc 1.0.0. The
+terminal on the left runs tmux, with `scene.pas` open in vim above and a shell below that
+runs `hotfpc -Fl/opt/homebrew/lib game.pas`. The game window is on the right: balls that
+fall, bounce and change colour, with a count of bounces at the top.
 
-[`examples/raylib`](examples/raylib) is a small [raylib](https://www.raylib.com) program to
-play with: balls that fall, bounce and change colour. Change the gravity, the colours or the
-shapes in `scene.pas`, save, and the balls carry on from where they were. It declares the
-raylib functions it uses itself, so raylib is the only thing to install.
+Four edits to `scene.pas` get saved while the game runs:
 
-## Platforms
+1. `Bounce = 0.9` to `1.0`: the balls keep all their speed when they hit a wall.
+2. `Gravity = 900.0` to `500.0`: they fall more slowly and rise higher.
+3. `ClearBackground(Color(24, 26, 34))` to `Color(46, 30, 70)`: the background turns
+   purple.
+4. `DrawCircleV(Balls[I].Position, Radius, ...)` to
+   `DrawPoly(Balls[I].Position, 6, Radius, Balls[I].Hue, ...)`: the balls become hexagons,
+   turned by their hue, so they spin as their colour changes.
 
-hotfpc runs on macOS, Linux and Windows, and hot-reloads programs built for:
+Each one is swapped in 99 to 107 ms after the save (`v2` to `v5`). The balls carry on from
+where they were, and the count of bounces keeps going. The current hotfpc prints the same
+`[hot]` lines as the 1.0.0 that made this recording.
 
-| Program built for | Tested | fpc 3.2.2 | fpc 3.2.4-rc | fpc 3.3.1 |
-| --- | --- | --- | --- | --- |
-| macOS arm64 | natively | ✓ | ✓ | ✓ |
-| Linux x86-64 | natively | ✓ | ✓ | ✓ |
-| Linux arm64 | natively: GitHub's arm64 runner (3.2.2) and an Ubuntu 24.04 arm64 VM | ✓ | ✓ | ✓ |
-| Windows x86-64 | natively, `hotfpc.exe` on GitHub's Windows runner | ✓ | not tried | not tried |
-| Windows x86-64 | under Wine 9.0, hotfpc on Linux | ✓ | ✓ | ✓ |
-| Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | not tried | not tried | ✓ |
+[With raylib](docs/guides/raylib.md) shows how to get raylib, run the example and lay out a
+game for hot reloading.
 
-Each ✓ means all 19 [scenarios](tests/scenarios) gave the expected result with hotfpc 1.0.0.
-For Linux arm64 it means all 25 with hotfpc after 1.1.0; 1.1.0 itself lost the values of
-variables in a unit's implementation section there (see the [changelog](CHANGELOG.md)).
-A scenario is a program that gets edits saved into it while it runs. On Windows, two of them
-expect a restart where the other systems swap (see below). With fpc 3.2.2 and 3.3.1, a
-stress test also passed on all three systems (Windows under Wine): 20,000 reloads of one
-unit while two threads kept calling it, with no stale or wrong results. On macOS and Linux,
-four edits to lwpt's formatter units (6,600 lines) all swapped in.
+## Install
 
-fpc 3.2.2 is the official Free Pascal release. 3.2.4-rc and 3.3.1 are
-[fpc-toolchain](https://github.com/frostney/fpc-toolchain)'s builds. Older compilers aren't
-supported, and neither are macOS x86-64 and 32-bit targets.
+You need Free Pascal 3.2.2 or later; hotfpc checks the version when it starts.
 
-On Windows, fpc's linker always leaves out runtime routines the program never calls, so new
-code that calls one of them needs a restart there. Linux and macOS link the whole unit.
+- **Homebrew**, on macOS on Apple silicon and Linux on x86-64:
+  `brew install fpc frostney/tap/hotfpc`.
+- **A release archive** from the [releases](https://github.com/frostney/hotfpc/releases),
+  with a checksum file. Release 1.1.0 has macOS arm64, Linux x86-64 and Windows x86-64;
+  Linux arm64 comes with the next release.
+- **From source**: `./build.sh hotfpc` builds `build/hotfpc`, and `build.bat hotfpc` builds
+  `build\hotfpc.exe` on Windows. It's plain Pascal and needs nothing beyond fpc.
 
-On Windows itself, CI runs the unit tests and the scenarios with `hotfpc.exe` and fpc 3.2.2
-on pull requests and on pushes to main.
+The [quick start](docs/guides/quick-start.md) has each way step by step, and
+[platforms](docs/reference/platforms.md) has what runs where and what was tested.
 
-A swap usually takes 40 to 150 ms from save to running, and most of that is fpc compiling
-the unit. A unit with about 500 functions takes 0.5 to 1.1 s. For a Windows program, a save
-that changes a unit with a variable with an initial value or a typed constant compiles
-twice: the second compile, to assembler, shows their sizes, which Windows object files
-don't.
+## Why there's an agent
 
-## Limits
+Free Pascal has no way to replace code in a running program, so hotfpc compiles a small
+unit into your program with fpc's `-Fa` option: the agent. On every save, it loads the new
+code, binds it to the variables the program already has and points the old routines at it.
+You don't change your source for it. hotfpc carries the agent's source and compiles it with
+your fpc and options, so one hotfpc works with every fpc from 3.2.2 on, and with
+cross-compiled programs such as a Windows program built on Linux.
+[The introduction](docs/guides/introduction.md) explains why, and
+[how it works](docs/internals/how-it-works.md) explains how.
 
-- A unit's initialization section doesn't run again, and a new unit needs a restart.
-- Memory for new code and data is never freed.
-- Hardened and notarised macOS programs aren't supported.
+Build what you ship with plain fpc: a program built by hotfpc carries the agent and keeps
+its symbols.
 
-[docs/internals/how-it-works.md](docs/internals/how-it-works.md) explains how a save becomes a swap and what
-each system needs.
+## Documentation
 
-## Tests
+- [Guides](docs/index.md#guides): introduction, quick start, what a save does, your own
+  program, edits and what they do, lwpt, raylib, Windows, troubleshooting.
+- [Reference](docs/index.md#reference): command line, output, environment variables,
+  platforms, limits.
+- [Contributing](docs/index.md#contributing): how it works, build system, code style,
+  tooling, testing, releasing.
 
-```sh
-./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 27 scenarios, about 2 minutes
-python3 tests/scenarios/check.py globals rename
-HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
-```
+## Contributing
 
-`tests/scenarios/scenario.py` holds the programs and their edits. `check.py` runs
-`build/hotfpc` on each one, compares the run with its expected number of swaps applied,
-refused and failed and of restarts, and checks for a clean exit and that the program's
-output had no gaps. The script saves each edit once hotfpc has reported on the one before,
-and ends the program after the last, so the numbers don't depend on how fast the machine
-compiles.
-For some cases it also checks the values the program printed after a swap.
-[docs/internals/build-system.md](docs/internals/build-system.md) describes `build.sh` and `build.bat`.
+Changes are welcome: build with `./build.sh`, and test with the unit tests and the
+scenarios. See [CONTRIBUTING.md](CONTRIBUTING.md) and, for agents, [AGENTS.md](AGENTS.md).
 
 ## Licence
 
