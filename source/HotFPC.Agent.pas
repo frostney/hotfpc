@@ -124,6 +124,7 @@ const
   ParkTimeoutFailure = 'a thread of the program did not stop';
   BlockerRunningFailure = 'a thread that blocks signals kept running';
   TooManyThreadsFailure = 'the program has more threads than the agent can stop';
+  ThreadListFailure = 'the threads of the program could not be listed';
   SplitEntryFailure = 'an entry to rewrite could not be written in one store while a thread that blocks signals sleeps';
   StoreSize = 8;
   ParkTimeoutMilliseconds = 2000;
@@ -3786,6 +3787,7 @@ begin
   if TaskThreads(mach_task_self_, Threads, ThreadCount) <> 0 then
   begin
     ThreadCount := 0;
+    StopFailure := ThreadListFailure;   // nothing is stopped: write nothing
     Exit;
   end;
   for I := 0 to ThreadCount - 1 do
