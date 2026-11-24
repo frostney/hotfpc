@@ -78,8 +78,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    source that changes during the compile, such as the second file of a save written a
    moment after the first, or the next save, may be read before or after its change. When
    the sources changed, the driver neither swaps nor reports what fpc made: it waits for
-   them to settle and compiles again. It checks the compile to assembler (step 4) and the
-   link of a restart the same way.
+   them to settle and compiles again. It checks a save's compile to assembler (step 4) and
+   the link of a restart the same way. A source that changes faster than fpc compiles, such
+   as a file a generator keeps rewriting, holds a save back for three compiles at most: the
+   fourth is used as it is.
 3. ppudump reads each changed unit: the interface from its JSON output, and the
    implementation section from its text output, which the JSON leaves out. A field that
    moved, or a field or variable that changed its type without changing a size, is

@@ -3047,6 +3047,11 @@ const
   AcceptIntervalMilliseconds = 5;
   SettleSlackMilliseconds = 2;
   DigestIntervalSeconds = 0.5;
+  { How many compiles in a row hotfpc leaves unused because the sources changed meanwhile.
+    A source that changes faster than fpc compiles, such as a file a generator keeps
+    rewriting, would otherwise hold back every save; the next compile is then used as it is,
+    and the changes still to come are compiled after it. }
+  MaximumUnusedCompiles = 3;
   { macOS checks a newly linked executable on its first start (seconds, more under load); Wine
     starts its server the first time. }
   ConnectTimeoutSeconds = 60;
@@ -3088,6 +3093,8 @@ type
     { The sources changed while fpc read them, so the compile was not acted on: Watch compiles
       them again. }
     FStale: Boolean;
+    { Compiles in a row that were not acted on (FStale). }
+    FUnusedCompiles: Integer;
     FBased: TStringList;
     { The check of sizes of initialised data is on (a Windows program). }
     FCheckSizes: Boolean;
@@ -3312,16 +3319,20 @@ end;
   that was still being written, or of the next one: what it made is then no state the sources
   were in, and acting on it would apply, refuse or report a state nobody saved. The units of
   the changed files, and of units the running program does not have, are then compiled again
-  by the next compile, which Watch starts once the sources have settled (FStale). }
+  by the next compile, which Watch starts once the sources have settled (FStale). After
+  MaximumUnusedCompiles such compiles in a row, the next one is acted on all the same. }
 function TDriver.SourcesChangedDuringCompile: Boolean;
 var
   Changed: TStringList;
 begin
   Changed := FWatcher.ChangedSince(FSettled, FDigests);
   try
-    Result := Changed.Count > 0;
-    if Result then
+    Result := (Changed.Count > 0) and (FUnusedCompiles < MaximumUnusedCompiles);
+    if not Result then
+      FUnusedCompiles := 0
+    else
     begin
+      Inc(FUnusedCompiles);
       if GetEnvironmentVariable(DebugVariable) <> '' then
         WriteLn('[hot debug] changed during the compile: ', Changed.CommaText);
       FCompiler.ForgetUnits(Changed);
