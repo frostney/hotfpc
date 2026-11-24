@@ -99,4 +99,8 @@ end hotfpc, which ends with the program's exit code.
   [Your own program](your-program.md#what-hotfpc-watches).
 
 Several saves in quick succession can be compiled together: what you see is always the
-newest text.
+newest text. A save that lands while fpc is compiling, such as the second file of a "save
+all" or the next save, makes hotfpc set that compile aside and compile again once the files
+settle, so it never swaps or reports a mix of old and new files. A file that keeps changing
+faster than fpc compiles holds a save back for three compiles at most: the fourth is used as
+it is ([how it works](../internals/how-it-works.md#one-save)).

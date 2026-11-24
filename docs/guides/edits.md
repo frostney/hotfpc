@@ -4,8 +4,7 @@ Every kind of edit hotfpc has a test for, and what it does. Each row is a step o
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
 small program that runs while the test saves the edit into it, run by CI on pull requests
 and on pushes to main. The
-outcomes are from a run of all 26 scenarios on Linux x86-64 with fpc 3.2.4-rc2+1 on
-2026-11-24, and they are what `check.py` expects on macOS and Linux. Where a Windows
+outcomes are from runs of all 27 scenarios on Linux x86-64 with fpc 3.2.2 on 2026-11-24, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.
 
 In a swap, the program keeps running with its state; in a restart, hotfpc starts it over
@@ -93,6 +92,7 @@ These scenarios let hotfpc start the program over; the others pass `--no-restart
 | Edit | Outcome | Scenario |
 | --- | --- | --- |
 | Two saves 0.12 s apart, twice | each save is swapped, or two are compiled together; the program shows the newest text either way | `rapid` |
+| One save whose second file is written while fpc compiles the first | compiled again once the files settle, then swapped once | `slowsave` |
 
 ## Running one yourself
 

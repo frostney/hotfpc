@@ -7,14 +7,14 @@ scenarios that run real programs under hotfpc and save edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 26 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 27 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
 ## When a change is done
 
-A change is done when the unit tests pass and `check.py` prints "26 of 26 cases as
+A change is done when the unit tests pass and `check.py` prints "27 of 27 cases as
 expected" on every system the change can affect: macOS arm64, Linux x86-64, Linux arm64,
 and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on Windows). Changes
 to the agent or to the checks of layouts and sizes are tested with fpc 3.2.2 and 3.3.1.
@@ -33,10 +33,13 @@ with 1 when a check failed. `./build.sh tests` compiles `source/HotFPC.pas` with
 
 ## The scenarios
 
-`tests/scenarios/scenario.py` holds 26 cases. Each is a small program, `main.pas` and its
+`tests/scenarios/scenario.py` holds 27 cases. Each is a small program, `main.pas` and its
 units, and a list of steps: the edits the script saves into the files while the program
-runs, 1.2 s apart. The program prints a numbered tick every 0.3 s, with what the unit's
-code returns.
+runs. The script saves a step once hotfpc has reported its outcome for the step before (a
+swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
+how fast the machine compiles. A step marked `+` comes 0.12 s after the one before instead,
+while hotfpc is still busy with it. After the last step the script tells the program to
+end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
 
 `check.py` runs `scenario.py` and checks each case's run:
 
