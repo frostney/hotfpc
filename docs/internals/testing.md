@@ -15,11 +15,11 @@ HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ## When a change is done
 
 A change is done when the unit tests pass and `check.py` prints "27 of 27 cases as
-expected" on every system the change can affect: macOS arm64, Linux x86-64, Linux arm64,
-and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on Windows). Changes
-to the agent or to the checks of layouts and sizes are tested with fpc 3.2.2 and 3.3.1.
-CI runs the unit tests and the scenarios with fpc 3.2.2 on all four systems
-([tooling](tooling.md#ci)); the other compilers and Wine are run by hand.
+expected" on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
+Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
+Windows). Changes to the agent or to the checks of layouts and sizes are tested with fpc
+3.2.2 and 3.3.1. CI runs the unit tests and the scenarios with fpc 3.2.2 on all five
+systems ([tooling](tooling.md#ci)); the other compilers and Wine are run by hand.
 
 ## The unit tests
 

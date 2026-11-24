@@ -35,7 +35,8 @@ and run the scenarios with `HOT_DRIVER_OPTS` set to `-Twin64 -Px86_64`.
 ## When a change is done
 
 The unit tests pass, and `check.py` prints "27 of 27 cases as expected" on every system
-the change can affect: macOS arm64, Linux x86-64, Linux arm64, and Windows x86-64. Changes
+the change can affect: macOS arm64, macOS x86-64, Linux x86-64, Linux arm64, and Windows
+x86-64. Changes
 to the agent, or to the checks of layouts and sizes, are tested with fpc 3.2.2 and 3.3.1.
 [Testing](docs/internals/testing.md) explains the tests and how to add a scenario.
 
@@ -60,7 +61,8 @@ reference check fails until it does. A change users can see goes into `CHANGELOG
 ## CI
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to main: the build, the unit
-tests and the scenarios on Linux x86-64, Linux arm64, macOS arm64 and Windows x86-64 with
+tests and the scenarios on Linux x86-64, Linux arm64, macOS arm64, macOS x86-64 and Windows
+x86-64 with
 fpc 3.2.2, and a `docs` job with the reference check and the Markdown lint.
 
 ## Contributor docs

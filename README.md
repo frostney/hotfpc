@@ -9,8 +9,8 @@ hotfpc names the declaration in the way and starts the program over.
 brew install fpc frostney/tap/hotfpc
 ```
 
-Homebrew covers macOS on Apple silicon and Linux on x86-64. For Windows, Linux arm64 or a
-build from source, see [Install](#install). The documentation is at
+Homebrew covers macOS on Apple silicon and Linux on x86-64. For Windows, an Intel Mac,
+Linux arm64 or a build from source, see [Install](#install). The documentation is at
 <https://frostney.github.io/hotfpc/>, rendered from [docs/](docs/index.md).
 
 ![hotfpc running examples/demo: scene.pas is edited in vim on the left while the program keeps running on the right](docs/demo.gif)
@@ -107,7 +107,7 @@ You need Free Pascal 3.2.2 or later; hotfpc checks the version when it starts.
   `brew install fpc frostney/tap/hotfpc`.
 - **A release archive** from the [releases](https://github.com/frostney/hotfpc/releases),
   with a checksum file. Release 1.1.0 has macOS arm64, Linux x86-64 and Windows x86-64;
-  Linux arm64 comes with the next release.
+  macOS x86-64 and Linux arm64 come with the next release.
 - **From source**: `./build.sh hotfpc` builds `build/hotfpc`, and
   `build.bat hotfpc -- -Twin64 -Px86_64` builds a 64-bit `build\hotfpc.exe` on Windows. It's
   plain Pascal and needs nothing beyond fpc.

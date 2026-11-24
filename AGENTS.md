@@ -40,11 +40,11 @@ npx --yes markdownlint-cli2@0.24.0         # the Markdown lint
 ```
 
 A change is done when the unit tests pass and `check.py` prints "27 of 27 cases as
-expected" on every system the change can affect: macOS arm64, Linux x86-64, Linux arm64,
-and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on Windows). For
-Windows programs, `check.py` expects a restart in three cases where the other systems swap;
-the comments in it explain why. Changes to the agent or to the checks of layouts and sizes
-are tested with fpc 3.2.2 and 3.3.1.
+expected" on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
+Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
+Windows). For Windows programs, `check.py` expects a restart in three cases where the other
+systems swap; the comments in it explain why. Changes to the agent or to the checks of
+layouts and sizes are tested with fpc 3.2.2 and 3.3.1.
 
 ## Rules
 

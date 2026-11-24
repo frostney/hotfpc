@@ -31,9 +31,9 @@ the notes from the section named after the tag and fails without one.
 
 3. `.github/workflows/release.yml` builds `hotfpc` with fpc 3.2.2 and release settings
    (`./build.sh clean hotfpc --production`, and `build.bat` with `-- -Twin64 -Px86_64` on
-   Windows) on GitHub's runners for `linux-x64`, `linux-arm64`, `macos-arm64` and
-   `windows-x64`. It checks that `hotfpc --version` prints `hotfpc <tag>`, packs each binary
-   with `README.md` and `LICENSE` into `hotfpc-<version>-<system>.tar.gz` (`.zip` for
+   Windows) on GitHub's runners for `linux-x64`, `linux-arm64`, `macos-arm64`, `macos-x64`
+   and `windows-x64`. It checks that `hotfpc --version` prints `hotfpc <tag>`, packs each
+   binary with `README.md` and `LICENSE` into `hotfpc-<version>-<system>.tar.gz` (`.zip` for
    Windows), writes `hotfpc-<version>-checksums.txt` with their SHA-256 sums, and creates the
    GitHub release.
 4. Once the release is published, set its version in the download commands of the
@@ -45,5 +45,6 @@ the notes from the section named after the tag and fails without one.
 The formula `hotfpc` in [frostney/homebrew-tap](https://github.com/frostney/homebrew-tap)
 installs the release binary. After a release, update `Formula/hotfpc.rb` there with a pull
 request: each archive's URL and its SHA-256 from the checksum file. The formula has
-archives for macOS on Apple silicon and Linux on x86-64; the `linux-arm64` archive needs a
-block of its own in it before Homebrew installs hotfpc on Linux arm64.
+archives for macOS on Apple silicon and Linux on x86-64; the `macos-x64` and `linux-arm64`
+archives each need a block of their own in it before Homebrew installs hotfpc on an Intel
+Mac or on Linux arm64.

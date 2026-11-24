@@ -195,6 +195,7 @@ applied:
 | `a thread of the program did not stop` | Linux | A thread didn't stop within 2 s. |
 | `a thread that blocks signals kept running` | Linux | A thread that blocks every signal, as some libraries start, was running, not waiting in the kernel. |
 | `the program has more threads than the agent can stop` | Linux, Windows | The agent's list of threads to stop is full. |
+| `the threads of the program could not be listed` | macOS | `task_threads` failed, so the agent stopped nothing and wrote nothing. |
 | `an entry to rewrite could not be written in one store while a thread that blocks signals sleeps` | Linux | A function's entry wasn't aligned for the one 8-byte store that keeps such a thread safe. |
 | `a thread stayed inside the first bytes of a function being redirected` | x86-64 | A thread kept stopping inside an entry the jump overwrites. |
 | `cannot copy a code page of the program` | macOS | The system refused the copy of a signed code page. |
