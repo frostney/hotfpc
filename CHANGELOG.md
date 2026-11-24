@@ -11,6 +11,8 @@
   compares the sizes there. A save whose sizes it can't compare, because fpc didn't write
   the assembler or the assembler has no size for a variable the object file defines, needs
   a restart too.
+- Linux arm64: the releases have a `linux-arm64` archive, and CI builds hotfpc, runs the
+  unit tests and runs the scenarios on GitHub's arm64 runner.
 - On Linux arm64, new code now uses the variables of its unit's implementation section
   that the program already has. It used to get new ones set to zero, so their values were
   lost and the program could crash: gas refers to such a variable through the symbol of

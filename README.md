@@ -66,7 +66,7 @@ also can't end up with an agent from another version.
 
 You need Free Pascal 3.2.2 or later. hotfpc checks the version when it starts.
 
-Download a binary for macOS arm64, Linux x86-64 or Windows x86-64 from the
+Download a binary for macOS arm64, Linux x86-64, Linux arm64 or Windows x86-64 from the
 [releases](https://github.com/frostney/hotfpc/releases), or build it yourself. It's plain
 Pascal and needs nothing beyond what ships with fpc:
 
@@ -201,12 +201,14 @@ hotfpc runs on macOS, Linux and Windows, and hot-reloads programs built for:
 | --- | --- | --- | --- | --- |
 | macOS arm64 | natively | ✓ | ✓ | ✓ |
 | Linux x86-64 | natively | ✓ | ✓ | ✓ |
+| Linux arm64 | natively: GitHub's arm64 runner (3.2.2) and an Ubuntu 24.04 arm64 VM | ✓ | not tried | ✓ |
 | Windows x86-64 | natively, `hotfpc.exe` on GitHub's Windows runner | ✓ | not tried | not tried |
 | Windows x86-64 | under Wine 9.0, hotfpc on Linux | ✓ | ✓ | ✓ |
 | Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | not tried | not tried | ✓ |
-| Linux arm64 | compiles, not run yet | | | |
 
 Each ✓ means all 19 [scenarios](tests/scenarios) gave the expected result with hotfpc 1.0.0.
+For Linux arm64 it means all 25 with hotfpc after 1.1.0; 1.1.0 itself lost the values of
+variables in a unit's implementation section there (see the [changelog](CHANGELOG.md)).
 A scenario is a program that gets edits saved into it while it runs. On Windows, two of them
 expect a restart where the other systems swap (see below). With fpc 3.2.2 and 3.3.1, a
 stress test also passed on all three systems (Windows under Wine): 20,000 reloads of one
