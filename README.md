@@ -201,7 +201,7 @@ hotfpc runs on macOS, Linux and Windows, and hot-reloads programs built for:
 | --- | --- | --- | --- | --- |
 | macOS arm64 | natively | ✓ | ✓ | ✓ |
 | Linux x86-64 | natively | ✓ | ✓ | ✓ |
-| Linux arm64 | natively: GitHub's arm64 runner (3.2.2) and an Ubuntu 24.04 arm64 VM | ✓ | not tried | ✓ |
+| Linux arm64 | natively: GitHub's arm64 runner (3.2.2) and an Ubuntu 24.04 arm64 VM | ✓ | ✓ | ✓ |
 | Windows x86-64 | natively, `hotfpc.exe` on GitHub's Windows runner | ✓ | not tried | not tried |
 | Windows x86-64 | under Wine 9.0, hotfpc on Linux | ✓ | ✓ | ✓ |
 | Windows x86-64 | under Wine 9.0, `hotfpc.exe` and the Windows fpc under Wine too | not tried | not tried | ✓ |
