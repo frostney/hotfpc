@@ -71,8 +71,8 @@ if os.environ.get("HOT_TRANSCRIPT"):
 # each case's section of the transcript, in the order the cases ran: a case named twice has
 # two sections, and a case that never started has none
 sections = re.findall(r"^=== (\S+)\n(.*?)(?=\n=== |\Z)", out, re.S | re.M)
-# the cases that failed, with their section (None when the case never started); their runs
-# are printed at the end, so a CI log shows why
+# the cases that failed, with their section (None when the case never started); the runs
+# that printed anything are shown at the end, so a CI log shows why
 failing = []
 for name in names:
     body = sections.pop(0)[1] if sections and sections[0][0] == name else None
@@ -103,7 +103,7 @@ for name in names:
     if not ok:
         failing.append((name, body))
 for name, body in failing:
-    if body is not None:
+    if body and body.strip():
         print("\n=== %s, as it ran\n%s" % (name, body.rstrip()))
 # scenario.py's own failure, such as a traceback that cut the run short, fails the check
 # even when every case that ran was as expected
