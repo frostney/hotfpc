@@ -264,7 +264,7 @@ ppudump only turn a check off:
 | `<ppudump> cannot read this compiler's units (<reason>): the check of interface layouts is off; --ppudump names one that can` | The ppudump found belongs to another fpc. hotfpc carries on without the check. |
 | `the agent did not compile:` | fpc's output follows. Your options for the target or paths may not suit a unit compiled on its own. |
 | `cannot listen on 127.0.0.1` | hotfpc couldn't open a TCP port on the loopback interface. |
-| `the program ended (exit code <n>) before hot reloading could start` | The program ended, or crashed, before its agent connected. hotfpc ends with its exit code; after a restart, it waits for the next save instead. |
+| `the program ended (exit code <n>) before hot reloading could start` | The program ended, or crashed, before its agent connected. hotfpc ends with its exit code, `-1` when a signal ended it; after a restart, it waits for the next save instead. |
 | `the program did not connect within <n> s` | The agent didn't connect within 60 s. hotfpc stops the program. |
 
 When the first build fails, hotfpc prints fpc's errors, without `[hot]`: the lines that

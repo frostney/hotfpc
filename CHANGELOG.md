@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A program that a signal ends before its agent connects makes hotfpc end with 255 and
+  print `exit code -1`, as when a signal ends it later. hotfpc used to print `exit code 0`
+  and end with 0, as if the program had succeeded.
 - macOS x86-64 (Intel Macs): the agent hot-reloads programs built for it, the releases have
   a `macos-x64` archive, and CI builds hotfpc, runs the unit tests and runs the scenarios
   on GitHub's Intel macOS runner.
