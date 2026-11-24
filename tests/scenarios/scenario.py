@@ -516,12 +516,12 @@ case("signature", SIGNATURE, [
 # An editor or a tool may write the files of one save further apart than hotfpc waits for a
 # save to settle. Here main.pas is written once hotfpc has started to compile u.pas alone, so
 # fpc reads main.pas before or after its change: the tool must compile again once the sources
-# settle, not report or swap what that compile made. u.pas includes 3000 functions nothing
+# settle, not report or swap what that compile made. u.pas includes 5000 functions nothing
 # calls, so that compile lasts a while on a fast machine too.
 SLOWSAVE = dict(SIGNATURE)
 SLOWSAVE["u.pas"] = SIGNATURE["u.pas"].replace("implementation\nuses SysUtils;\n", "implementation\nuses SysUtils;\n{$I bulk.inc}\n")
 SLOWSAVE["bulk.inc"] = "".join("function Bulk%d(x: Integer): Integer; begin Result := x * %d + %d; end;\n" % (i, i % 7 + 1, i)
-                               for i in range(3000))
+                               for i in range(5000))
 case("slowsave", SLOWSAVE, [
     ("the same edit, with main.pas written while hotfpc compiles u.pas", SIGNATURE_EDITS, WHILE_COMPILING),
 ])
