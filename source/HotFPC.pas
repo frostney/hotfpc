@@ -3093,7 +3093,8 @@ type
     { The sources changed while fpc read them, so the compile was not acted on: Watch compiles
       them again. }
     FStale: Boolean;
-    { Compiles in a row that were not acted on (FStale). }
+    { Compiles, links and compiles to assembler in a row that were not acted on (FStale);
+      Watch sets it back once a save has been handled. }
     FUnusedCompiles: Integer;
     FBased: TStringList;
     { The check of sizes of initialised data is on (a Windows program). }
@@ -3328,9 +3329,7 @@ begin
   Changed := FWatcher.ChangedSince(FSettled, FDigests);
   try
     Result := (Changed.Count > 0) and (FUnusedCompiles < MaximumUnusedCompiles);
-    if not Result then
-      FUnusedCompiles := 0
-    else
+    if Result then
     begin
       Inc(FUnusedCompiles);
       if GetEnvironmentVariable(DebugVariable) <> '' then
@@ -3969,7 +3968,9 @@ begin
       Restart(SeenAt);
     { settle first: the save that changed them may still be in progress }
     if FStale then
-      Seen := nil;
+      Seen := nil
+    else
+      FUnusedCompiles := 0;
     if ProgramHasEnded then
       Break;
   end;
@@ -4033,8 +4034,9 @@ begin
   if not BuildProgram then
     Exit(1);
   CopyObjectsToLive;
-  SourcesChangedDuringCompile;
+  { before the check of the sources, which may remove the records ppudump is probed with }
   ProbeLayouts;
+  SourcesChangedDuringCompile;
   if not FLink.Listen then
   begin
     WriteLn('[hot] cannot listen on 127.0.0.1');
