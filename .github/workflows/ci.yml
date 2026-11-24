@@ -31,6 +31,9 @@ jobs:
           - name: macOS arm64, fpc 3.2.2
             runner: macos-15
             fpc: brew
+          - name: macOS x86-64, fpc 3.2.2
+            runner: macos-15-intel
+            fpc: brew
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
