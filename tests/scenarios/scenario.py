@@ -40,11 +40,15 @@ CASES = {}
 BLOCKED = object()
 
 
+# A step's files after the first are written once the driver has started to compile the first:
+# it then removes the compiler's record of that unit, .hot/units/<unit>.ppu
+WHILE_COMPILING = "while compiling"
+
+
 def case(name, files, steps, opts=(), restart=False):
-    """steps: (description, edits) or (description, edits, pause), where pause is the time in
-    seconds between the files of the save. restart: the driver starts the program over when
-    an edit needs a restart; the other cases pass --no-restart, so that the program they check
-    keeps running."""
+    """steps: (description, edits) or (description, edits, WHILE_COMPILING). restart: the driver
+    starts the program over when an edit needs a restart; the other cases pass --no-restart, so
+    that the program they check keeps running."""
     CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
 
 
@@ -510,11 +514,16 @@ case("signature", SIGNATURE, [
 
 # ---------------------------------------------------------------------------- a save that takes a moment
 # An editor or a tool may write the files of one save further apart than hotfpc waits for a
-# save to settle. Here main.pas comes 30 ms after u.pas, so the compile that starts with u.pas
-# changed can read main.pas before or after its change: the tool must compile again once the
-# sources settle, not report or swap what that compile made.
-case("slowsave", SIGNATURE, [
-    ("the same edit, with main.pas written 30 ms after u.pas", SIGNATURE_EDITS, 0.03),
+# save to settle. Here main.pas is written once hotfpc has started to compile u.pas alone, so
+# fpc reads main.pas before or after its change: the tool must compile again once the sources
+# settle, not report or swap what that compile made. u.pas includes 3000 functions nothing
+# calls, so that compile lasts a while on a fast machine too.
+SLOWSAVE = dict(SIGNATURE)
+SLOWSAVE["u.pas"] = SIGNATURE["u.pas"].replace("implementation\nuses SysUtils;\n", "implementation\nuses SysUtils;\n{$I bulk.inc}\n")
+SLOWSAVE["bulk.inc"] = "".join("function Bulk%d(x: Integer): Integer; begin Result := x * %d + %d; end;\n" % (i, i % 7 + 1, i)
+                               for i in range(3000))
+case("slowsave", SLOWSAVE, [
+    ("the same edit, with main.pas written while hotfpc compiles u.pas", SIGNATURE_EDITS, WHILE_COMPILING),
 ])
 
 # ---------------------------------------------------------------------------- procedure variables
@@ -979,6 +988,7 @@ REFUSED = re.compile(r"\[hot\] restart needed")
 # seem to have seen it a ms or two before it was written.
 SEEN = re.compile(r"; ([\d.]+) ms after the save was seen")
 SEEN_MARGIN = 0.02
+QUICK_TIMEOUT = 10
 # The longest the driver may take for a save: a restart waits up to 60 s for a new program to
 # start (macOS checks a new executable on its first start).
 OUTCOME_TIMEOUT = 150
@@ -1024,10 +1034,10 @@ def run(name):
             ended.set()
             changed.notify_all()
 
-    def wait(test):
+    def wait(test, timeout=OUTCOME_TIMEOUT):
         """Waits until a line the driver printed passes test, or it ends; False after the
         timeout."""
-        deadline = time.time() + OUTCOME_TIMEOUT
+        deadline = time.time() + timeout
         with changed:
             while not ended.is_set() and not test():
                 if time.time() > deadline:
@@ -1056,7 +1066,7 @@ def run(name):
     time.sleep(0.9)
     for i, step in enumerate(steps):
         desc, edits = step[:2]
-        pause = step[2] if len(step) > 2 else 0
+        while_compiling = len(step) > 2 and step[2] == WHILE_COMPILING
         # a "+" marks a step that follows the one before it after 0.12 s, while the driver is
         # still busy with that one; every other step waits for the driver's outcome of the
         # one before, as someone who saves, looks at the result and edits again
@@ -1077,9 +1087,15 @@ def run(name):
         with lock:
             since = len(lines)
         saved = time.time()
+        first = next(iter(texts))
         for k, (path, text) in enumerate(texts.items()):
-            if k and pause:
-                time.sleep(pause)
+            if k == 1 and while_compiling:
+                record = os.path.join(work, ".hot", "units", os.path.splitext(os.path.basename(first))[0] + ".ppu")
+                deadline = time.time() + OUTCOME_TIMEOUT
+                while os.path.exists(record) and time.time() < deadline:
+                    time.sleep(0.001)
+                if os.path.exists(record):
+                    out("!!! the driver did not start to compile %s within %d s" % (os.path.basename(first), OUTCOME_TIMEOUT))
             if text is None:   # (file, None, None): the file, or the directory BLOCKED put there, goes away
                 if os.path.isdir(path):
                     os.rmdir(path)
@@ -1096,8 +1112,11 @@ def run(name):
         if quick_next:
             time.sleep(0.12)
             continue
-        quick = desc.startswith("+")
-        if not wait(lambda: outcome(since, saved if quick else None)):
+        # after a quick save, a swap of the save before is not its outcome; but a swap that
+        # merged the two can carry the earlier save's time when the driver read the files
+        # late, so after QUICK_TIMEOUT s any outcome counts
+        if not (desc.startswith("+") and wait(lambda: outcome(since, saved), QUICK_TIMEOUT)) \
+                and not wait(lambda: outcome(since)):
             out("!!! the driver gave no outcome within %d s of the save" % OUTCOME_TIMEOUT)
         # the program runs a few ticks with what the driver made of the save
         time.sleep(1.2)
