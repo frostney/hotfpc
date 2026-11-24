@@ -164,9 +164,11 @@ program that ends with 0, and the first program in every case, end hotfpc as bef
   jump. fpc aligns functions, so the jump fits; if one didn't, the swap would be refused. A
   thread that doesn't stop within 2 s means the swap is refused. fpc's x86-64 code
   reaches variables through 32-bit absolute addresses, so new code and data go below
-  2 GiB when the program is loaded there. On x86-64 Linux, fpc 3.3.1 makes thread
-  variables native ELF TLS variables. An existing one keeps its offset, and a new one
-  needs a restart.
+  2 GiB when the program is loaded there. On aarch64, gas refers to a variable of the
+  implementation section through the symbol of its section plus an offset; the agent maps
+  such a reference back to the variable, so it keeps its value. On x86-64 Linux, fpc 3.3.1
+  makes thread variables native ELF TLS variables. An existing one keeps its offset, and a
+  new one needs a restart.
 - **Windows.** The executable keeps a COFF symbol table when it's linked with `-Xs-`, which
   hotfpc passes. `SuspendThread` stops the other threads. On x86-64 the agent also checks
   that no thread is stopped inside the five bytes of an entry it overwrites, and retries if

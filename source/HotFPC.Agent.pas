@@ -1166,6 +1166,13 @@ begin
     Result := rkUnsupported;
   end;
 end;
+
+// Whether the addend of a relocation of this kind is the target's offset from the symbol.
+// A pc-relative one's also holds the distance from the field to the end of the instruction.
+function ELFAddendIsTargetOffset(AKind: TRelocationKind): Boolean;
+begin
+  Result := AKind in [rkAbsolute64, rkAbsolute32, rkAbsolute32Signed];
+end;
 {$else}
 const
   R_AARCH64_ABS64 = 257;
@@ -1206,6 +1213,13 @@ begin
   else
     Result := rkUnsupported;
   end;
+end;
+
+// Every aarch64 relocation computes the symbol plus the addend, minus the place for a
+// pc-relative one, so the addend is the target's offset from the symbol.
+function ELFAddendIsTargetOffset(AKind: TRelocationKind): Boolean;
+begin
+  Result := AKind <> rkUnsupported;
 end;
 {$endif}
 
@@ -1314,7 +1328,9 @@ begin
       Relocation.Section := -1;
       if (SymbolIndex < QWord(SymbolCount)) and (SectionOfSymbol[SymbolIndex] >= 0) then Relocation.Section := SectionOfSymbol[SymbolIndex]
       else Relocation.Symbol := LongInt(SymbolIndex);
-      if (Relocation.Symbol < 0) and (Relocation.Kind in [rkAbsolute64, rkAbsolute32, rkAbsolute32Signed]) then
+      // gas refers to a local symbol, such as a variable of the implementation section,
+      // through the symbol of its section: the target's offset then says which one it is.
+      if (Relocation.Symbol < 0) and ELFAddendIsTargetOffset(Relocation.Kind) then
       begin
         Relocation.TargetOffset := Relocation.Addend;
         Relocation.HasTargetOffset := True;
