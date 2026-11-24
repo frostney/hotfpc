@@ -624,6 +624,9 @@ type
     { The files of ANew whose size or time differs from AOld's or that AOld lacks, and the
       files of AOld that ANew lacks. The caller frees the list. }
     class function ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
+    { True when a file of ANew is empty and changed since AOld (another size or time, or new):
+      an editor that empties a file before it writes it may have got only that far. }
+    class function HasEmptied(const AOld, ANew: TFileStamps): Boolean;
     { The files whose digest differs between the two lists of path=digest, or that are new
       in ACurrent. APrevious may be nil: then every file is a change. Each file is kept by
       its whole path, with its case: a path may have = in it, and the digest has none. }
@@ -635,8 +638,9 @@ type
     { Names, sizes and times of the watched files, the times as finely as the file system
       keeps them; StampedAt is then the Clock before they were read. }
     function Stamps: TFileStamps;
-    { The content of every watched file as path=digest. False while a file is missing or empty
-      (a save in progress); ADigests is then nil. Otherwise the caller frees the list. }
+    { The content of every watched file as path=digest, an empty file's too. False while a file
+      is missing (a save in progress); ADigests is then nil. Otherwise the caller frees the
+      list. }
     function ReadDigests(out ADigests: TStringList): Boolean;
     { The files that changed since the sources had AStamps and ADigests: another size or time,
       new or gone, or, for an edit of the same size within the same second, other content.
@@ -843,6 +847,22 @@ begin
   end;
 end;
 
+class function TSourceWatcher.HasEmptied(const AOld, ANew: TFileStamps): Boolean;
+var
+  Changed: TStringList;
+  I: Integer;
+begin
+  Result := False;
+  Changed := ChangedStamps(AOld, ANew);
+  try
+    for I := 0 to High(ANew) do
+      if (ANew[I].Size = 0) and (Changed.IndexOf(ANew[I].Path) >= 0) then
+        Exit(True);
+  finally
+    Changed.Free;
+  end;
+end;
+
 { An entry of a list of digests: the path, which may have =, then the digest, which has none. }
 function DigestPath(const AEntry: string): string;
 begin
@@ -966,7 +986,7 @@ begin
   try
     for I := 0 to Watched.Count - 1 do
     begin
-      if not ReadFileContents(Watched[I], Contents) or (Contents = '') then
+      if not ReadFileContents(Watched[I], Contents) then
       begin
         FreeAndNil(ADigests);
         Exit(False);
@@ -984,7 +1004,7 @@ var
   Digests, Changed: TStringList;
 begin
   Result := ChangedStamps(AStamps, Stamps);
-  { a file that is missing or empty has already shown in the stamps }
+  { a file that is missing has already shown in the stamps }
   if (Result.Count > 0) or (ADigests = nil) or not ReadDigests(Digests) then
     Exit;
   try
@@ -4106,10 +4126,12 @@ end;
 { Polls the sizes and times of the sources every few milliseconds and their contents twice a
   second: the content check catches an edit of the same size within the same second. A save
   whose files changed again while fpc compiled them is compiled again once they settle
-  (FStale), even when their content is back to what it was. }
+  (FStale), even when their content is back to what it was. A save that left a file empty is
+  compiled at the next look at the contents, when the file is still empty: an editor that
+  empties a file before it writes it may not have written it yet. }
 procedure TDriver.Watch;
 var
-  Seen, Current: TFileStamps;
+  Seen, Previous, Current: TFileStamps;
   Digests, Changed: TStringList;
   LastDigest, SeenAt, CompileSeconds: Double;
 begin
@@ -4127,14 +4149,15 @@ begin
     if TSourceWatcher.SameStamps(Current, Seen) and (NowSeconds - LastDigest < DigestIntervalSeconds) then
       Continue;
     SeenAt := NowSeconds;
+    Previous := Seen;
     if not TSourceWatcher.SameStamps(Current, Seen) then
       Current := Settle(Current);
     if ProgramHasEnded then
       Break;
     Seen := Current;
     LastDigest := NowSeconds;
-    { a missing or empty file: a save in progress }
-    if not FWatcher.ReadDigests(Digests) then
+    { a file this save emptied, or a missing file: a save in progress }
+    if TSourceWatcher.HasEmptied(Previous, Current) or not FWatcher.ReadDigests(Digests) then
       Continue;
     if not FStale and (FDigests <> nil) and (Digests.Text = FDigests.Text) then
     begin
@@ -4926,6 +4949,29 @@ begin
   end;
 end;
 
+{ An empty file is a save in progress only when the save made it empty: an empty file that
+  stays as it was holds nothing back. }
+procedure TestHasEmptied;
+var
+  Old, New: TFileStamps;
+begin
+  SetLength(Old, 2);
+  Old[0] := Stamp('/src/a.pas', 10, 100);
+  Old[1] := Stamp('/src/unused.inc', 0, 90);
+  SetLength(New, 2);
+  New[0] := Stamp('/src/a.pas', 12, 101);
+  New[1] := Stamp('/src/unused.inc', 0, 90);
+  Expect(not TSourceWatcher.HasEmptied(Old, New), 'an empty file that did not change');
+  New[0] := Stamp('/src/a.pas', 0, 101);
+  Expect(TSourceWatcher.HasEmptied(Old, New), 'a file the save emptied');
+  Expect(not TSourceWatcher.HasEmptied(New, New), 'which stays empty at the next look');
+  SetLength(New, 3);
+  New[0] := Stamp('/src/a.pas', 10, 100);
+  New[2] := Stamp('/src/b.pas', 0, 101);
+  Expect(TSourceWatcher.HasEmptied(Old, New), 'a new file that is empty');
+  Expect(TSourceWatcher.HasEmptied(nil, Old), 'an empty file when nothing was seen before');
+end;
+
 { What a compile checks when it is done: whether the sources it started from changed
   meanwhile. }
 procedure TestChangedSince;
@@ -5236,8 +5282,9 @@ begin
     Expect(not TSourceWatcher.SameStamps(Stamps, Edited), 'an edit that changes the size changes the stamps');
     WriteTestFile(Extra + 'helper.pp', '');
     Digests := nil;
-    Expect(not Watcher.ReadDigests(Digests), 'an empty file is a save in progress');
-    Expect(Digests = nil, 'and gives no digests');
+    Expect(Watcher.ReadDigests(Digests), 'an empty file has a digest too');
+    Expect((Digests <> nil) and (Digests.IndexOfName(Extra + 'helper.pp') >= 0), 'of no content');
+    Digests.Free;
   finally
     Watcher.Free;
     Options.Free;
@@ -6993,6 +7040,7 @@ begin
     TestSameStamps;
     TestChangedFiles;
     TestChangedStamps;
+    TestHasEmptied;
     TestChangedSince;
     TestWatchedPaths;
     TestStampsShowARevertedSave;

@@ -719,7 +719,9 @@ begin
 end;
 end.
 ''',
-    "shared.inc": SHARED_INC}, [
+    "shared.inc": SHARED_INC,
+    # an empty include file nothing uses: an empty file that no save changed holds no save back
+    "unused.inc": ""}, [
     ("shared.inc (included by u and v): the body of Scale",
      [("shared.inc", "Result := n * 2;", "Result := n * 10;")]),
     ("shared.inc: the constant Prefix",
