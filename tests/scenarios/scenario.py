@@ -973,9 +973,12 @@ case("crash", {"main.pas": MAIN, "u.pas": U_COUNTED}, [
 # case lets the driver restart the program.
 DONE = re.compile(r"\[hot\] (v\d+ swapped|not swapped|error: |v\d+ restarted|the next save that builds starts|the program ended with)")
 REFUSED = re.compile(r"\[hot\] restart needed")
-# a swap says how long after it saw the save it was made: a swap of a save it saw before the
-# one in question is not that one's outcome
+# A swap says how long after it saw the save it was made. After a quick save ("+"), a swap
+# of a save the driver saw more than SEEN_MARGIN s before it is the outcome of the save
+# before, not of this one. The driver's clock counts whole ms, so a swap of this save can
+# seem to have seen it a ms or two before it was written.
 SEEN = re.compile(r"; ([\d.]+) ms after the save was seen")
+SEEN_MARGIN = 0.02
 # The longest the driver may take for a save: a restart waits up to 60 s for a new program to
 # start (macOS checks a new executable on its first start).
 OUTCOME_TIMEOUT = 150
@@ -1032,11 +1035,12 @@ def run(name):
                 changed.wait(deadline - time.time())
         return True
 
-    def outcome(since, saved):
-        """The driver is done with what was saved at `saved`, after its first `since` lines."""
+    def outcome(since, saved=None):
+        """The driver is done with what was saved after its first `since` lines; with saved, the
+        time of a quick save, not with a swap of an earlier one."""
         for line, at in zip(lines[since:], arrived[since:]):
             seen = SEEN.search(line)
-            if seen and at - float(seen.group(1)) / 1000 < saved:
+            if saved is not None and seen and at - float(seen.group(1)) / 1000 < saved - SEEN_MARGIN:
                 continue
             if DONE.match(line) or (not restarts and REFUSED.match(line)):
                 return True
@@ -1092,7 +1096,8 @@ def run(name):
         if quick_next:
             time.sleep(0.12)
             continue
-        if not wait(lambda: outcome(since, saved)):
+        quick = desc.startswith("+")
+        if not wait(lambda: outcome(since, saved if quick else None)):
             out("!!! the driver gave no outcome within %d s of the save" % OUTCOME_TIMEOUT)
         # the program runs a few ticks with what the driver made of the save
         time.sleep(1.2)
