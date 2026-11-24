@@ -8,7 +8,7 @@
 | fpcres | ships with fpc | turns the agent's source into a resource of hotfpc ([build system](build-system.md#the-embedded-agent)) |
 | Python | 3.9 or later | the scenario tests in `tests/scenarios/` and the reference check |
 | Lefthook | 1.5 or later | the pre-commit hook in [`lefthook.yml`](../../lefthook.yml) (`lefthook install` once per clone) |
-| Node.js | 22 or later, with `npx`: `markdownlint-cli2` 0.24.0 and its `markdownlint` 0.42.0 require it | the Markdown lint (`markdownlint-cli2` 0.24.0, which `npx` fetches) |
+| Node.js | 22 or later, with `npx`: `markdownlint-cli2` 0.24.0 and its `markdownlint` 0.42.0 require it | the Markdown lint (`markdownlint-cli2` 0.24.0, which `npx` fetches) and the website (`website/`) |
 | tmux, vim, asciinema, agg, ffmpeg | any recent | recording the terminal demo with `scripts/record-demo.py`; only needed to re-record ([demos](demos.md)) |
 
 Only fpc is needed to build hotfpc. Everything else is for working on it.
@@ -68,4 +68,37 @@ runs the unit tests and runs the scenarios with `hotfpc.exe`. The `docs` job run
 reference check and the Markdown lint.
 
 `.github/workflows/release.yml` builds the release binaries for a version tag
-([releasing](releasing.md)).
+([releasing](releasing.md)), and `.github/workflows/pages.yml` builds and deploys the
+website (below).
+
+## The website
+
+<https://frostney.github.io/hotfpc/> is a landing page and `docs/` rendered as it is. It is
+a [Fumadocs](https://fumadocs.dev) site in `website/`, exported as static files by Next.js
+with the basePath `/hotfpc`. Only the landing page and the glue live in `website/`; every
+documentation page is a file in `docs/`, ordered by the `meta.json` in each folder, with
+its H1 as its title. Node and the site's packages are for the website only: building
+hotfpc doesn't need them.
+
+```sh
+cd website
+npm ci
+npm run build      # the static export in website/out
+npm run start      # website/out at http://localhost:3000/hotfpc/
+```
+
+- `lib/remark-repo-links.mjs` maps the links in `docs/`: a link to a page becomes the
+  page's route, a link to a file under `docs/` that isn't a page (the demo recordings, an
+  image) becomes the site's copy of it, which `scripts/sync-docs-assets.mjs` makes before
+  each build, and any other link in the repository becomes its GitHub URL. A link or image
+  whose target doesn't exist fails the build.
+- `lib/remark-term-links.mjs` links the first mention of a few tools on each page (Free
+  Pascal, raylib, lwpt, Wine).
+- A ```` ```mermaid ```` block is drawn in the browser by `components/mermaid.tsx`; GitHub
+  draws the same block natively.
+- The site has a static search index, `llms.txt` and `llms-full.txt` with absolute URLs, a
+  Markdown copy of every page, an Open Graph image per page and a sitemap.
+- `package.json` pins every package to an exact version, and `package-lock.json` the rest.
+
+`pages.yml` builds the site on every pull request that touches `docs/` or `website/`, so a
+broken link fails the pull request, and deploys it from pushes to main.

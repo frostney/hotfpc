@@ -25,7 +25,8 @@ and checks in [docs/internals/tooling.md](docs/internals/tooling.md), and the te
 | `examples/demo`, `examples/lwpt`, `examples/raylib` | the README's demo program; an lwpt package with a `hot` run task; a raylib program to play with |
 | `scripts/record-demo.py` | records `docs/demo.cast` in tmux; `docs/demo.gif` and `docs/demo.mp4` are made from it |
 | `scripts/check-reference-docs.py` | fails when `docs/reference/` misses an option, a `[hot]` line or a `HOT_*` variable of the source |
-| `docs/` | for people who use hotfpc, rendered as is: `index.md`, `guides/` (task-oriented), `reference/` (the complete surface: command line, output, environment, platforms, limits), `internals/` (for contributors); `meta.json` orders each folder. The demo recordings live here too |
+| `website/` | the site at frostney.github.io/hotfpc: a Fumadocs static export that renders `docs/` as it is; only the landing page and glue live here, and building hotfpc doesn't need it |
+| `docs/` | for people who use hotfpc, rendered as is by `website/`: `index.md`, `guides/` (task-oriented), `reference/` (the complete surface: command line, output, environment, platforms, limits), `internals/` (for contributors); `meta.json` orders each folder. The demo recordings live here too |
 
 ## Build and test
 
