@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression check for the scenarios: runs scenario.py (all cases, or those named) and
-compares each case's closing line with the outcome established for it. Writes the full
+compares each case's closing line with the outcome established for it. Prints the run of
+each case that failed after the summary lines, so a CI log shows why. Writes the full
 transcript to $HOT_TRANSCRIPT when set. $HOT_DRIVER picks the driver (default: build/hotfpc),
 $HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
 
@@ -62,11 +63,14 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     if fpc_version().startswith("3.2"):
         EXPECT["typedconst"] = (2, 0, 0)
 names = sys.argv[1:] or list(EXPECT)
-out = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True).stdout
+run = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True)
+out = run.stdout
 if os.environ.get("HOT_TRANSCRIPT"):
     with open(os.environ["HOT_TRANSCRIPT"], "w") as f:
         f.write(out)
 bad = 0
+# the transcripts of the cases that failed, printed at the end: a CI log then shows why
+failing = []
 for name in names:
     m = re.search(r"=== %s\n(.*?)(?=\n=== |\Z)" % re.escape(name), out, re.S)
     body = m.group(1) if m else ""
@@ -74,6 +78,7 @@ for name in names:
     if not end:
         print("%-11s FAIL  no closing line" % name)
         bad += 1
+        failing.append((name, body))
         continue
     rc, applied, refused, failed, unchanged, restarts = map(int, end.groups())
     ea, er, ef = EXPECT[name]
@@ -95,5 +100,12 @@ for name in names:
           + "".join("; never printed %r" % text for text in missing)
           + "".join("; a load took %s ms in the program" % x for x in slow))
     bad += 0 if ok else 1
+    if not ok:
+        failing.append((name, body))
+for name, body in failing:
+    print("\n=== %s, as it ran\n%s" % (name, body.rstrip()))
+# scenario.py's own errors, such as a traceback that cut a case short
+if failing and run.stderr.strip():
+    print("\n=== scenario.py's errors\n%s" % run.stderr.rstrip())
 print("%d of %d cases as expected" % (len(names) - bad, len(names)))
 sys.exit(1 if bad else 0)
