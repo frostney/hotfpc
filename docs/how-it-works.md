@@ -74,7 +74,12 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    second, which the compiler's own check misses. The driver then deletes the compiler's
    record of the changed units so they're recompiled. A changed include file causes every
    unit to be recompiled; units whose object file comes out the same are left alone.
-2. fpc compiles without linking (`-Cn`).
+2. fpc compiles without linking (`-Cn`). fpc reads the files one after the other, so a
+   source that changes during the compile, such as the second file of a save written a
+   moment after the first, or the next save, may be read before or after its change. When
+   the sources changed, the driver neither swaps nor reports what fpc made: it waits for
+   them to settle and compiles again. It checks the compile to assembler (step 4) and the
+   link of a restart the same way.
 3. ppudump reads each changed unit: the interface from its JSON output, and the
    implementation section from its text output, which the JSON leaves out. A field that
    moved, or a field or variable that changed its type without changing a size, is

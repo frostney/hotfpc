@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A save whose sources change again while fpc compiles them is compiled again once they
+  settle, before hotfpc swaps, refuses or reports anything. fpc reads one file after the
+  other, so when an editor wrote the files of one save a few milliseconds apart, or the
+  next save came during the compile, hotfpc used to act on a mix of old and new files: it
+  could report errors or a needed restart for a state nobody saved, and then compile the
+  same save a second time. The same goes for the compile to assembler on Windows and the
+  link of a restart.
 - On Windows, a variable with an initial value in the program file that changes size
   (`Calls: Integer = 0` to `Int64 = 0`) now needs a restart, as on the other systems, and
   so does a typed constant declared in a routine, or with fpc 3.2 in a unit's

@@ -41,8 +41,10 @@ BLOCKED = object()
 
 
 def case(name, files, steps, ticks=None, opts=(), restart=False):
-    """restart: the driver starts the program over when an edit needs a restart; the other
-    cases pass --no-restart, so that the program they check keeps running."""
+    """steps: (description, edits) or (description, edits, pause), where pause is the time in
+    seconds between the files of the save. restart: the driver starts the program over when
+    an edit needs a restart; the other cases pass --no-restart, so that the program they check
+    keeps running."""
     CASES[name] = (files, steps, ticks, tuple(opts) + (() if restart else ("--no-restart",)))
 
 
@@ -462,7 +464,7 @@ end.
 ], None, ("-Si",))
 
 # ---------------------------------------------------------------------------- signature
-case("signature", {
+SIGNATURE = {
     "main.pas": r'''program main;
 {$mode objfpc}{$H+}
 uses SysUtils, u;
@@ -494,12 +496,25 @@ begin
   Result := 'Tick calls Area = ' + IntToStr(Area(n));
 end;
 end.
-'''}, [
-    ("Area(w) becomes Area(w, h); Tick and the main block are edited to pass two arguments",
-     [("u.pas", "function Area(w: Integer): Integer;\nfunction Tick", "function Area(w, h: Integer): Integer;\nfunction Tick"),
-      ("u.pas", "function Area(w: Integer): Integer;\nbegin\n  Result := w * w;", "function Area(w, h: Integer): Integer;\nbegin\n  Result := w * h;"),
-      ("u.pas", "IntToStr(Area(n))", "IntToStr(Area(n, 100))"),
-      ("main.pas", "Area(Count), ', '", "Area(Count, 100), ', '")]),
+'''}
+# Area's signature and both callers; u.pas alone does not compile
+SIGNATURE_EDITS = [
+    ("u.pas", "function Area(w: Integer): Integer;\nfunction Tick", "function Area(w, h: Integer): Integer;\nfunction Tick"),
+    ("u.pas", "function Area(w: Integer): Integer;\nbegin\n  Result := w * w;", "function Area(w, h: Integer): Integer;\nbegin\n  Result := w * h;"),
+    ("u.pas", "IntToStr(Area(n))", "IntToStr(Area(n, 100))"),
+    ("main.pas", "Area(Count), ', '", "Area(Count, 100), ', '")]
+
+case("signature", SIGNATURE, [
+    ("Area(w) becomes Area(w, h); Tick and the main block are edited to pass two arguments", SIGNATURE_EDITS),
+])
+
+# ---------------------------------------------------------------------------- a save that takes a moment
+# An editor or a tool may write the files of one save further apart than hotfpc waits for a
+# save to settle. Here main.pas comes 30 ms after u.pas, so the compile that starts with u.pas
+# changed can read main.pas before or after its change: the tool must compile again once the
+# sources settle, not report or swap what that compile made.
+case("slowsave", SIGNATURE, [
+    ("the same edit, with main.pas written 30 ms after u.pas", SIGNATURE_EDITS, 0.03),
 ])
 
 # ---------------------------------------------------------------------------- procedure variables
@@ -988,7 +1003,9 @@ def run(name):
     # enough: under load a new executable took up to 9 s to start, and early saves merged.)
     started.wait()
     time.sleep(0.9)
-    for i, (desc, edits) in enumerate(steps):
+    for i, step in enumerate(steps):
+        desc, edits = step[:2]
+        pause = step[2] if len(step) > 2 else 0
         # a "+" marks a step that follows the one before it after 0.12 s instead of 1.2 s
         quick_next = i + 1 < len(steps) and steps[i + 1][0].startswith("+")
         out("--- the script saves: " + desc.lstrip("+"))
@@ -1004,7 +1021,9 @@ def run(name):
             if old not in texts[path]:
                 out("!!! the edit does not apply: %r" % old)
             texts[path] = texts[path].replace(old, new)
-        for path, text in texts.items():
+        for k, (path, text) in enumerate(texts.items()):
+            if k and pause:
+                time.sleep(pause)
             if text is None:   # (file, None, None): the file, or the directory BLOCKED put there, goes away
                 if os.path.isdir(path):
                     os.rmdir(path)

@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
-    "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
+    "slowsave": (1, 0, 0), "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
     "include": (2, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
@@ -76,11 +76,10 @@ for name in names:
         continue
     rc, applied, refused, failed, unchanged, restarts = map(int, end.groups())
     ea, er, ef = EXPECT[name]
-    # rapid: a save that lands while fpc reads the file is compiled with the one before it,
-    # and the compile for it then finds the same code ("not swapped"); the program shows the
-    # newest text either way
-    merged = unchanged if name == "rapid" else 0
-    ok = rc == 0 and (applied + merged in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == merged and restarts == RESTARTS.get(name, 0) and "!!! the edit does not apply" not in body
+    # rapid: a save that lands while fpc compiles the one before is compiled again with it,
+    # so the two may make one reload; a compile is never acted on when the sources changed
+    # during it, so none finds the same code ("not swapped")
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! the edit does not apply" not in body
     # the program's tick records, each a line of its own after the script's timestamp: the
     # same records count toward continuity and carry the counters
     records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)

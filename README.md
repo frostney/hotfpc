@@ -244,7 +244,7 @@ each system needs.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 26 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 27 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
