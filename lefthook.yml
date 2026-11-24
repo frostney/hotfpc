@@ -6,3 +6,6 @@ pre-commit:
     build-and-test:
       glob: "*.{pas,rc}"
       run: ./build.sh hotfpc tests
+    reference-docs:
+      glob: "{source/*.pas,docs/reference/*.md,scripts/check-reference-docs.py}"
+      run: python3 scripts/check-reference-docs.py

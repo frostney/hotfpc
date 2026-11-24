@@ -10,8 +10,9 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
   `sudo apt-get install fpc`, `brew install fpc`, or the win32 and win64 installer from
   [freepascal.org](https://www.freepascal.org/download.html). fpcres and ppudump come with
   it.
-- **Python 3.9 or later**, for the scenarios.
+- **Python 3.9 or later**, for the scenarios and the reference check.
 - **Lefthook**: `lefthook install` once per clone sets up the pre-commit hook.
+- **Node.js 20 or later**, only for the Markdown lint.
 
 [Tooling](docs/internals/tooling.md) lists the rest, such as what recording the demo needs.
 
@@ -22,6 +23,8 @@ git clone https://github.com/frostney/hotfpc
 cd hotfpc
 ./build.sh                                   # build/hotfpc and the unit tests
 python3 tests/scenarios/check.py             # the 26 scenarios, about 2 minutes
+python3 scripts/check-reference-docs.py      # docs/reference/ against the source
+npx --yes markdownlint-cli2@0.24.0           # the Markdown lint
 ```
 
 On Windows, `build.bat` takes the same arguments as `build.sh`.
@@ -33,8 +36,9 @@ the change can affect: macOS arm64, Linux x86-64, Linux arm64, and Windows x86-6
 to the agent, or to the checks of layouts and sizes, are tested with fpc 3.2.2 and 3.3.1.
 [Testing](docs/internals/testing.md) explains the tests and how to add a scenario.
 
-A change that adds an option or a `[hot]` line documents it in `docs/reference/`. A change
-users can see goes into `CHANGELOG.md` under `## Unreleased`.
+A change that adds an option or a `[hot]` line documents it in `docs/reference/`; the
+reference check fails until it does. A change users can see goes into `CHANGELOG.md` under
+`## Unreleased`.
 
 ## Ground rules
 
@@ -54,7 +58,7 @@ users can see goes into `CHANGELOG.md` under `## Unreleased`.
 
 `.github/workflows/ci.yml` runs on every push and pull request: the build, the unit tests
 and the scenarios on Linux x86-64, Linux arm64, macOS arm64 and Windows x86-64 with fpc
-3.2.2.
+3.2.2, and a `docs` job with the reference check and the Markdown lint.
 
 ## Contributor docs
 
@@ -63,6 +67,6 @@ and the scenarios on Linux x86-64, Linux arm64, macOS arm64 and Windows x86-64 w
 - [Build system](docs/internals/build-system.md): `build.sh`, `build.bat`, the embedded
   agent.
 - [Code style](docs/internals/code-style.md).
-- [Tooling](docs/internals/tooling.md): the tools, the hook and CI.
+- [Tooling](docs/internals/tooling.md): the hook, the documentation checks, CI.
 - [Testing](docs/internals/testing.md): the unit tests and the scenarios.
 - [Releasing](docs/internals/releasing.md) and [recording the demos](docs/internals/demos.md).
