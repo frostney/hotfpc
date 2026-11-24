@@ -8,7 +8,9 @@
   next save came during the compile, hotfpc used to act on a mix of old and new files: it
   could report errors or a needed restart for a state nobody saved, and then compile the
   same save a second time. The same goes for a save's compile to assembler on Windows and
-  the link of a restart. After three such compiles in a row, hotfpc uses the next one as it
+  the link of a restart. A save that landed during the first build, after fpc had read the
+  file, used to be left out until the next save; it is now compiled as soon as the program
+  runs. After three such compiles in a row, hotfpc uses the next one as it
   is, so a file that keeps changing can't hold back every save.
 - On Windows, a variable with an initial value in the program file that changes size
   (`Calls: Integer = 0` to `Int64 = 0`) now needs a restart, as on the other systems, and

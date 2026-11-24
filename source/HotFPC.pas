@@ -3925,6 +3925,9 @@ var
   LastDigest, SeenAt, CompileSeconds: Double;
 begin
   Seen := FWatcher.Stamps;
+  { the sources changed during the first build }
+  if FStale then
+    Seen := nil;
   LastDigest := NowSeconds;
   while True do
   begin
@@ -4023,16 +4026,20 @@ begin
     WriteLn(Output);
     Exit(1);
   end;
+  { the state the build starts from: a save fpc reads only in part, or after it read the file,
+    is compiled as soon as Watch starts }
+  FSettled := FWatcher.Stamps;
+  FWatcher.ReadDigests(FDigests);
   if not BuildProgram then
     Exit(1);
   CopyObjectsToLive;
+  SourcesChangedDuringCompile;
   ProbeLayouts;
   if not FLink.Listen then
   begin
     WriteLn('[hot] cannot listen on 127.0.0.1');
     Exit(1);
   end;
-  FWatcher.ReadDigests(FDigests);
   FProgram := StartProgram;
   if not AwaitAgent(FProgram, Result) then
     Exit;
