@@ -10,8 +10,8 @@
   same save a second time. The same goes for a save's compile to assembler on Windows and
   the link of a restart. A save that landed during the first build, after fpc had read the
   file, used to be left out until the next save; it is now compiled as soon as the program
-  runs. After three such compiles in a row, hotfpc uses the next one as it
-  is, so a file that keeps changing can't hold back every save.
+  runs. After three such compiles, links or compiles to assembler in a row, hotfpc uses the
+  next one as it is, so a file that keeps changing can't hold back every save.
 - On Windows, a variable with an initial value in the program file that changes size
   (`Calls: Integer = 0` to `Int64 = 0`) now needs a restart, as on the other systems, and
   so does a typed constant declared in a routine, or with fpc 3.2 in a unit's

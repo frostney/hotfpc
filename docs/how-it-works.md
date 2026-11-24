@@ -81,8 +81,8 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    them to settle and compiles again. It checks a save's compile to assembler (step 4), the
    link of a restart and the first build the same way: a save during the first build is
    compiled as soon as the program runs. A source that changes faster than fpc compiles, such
-   as a file a generator keeps rewriting, holds a save back for three compiles at most: the
-   fourth is used as it is.
+   as a file a generator keeps rewriting, holds a save back for three compiles, links or
+   compiles to assembler at most: the fourth is used as it is.
 3. ppudump reads each changed unit: the interface from its JSON output, and the
    implementation section from its text output, which the JSON leaves out. A field that
    moved, or a field or variable that changed its type without changing a size, is
