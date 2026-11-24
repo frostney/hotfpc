@@ -1,8 +1,10 @@
 # Output
 
 Every line hotfpc prints starts with `[hot]`. Everything else on the terminal is your
-program's output, or fpc's when the first build fails. `--log FILE` writes a copy of every
-`[hot]` line with a timestamp, and `--quiet` leaves out the start line and the closing
+program's output, or fpc's errors when the first build fails. `--log FILE` writes a copy of
+the `[hot]` lines with a timestamp, from the version check on, except the lines in
+[Before the program starts](#before-the-program-starts) that are about ppudump, the agent,
+the port and the program's connection. `--quiet` leaves out the start line and the closing
 summary. The scenarios and `scripts/record-demo.py` parse these lines, so their wording is
 kept stable.
 
@@ -36,7 +38,8 @@ Every save ends in one of five ways, and the closing summary counts each:
 | `error: ... (nothing changed)` | fpc or the agent failed. The program keeps running the code it had. | failed to compile |
 
 `<N>` is the version: 1 is the program as it started, and each swap and each restart adds
-one.
+one. A restart counts, and adds one, as soon as hotfpc starts the new program, even when
+that program then ends before its agent connects.
 
 ### Swapped
 
@@ -50,7 +53,7 @@ v<N> swapped: <units>: <n> functions redirected (<n> with other code, <n> new), 
 
 | Part | Meaning |
 | --- | --- |
-| `<units>` | The units whose object files changed, `main` for the program file. A changed include file can change several. |
+| `<units>` | The units whose object files changed. The program file is named after its source file, such as `demo` for `demo.pas`. A changed include file can change several. |
 | functions redirected | The program's functions that now jump to their new code. |
 | with other code | Of the unit's functions, those whose code differs from the running version. |
 | new | Functions the running version didn't have. |
@@ -78,8 +81,10 @@ A swap can be followed by notes:
 | `note: ... and <n> more functions gone from the source` | Follows the fourth. |
 | `note: <name> exists in the program but not in the version of <unit> the agent knows; kept without a check` | The new code uses a variable of the program that the agent couldn't compare with an earlier version. It is bound to the program's and keeps its value. |
 
-Names in notes and in the reasons below are the compiler's: upper case, with the unit and
-the parameters, such as `U.SPEED` or `U.AREA(LONGINT):LONGINT`.
+Names of symbols in notes and in the agent's reasons below are the compiler's: upper case,
+with the unit and the parameters, such as `U.SPEED` or `U.AREA(LONGINT):LONGINT`. Units are
+named after their files (`u`, `scene`), and the check of layouts names a declaration as the
+source spells it (`scene.Score`).
 
 ### Restart needed
 
@@ -158,9 +163,9 @@ are shown:
 [hot] error: main.pas(14,1) Error: Error while linking (nothing changed)
 ```
 
-A failed compile, a failed link for a restart and a swap the agent couldn't apply all leave
-the running program as it was. The program keeps running the code it had, and the next save
-tries again.
+A failed compile, a failed link for a restart and a swap the agent couldn't apply leave the
+running program as it was: it keeps running the code it had, and the next save tries again.
+The one exception is a swap that stopped halfway, below.
 
 Other errors hotfpc reports:
 
@@ -169,8 +174,33 @@ Other errors hotfpc reports:
 | `error: the program did not answer (nothing changed)` | The agent didn't reply to the load. |
 | `error: cannot replace <program> (the program is not running; the next save that builds starts it again)` | A restart linked the new program but couldn't put it in place of the old one, which had already stopped. On Windows a program's file stays locked for a moment; hotfpc tries for 5 s. |
 
-Errors the agent reports, with the unit or object file they concern. They say that hotfpc
-can't load this object file; please report them with the unit that causes them:
+When the agent couldn't stop the program's threads or write its code, the swap isn't
+applied:
+
+| Error | Where | What it means |
+| --- | --- | --- |
+| `a thread of the program did not stop` | Linux | A thread didn't stop within 2 s. |
+| `a thread that blocks signals kept running` | Linux | A thread that blocks every signal, as some libraries start, was running, not waiting in the kernel. |
+| `the program has more threads than the agent can stop` | Linux, Windows | The agent's list of threads to stop is full. |
+| `an entry to rewrite could not be written in one store while a thread that blocks signals sleeps` | Linux | A function's entry wasn't aligned for the one 8-byte store that keeps such a thread safe. |
+| `a thread stayed inside the first bytes of a function being redirected` | x86-64 | A thread kept stopping inside an entry the jump overwrites. |
+| `cannot copy a code page of the program` | macOS | The system refused the copy of a signed code page. |
+| `cannot replace a code page of the program` | macOS | The same, for mapping the copy back. |
+| `cannot make a code page of the program writable` | Linux, Windows | `mprotect` or `VirtualProtect` failed. |
+
+On macOS, the system's reason follows, after a colon. When this happens after some
+functions were already redirected, the line is followed by:
+
+```text
+error: the reload stopped halfway: <n> functions are redirected and the rest are not; restart the program (nothing changed)
+```
+
+The program then runs a mix of old and new code. Restart it: until it starts over, hotfpc
+refuses every swap with `an earlier reload failed after some functions were already
+redirected`.
+
+Errors about the object file the agent was given, with the unit or file they concern. They
+say that hotfpc can't load it; please report them with the unit that causes them:
 
 | Error | Where |
 | --- | --- |
@@ -195,7 +225,6 @@ can't load this object file; please report them with the unit that causes them:
 | `<unit>: unsupported relocation type <n> (thread-local variables of the system are not handled)` | any |
 | `<name> is out of reach of its island` | any |
 | `the system did not take the unwind tables of the new code` | Windows |
-| `the reload stopped halfway: <n> functions are redirected and the rest are not; restart the program` | any: the program now runs a mix of old and new code. Restart it; hotfpc refuses further swaps until it starts over. |
 | `unknown command` | The agent got a command it doesn't know. It can't happen with the agent hotfpc builds. |
 
 ## Before the program starts
@@ -216,8 +245,8 @@ ppudump only turn a check off:
 | `the program ended (exit code <n>) before hot reloading could start` | The program ended, or crashed, before its agent connected. hotfpc ends with its exit code; after a restart, it waits for the next save instead. |
 | `the program did not connect within <n> s` | The agent didn't connect within 60 s. hotfpc stops the program. |
 
-When the first build fails, fpc's own output is printed as it is, without `[hot]`, and
-hotfpc ends with 1.
+When the first build fails, hotfpc prints fpc's errors, without `[hot]`: the lines that
+name a place in a source file, or fpc's closing lines when there are none. It ends with 1.
 
 ## Windows programs: the check of sizes
 

@@ -16,7 +16,7 @@ hotfpc -Twin64 -Px86_64 demo.pas
 ```
 
 That is what CI runs on Windows with fpc 3.2.2: the unit tests and all scenarios, with
-`hotfpc.exe`, on every push.
+`hotfpc.exe`, on pull requests and on pushes to main.
 
 ## From Linux or macOS, under Wine
 

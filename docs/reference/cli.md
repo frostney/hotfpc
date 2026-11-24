@@ -31,12 +31,13 @@ hotfpc reads its arguments from left to right:
 | `--ppudump PPUDUMP` | the `ppudump` in the compiler's directory | ppudump of the same compiler. hotfpc reads each changed unit's file with it to check the layouts of records, classes and variables. Without one, or with one that can't read the compiler's units, that check is off and hotfpc says so when it starts. |
 | `--run LAUNCHER` | `wine` for a Windows target when hotfpc doesn't run on Windows; none otherwise | A program to start the built program with: hotfpc runs `LAUNCHER .hot/program [program arguments]`. A restart stops the launcher, so a launcher that runs the program as its child has to end it too; hotfpc says so when the old program's connection stays open. When the launcher's file name contains `wine`, the paths hotfpc gives the agent are Wine paths (`Z:\...`). |
 | `--settle MS` | `2` | How long, in milliseconds, the saved files have to stay unchanged before hotfpc compiles them. A value that isn't a number counts as 2. |
-| `--log FILE` | none | Writes a copy of every `[hot]` line to `FILE`, each after a timestamp in seconds. The file is written again from the start on every run. |
+| `--log FILE` | none | Writes a copy of the `[hot]` lines to `FILE`, each after a timestamp in seconds: all of them from the version check on, except a few about starting the program ([output](output.md#before-the-program-starts)). The file is written again from the start on every run. |
 | `--quiet` | off | Leaves out the start line (`v1: built in ...`) and the closing summary. |
 | `--no-restart` | off | When an edit needs a restart, leaves the program running its old code instead of starting it over. The next save that can be swapped is swapped. |
-| `--version` | | Prints `hotfpc 1.1.0` (its version) and exits with 0, whatever else is on the command line. |
+| `--version` | | Prints `hotfpc 1.1.0` (its version) and exits with 0, whatever else is on the command line before it, unless it is an option's value. After `--`, it is the program's. |
 
-A target is a Windows one when an fpc option starts with `-Twin` (`-Twin64`), or when
+A target is a Windows one when an fpc option on hotfpc's command line starts with `-Twin`
+(`-Twin64`), or when
 hotfpc itself runs on Windows.
 
 ## What hotfpc adds to fpc
@@ -54,7 +55,8 @@ adds these, with absolute paths into the program's `.hot/` directory:
 | A Windows target, when a changed unit has a variable with an initial value or a typed constant | a second compile to assembler, `-s -Aas`, into `.hot/asm/` |
 | The agent, once at the start | only your options that decide the target, code generation and paths (`-T`, `-P`, `-Cp`, `-Cf`, `-Ca`, `-XP`, `-Fl`, `-Fu`, `-k`, `-XR`, `-Xd`, `-n`, `-V` and `@` files), and `-FU.hot/agent` |
 
-fpc writes link scripts (`link*.res`, `ppas.sh`, `ppas.bat`) into the directory it runs in.
+fpc writes link scripts (`link*.res`, `ppas.sh`, `ppas.bat`, `symbol_order*`) into the
+directory it runs in.
 hotfpc removes the ones a compile created there and leaves any that were there before.
 
 ## Watched files
@@ -79,7 +81,8 @@ many files it watches.
 | 1 | hotfpc stopped before the program ran: the compiler is missing or too old, the agent or the program didn't compile, hotfpc couldn't listen on 127.0.0.1, or the program didn't connect within 60 s. |
 | 2 | No program was named: hotfpc printed its usage. |
 
-The closing summary prints `-1` as the exit code of a program that a signal ended.
+The closing summary prints `-1` as the exit code of a program that a signal ended, and
+hotfpc then ends with 255 on Linux and macOS.
 
 ## The `.hot/` directory
 

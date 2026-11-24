@@ -56,9 +56,9 @@ reference check fails until it does. A change users can see goes into `CHANGELOG
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push and pull request: the build, the unit tests
-and the scenarios on Linux x86-64, Linux arm64, macOS arm64 and Windows x86-64 with fpc
-3.2.2, and a `docs` job with the reference check and the Markdown lint.
+`.github/workflows/ci.yml` runs on pull requests and on pushes to main: the build, the unit
+tests and the scenarios on Linux x86-64, Linux arm64, macOS arm64 and Windows x86-64 with
+fpc 3.2.2, and a `docs` job with the reference check and the Markdown lint.
 
 ## Contributor docs
 

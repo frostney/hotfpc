@@ -10,7 +10,8 @@ a new environment variable fails CI until it is documented. It checks that docs/
     | `--option), and no option that the usage text doesn't have;
   - has every [hot] line the driver prints (FReporter.Say, WriteLn('[hot] ...'), and the
     compiler problems it prints that way), and every restart reason, note and error that
-    the agent sends back (source/HotFPC.Agent.pas);
+    the agent sends back (source/HotFPC.Agent.pas), also one it sends from a variable,
+    such as Say('error ' + PatchError), by the assignments and constants that set it;
   - describes every HOT_* environment variable in source/ in a table row of its own.
 
 A line matches when its fixed parts appear in order on one line of docs/reference/. The
@@ -146,12 +147,51 @@ def driver_lines(text):
     return lines
 
 
+def statement_end(expression):
+    """An expression read up to ';' without what follows it in the same statement, such as
+    the else branch of `if A then X := B else X := C;`."""
+    quoted = False
+    for i, c in enumerate(expression):
+        if c == "'":
+            quoted = not quoted
+        elif not quoted and re.match(r"\b(else|end)\b", expression[i:]) and (i == 0 or not expression[i - 1].isalnum()):
+            return expression[:i]
+    return expression
+
+
+def values_of(text, name, seen=None):
+    """The messages a variable can hold: its assignments and, through them, the string
+    constants and other variables it is set from (PatchError := StopFailure, StopFailure :=
+    ParkTimeoutFailure, ParkTimeoutFailure = '...')."""
+    seen = set() if seen is None else seen
+    if name in seen:
+        return []
+    seen.add(name)
+    values = []
+    # an assignment, or the declaration of a string constant at the start of a line
+    pattern = r"\b%s\s*:=\s*|^\s*%s\s*=\s*(?=')" % (re.escape(name), re.escape(name))
+    for match in re.finditer(pattern, text, re.M):
+        expression, _ = read_until(text, match.end(), ";")
+        expression = statement_end(expression)
+        if re.fullmatch(r"\s*[A-Za-z_]\w*\s*", expression):
+            values += values_of(text, expression.strip(), seen)
+        else:
+            values.append(parts_of(expression))
+    return values
+
+
 def agent_lines(text):
     lines = [parts_of(a) for a in calls(text, r"(?<!procedure )\bRestart\(")]
     for argument in calls(text, r"\bSay\("):
         parts = parts_of(argument)
         if parts and parts[0] is not HOLE and parts[0].startswith(AGENT_PREFIXES):
-            parts[0] = parts[0].split(" ", 1)[1]
+            rest = parts[0].split(" ", 1)[1]
+            tail = argument.split("+", 1)[1].strip() if "+" in argument else ""
+            if not rest and re.fullmatch(r"[A-Za-z_]\w*", tail):
+                # Say('error ' + PatchError): the messages the variable can hold
+                lines += values_of(text, tail)
+                continue
+            parts[0] = rest
             lines.append(parts)
     return lines
 

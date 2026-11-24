@@ -43,8 +43,8 @@ code returns.
 - the closing summary: the number of reloads applied, refused and failed to compile, and of
   restarts, against the case's expected numbers in `EXPECT` and `RESTARTS`;
 - a clean exit (code 0), and no step whose text didn't apply to the file;
-- the ticks: every number from 1 to the last, so the program never stopped or started over
-  where it shouldn't;
+- the ticks: every number from 1 to the last is there, so the program's output has no gaps
+  (a restart where none was expected shows in the count of restarts);
 - for some cases, lines the program must print after a swap (`PRINTS`), a counter in the
   implementation section that must keep pace with the ticks (`COUNTERS`), and the most a
   load may take inside the program (`LOAD_LIMITS`).

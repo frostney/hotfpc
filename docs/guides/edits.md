@@ -2,7 +2,8 @@
 
 Every kind of edit hotfpc has a test for, and what it does. Each row is a step of one of
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
-small program that runs while the test saves the edit into it, on every push in CI. The
+small program that runs while the test saves the edit into it, run by CI on pull requests
+and on pushes to main. The
 outcomes are from a run of all 26 scenarios on Linux x86-64 with fpc 3.2.4-rc2+1 on
 2026-11-24, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.

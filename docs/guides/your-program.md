@@ -81,7 +81,7 @@ and runs the frame loop, and `scene.pas` holds everything you see and the state 
 ## Quieter, or with a record
 
 - `--quiet` leaves out the start line and the closing summary.
-- `--log hot.log` writes every `[hot]` line to `hot.log` with a timestamp, for a record of
+- `--log hot.log` writes the `[hot]` lines to `hot.log` with a timestamp, for a record of
   the session or to see how long each save took.
 - `--settle 50` waits 50 ms instead of 2 ms for the saved files to stop changing, for an
   editor or a tool that writes a file in several steps.
