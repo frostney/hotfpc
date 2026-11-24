@@ -23,7 +23,7 @@ uses SysUtils, u;
 var
   Count: Integer = 0;
 begin
-  while Count < StrToInt(ParamStr(1)) do
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
     WriteLn('tick ', Count, ': ', Tick(Count));
@@ -40,12 +40,12 @@ CASES = {}
 BLOCKED = object()
 
 
-def case(name, files, steps, ticks=None, opts=(), restart=False):
+def case(name, files, steps, opts=(), restart=False):
     """steps: (description, edits) or (description, edits, pause), where pause is the time in
     seconds between the files of the save. restart: the driver starts the program over when
     an edit needs a restart; the other cases pass --no-restart, so that the program they check
     keeps running."""
-    CASES[name] = (files, steps, ticks, tuple(opts) + (() if restart else ("--no-restart",)))
+    CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
 
 
 # ---------------------------------------------------------------------------- globals
@@ -237,7 +237,7 @@ uses SysUtils, u;
 var
   Count: Integer = 0;
 begin
-  while Count < StrToInt(ParamStr(1)) do
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
     try
@@ -365,7 +365,7 @@ end.
 '''}, [
     ("the initialization section assigns another text", [("u.pas", "set by initialization, version 1", "set by initialization, version 2")]),
     ("the finalization section prints another text", [("u.pas", "finalization, version 1", "finalization, version 3")]),
-], 9)
+])
 
 # ---------------------------------------------------------------------------- generics
 case("generics", {
@@ -380,7 +380,7 @@ var
 begin
   B := TStrBox.Create;
   B.Value := 'text';
-  while Count < StrToInt(ParamStr(1)) do
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
     WriteLn('tick ', Count, ': ', Tick(Count), ' | main: ', B.Show);
@@ -434,7 +434,7 @@ uses SysUtils, u;
 var
   Count: Integer = 0;
 begin
-  while Count < StrToInt(ParamStr(1)) do
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
     WriteLn('tick ', Count, ': main inlines Scale = ', Scale(Count), ', ', Tick(Count));
@@ -461,7 +461,7 @@ end;
 end.
 '''}, [
     ("the body of an inline function that the running main block and Tick both inlined", [("u.pas", "Result := x * 10;", "Result := x * 1000;")]),
-], None, ("-Si",))
+], ("-Si",))
 
 # ---------------------------------------------------------------------------- signature
 SIGNATURE = {
@@ -471,7 +471,7 @@ uses SysUtils, u;
 var
   Count: Integer = 0;
 begin
-  while Count < StrToInt(ParamStr(1)) do
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
     WriteLn('tick ', Count, ': main calls Area = ', Area(Count), ', ', Tick(Count));
@@ -531,7 +531,7 @@ begin
   Plain := @OnPlain;
   Target := TTarget.Create;
   Event := @Target.OnEvent;
-  while Count < StrToInt(ParamStr(1)) do
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
     WriteLn('tick ', Count, ': ', Plain(Count), ', ', Event(Count), ', same address: ', Pointer(Plain) = Pointer(@OnPlain));
@@ -857,7 +857,7 @@ begin
   Result := Tick(n) + Format(' main one %d', [Calls]);
 end;
 begin
-  while Count < StrToInt(ParamStr(1)) do
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
     WriteLn('tick ', Count, ': ', Line(Count));
@@ -968,45 +968,83 @@ case("crash", {"main.pas": MAIN, "u.pas": U_COUNTED}, [
 ], restart=True)
 
 
+# The driver's line that ends its work on a save: the swap, the code that came out the same, a
+# compile or link that failed, or a restart done or given up. A refusal ends it too, unless the
+# case lets the driver restart the program.
+DONE = re.compile(r"\[hot\] (v\d+ swapped|not swapped|error: |v\d+ restarted|the next save that builds starts|the program ended with)")
+REFUSED = re.compile(r"\[hot\] restart needed")
+# The longest the driver may take for a save: a restart waits up to 60 s for a new program to
+# start (macOS checks a new executable on its first start).
+OUTCOME_TIMEOUT = 150
+# The most ticks a program runs if the script never tells it to end
+MAX_TICKS = 1000
+
+
 def run(name):
-    files, steps, ticks, opts = CASES[name]
+    files, steps, opts = CASES[name]
     work = os.path.join(HERE, "work", name)
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
     for f, text in files.items():
         with open(os.path.join(work, f), "w") as fh:
             fh.write(text)
-    n = ticks or (len(steps) + 1) * 4 + 1
+    # the program ends when this file exists (its name is no source the driver watches)
+    stop = os.path.join(work, "stop")
+    restarts = "--no-restart" not in opts
     t0 = time.time()
     lock = threading.Lock()
+    lines = []   # what the driver printed, in order
+    changed = threading.Condition(lock)
 
     def out(line):
         with lock:
             print("%6.2fs  %s" % (time.time() - t0, line), flush=True)
 
     print("=== %s" % name, flush=True)
-    p = subprocess.Popen(driver_cmd() + list(opts) + [os.path.join(work, "main.pas"), "--", str(n)],
+    p = subprocess.Popen(driver_cmd() + list(opts) + [os.path.join(work, "main.pas"), "--", str(MAX_TICKS), stop],
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-
-    started = threading.Event()
+    ended = threading.Event()
 
     def pump():
         for line in p.stdout:
-            if "] v1: built" in line:
-                started.set()
-            out(line.rstrip("\n"))
-        started.set()
+            line = line.rstrip("\n")
+            with changed:
+                print("%6.2fs  %s" % (time.time() - t0, line), flush=True)
+                lines.append(line)
+                changed.notify_all()
+        with changed:
+            ended.set()
+            changed.notify_all()
+
+    def wait(test):
+        """Waits until a line the driver printed passes test, or it ends; False after the
+        timeout."""
+        deadline = time.time() + OUTCOME_TIMEOUT
+        with changed:
+            while not ended.is_set() and not test():
+                if time.time() > deadline:
+                    return False
+                changed.wait(deadline - time.time())
+        return True
+
+    def outcome(since):
+        """The driver is done with what was saved after its first `since` lines."""
+        return any(DONE.match(line) or (not restarts and REFUSED.match(line)) for line in lines[since:])
+
     th = threading.Thread(target=pump)
     th.start()
     # Wait until the driver watches the files and the program runs: the steps must not depend
     # on how long the build or the start took. (Waiting for the build's object file was not
     # enough: under load a new executable took up to 9 s to start, and early saves merged.)
-    started.wait()
+    if not wait(lambda: any("] v1: built" in line for line in lines)):
+        out("!!! the driver did not start the program within %d s" % OUTCOME_TIMEOUT)
     time.sleep(0.9)
     for i, step in enumerate(steps):
         desc, edits = step[:2]
         pause = step[2] if len(step) > 2 else 0
-        # a "+" marks a step that follows the one before it after 0.12 s instead of 1.2 s
+        # a "+" marks a step that follows the one before it after 0.12 s, while the driver is
+        # still busy with that one; every other step waits for the driver's outcome of the
+        # one before, as someone who saves, looks at the result and edits again
         quick_next = i + 1 < len(steps) and steps[i + 1][0].startswith("+")
         out("--- the script saves: " + desc.lstrip("+"))
         texts = {}
@@ -1021,6 +1059,8 @@ def run(name):
             if old not in texts[path]:
                 out("!!! the edit does not apply: %r" % old)
             texts[path] = texts[path].replace(old, new)
+        with lock:
+            since = len(lines)
         for k, (path, text) in enumerate(texts.items()):
             if k and pause:
                 time.sleep(pause)
@@ -1037,7 +1077,15 @@ def run(name):
                 continue
             with open(path, "w") as fh:
                 fh.write(text)
-        time.sleep(0.12 if quick_next else 1.2)
+        if quick_next:
+            time.sleep(0.12)
+            continue
+        if not wait(lambda: outcome(since)):
+            out("!!! the driver gave no outcome within %d s of the save" % OUTCOME_TIMEOUT)
+        # the program runs a few ticks with what the driver made of the save
+        time.sleep(1.2)
+    with open(stop, "w"):
+        pass
     p.wait()
     th.join()
     print(flush=True)

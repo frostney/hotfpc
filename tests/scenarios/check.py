@@ -79,7 +79,9 @@ for name in names:
     # rapid: a save that lands while fpc compiles the one before is compiled again with it,
     # so the two may make one reload; a compile is never acted on when the sources changed
     # during it, so none finds the same code ("not swapped")
-    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! the edit does not apply" not in body
+    # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
+    # gave no outcome for
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! " not in body
     # the program's tick records, each a line of its own after the script's timestamp: the
     # same records count toward continuity and carry the counters
     records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)
