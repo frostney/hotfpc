@@ -6,10 +6,10 @@ Hot reloading for Free Pascal programs. There are two parts:
 - the agent: `source/HotFPC.Agent.pas`, a unit that hotfpc compiles into the user's
   program with the user's fpc.
 
-Read [docs/how-it-works.md](docs/how-it-works.md) before changing either. The code style is
-in [docs/code-style.md](docs/code-style.md), the build in
-[docs/build-system.md](docs/build-system.md), and the tools in
-[docs/tooling.md](docs/tooling.md).
+Read [docs/internals/how-it-works.md](docs/internals/how-it-works.md) before changing
+either. The code style is in [docs/internals/code-style.md](docs/internals/code-style.md),
+the build in [docs/internals/build-system.md](docs/internals/build-system.md), and the
+tools in [docs/internals/tooling.md](docs/internals/tooling.md).
 
 ## Layout
 
@@ -45,7 +45,7 @@ are tested with fpc 3.2.2 and 3.3.1.
   `HotFPC.Agent.pas`, and `HotFPC.rc`. Don't split either into units and don't add `.inc`
   files; people copy them into their own trees.
 - No build-tool dependency. fpcres and fpc must build a copy of `source/`
-  (docs/build-system.md), so use only units and tools that ship with fpc 3.2.2.
+  (docs/internals/build-system.md), so use only units and tools that ship with fpc 3.2.2.
 - The agent is compiled by the user's fpc. Keep it to what fpc 3.2.2 accepts (for example,
   `{$if defined(...)}` instead of `{$ifdef}...{$elseif}`), and don't let it use `SysUtils`
   or any unit that changes how a program reports runtime errors.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds hotfpc (docs/build-system.md); build.bat does the same on Windows.
+# Builds hotfpc (docs/internals/build-system.md); build.bat does the same on Windows.
 #
 #   ./build.sh [clean] [hotfpc] [tests] [--production] [-- fpc options]
 #

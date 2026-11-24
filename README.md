@@ -60,7 +60,7 @@ set. So hotfpc carries the agent's source in its own binary and compiles it with
 and your options when it starts. That's how one hotfpc binary works with every fpc from
 3.2.2 on, and with cross-compiled programs too, such as a Windows program built on Linux. It
 also can't end up with an agent from another version.
-[docs/how-it-works.md](docs/how-it-works.md) has the details.
+[docs/internals/how-it-works.md](docs/internals/how-it-works.md) has the details.
 
 ## Install
 
@@ -86,7 +86,7 @@ You don't need the whole repository to build it. All of hotfpc is in `source/`:
 
 Copy them into your own tree and build them with fpc 3.2.2, or with fpc-toolchain's 3.3.1+4
 or later. Its earlier 3.3.1 builds miscompile hotfpc when optimising
-([docs/how-it-works.md](docs/how-it-works.md#a-compiler-bug) has the story). First fpcres,
+([docs/internals/how-it-works.md](docs/internals/how-it-works.md#a-compiler-bug) has the story). First fpcres,
 which comes with fpc, turns `HotFPC.rc` into `HotFPC.res`, and then fpc builds the rest:
 
 ```sh
@@ -237,7 +237,7 @@ don't.
 - Memory for new code and data is never freed.
 - Hardened and notarised macOS programs aren't supported.
 
-[docs/how-it-works.md](docs/how-it-works.md) explains how a save becomes a swap and what
+[docs/internals/how-it-works.md](docs/internals/how-it-works.md) explains how a save becomes a swap and what
 each system needs.
 
 ## Tests
@@ -256,7 +256,7 @@ output had no gaps. The script saves each edit once hotfpc has reported on the o
 and ends the program after the last, so the numbers don't depend on how fast the machine
 compiles.
 For some cases it also checks the values the program printed after a swap.
-[docs/build-system.md](docs/build-system.md) describes `build.sh` and `build.bat`.
+[docs/internals/build-system.md](docs/internals/build-system.md) describes `build.sh` and `build.bat`.
 
 ## Licence
 

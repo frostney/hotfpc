@@ -8,8 +8,8 @@ fpcres -of res -o source/HotFPC.res source/HotFPC.rc
 fpc source/HotFPC.pas
 ```
 
-For working on hotfpc itself, [`build.sh`](../build.sh) is the entry point, and
-[`build.bat`](../build.bat) is the same for Windows:
+For working on hotfpc itself, [`build.sh`](../../build.sh) is the entry point, and
+[`build.bat`](../../build.bat) is the same for Windows:
 
 ```sh
 ./build.sh                       # hotfpc and the unit tests
@@ -52,7 +52,7 @@ checks and optimisation come from the command line. The agent is the exception: 
 compiler builds it with the user's options, so it sets its own directives at the top of
 `HotFPC.Agent.pas`. It turns overflow and range checks off, because it works with raw
 addresses inside the user's program, and it turns optimisation off for fpc 3.3.1
-(docs/how-it-works.md, "A compiler bug").
+([how it works](how-it-works.md#a-compiler-bug)).
 
 ## The unit tests
 
@@ -63,9 +63,9 @@ into hotfpc instead of hotfpc's own main block. A normal build leaves them out.
 ## The embedded agent
 
 hotfpc carries the source of the agent, `source/HotFPC.Agent.pas`, as a resource
-(docs/how-it-works.md, "Why the agent's source is embedded"). `source/HotFPC.rc` names the
-file, fpcres compiles that into `source/HotFPC.res`, and `{$R HotFPC.res}` in `HotFPC.pas`
-links it in. At run time the driver reads it back with `TResourceStream`.
+([how it works](how-it-works.md#why-the-agents-source-is-embedded)). `source/HotFPC.rc`
+names the file, fpcres compiles that into `source/HotFPC.res`, and `{$R HotFPC.res}` in
+`HotFPC.pas` links it in. At run time the driver reads it back with `TResourceStream`.
 
 fpc would compile the `.rc` file itself, but fpc 3.2.2 does that with `windres`, which it
 doesn't ship on macOS or Linux. So the build scripts run fpcres first, on every system. fpc

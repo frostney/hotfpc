@@ -1,4 +1,4 @@
-# hotfpc pre-commit hook (docs/tooling.md). Install once per clone: lefthook install
+# hotfpc pre-commit hook (docs/internals/tooling.md). Install once per clone: lefthook install
 min_version: 1.5.0
 
 pre-commit:

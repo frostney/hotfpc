@@ -1,4 +1,4 @@
-# Builds hotfpc, runs its unit tests and runs the scenarios (docs/tooling.md).
+# Builds hotfpc, runs its unit tests and runs the scenarios (docs/internals/tooling.md).
 name: CI
 
 on:

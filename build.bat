@@ -1,5 +1,5 @@
 @echo off
-rem Builds hotfpc on Windows (docs/build-system.md); build.sh does the same elsewhere.
+rem Builds hotfpc on Windows (docs/internals/build-system.md); build.sh does the same elsewhere.
 rem
 rem   build.bat [clean] [hotfpc] [tests] [--production] [-- fpc options]
 rem

@@ -870,7 +870,7 @@ begin
         Previous.AddObject(DigestPath(APrevious[I]), TObject(PtrInt(I)));
     { Each value goes into a variable of its own first: fpc 3.3.1+3 for x86-64 gave the loop
       counter and the temporary result of ValueFromIndex the same register when this was one
-      expression (docs/how-it-works.md, "A compiler bug"). }
+      expression (docs/internals/how-it-works.md, "A compiler bug"). }
     for I := 0 to ACurrent.Count - 1 do
     begin
       Path := DigestPath(ACurrent[I]);

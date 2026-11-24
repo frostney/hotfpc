@@ -2,11 +2,11 @@
 
 ## Two parts
 
-- **The driver** ([`source/HotFPC.pas`](../source/HotFPC.pas)) is the `hotfpc` program you
+- **The driver** ([`source/HotFPC.pas`](../../source/HotFPC.pas)) is the `hotfpc` program you
   run. It builds and starts your program, watches its sources, compiles them, checks
   interfaces, and talks to the agent over TCP on 127.0.0.1. TCP works the same on every
   system, including between a program under Wine and a driver outside it.
-- **The agent** ([`source/HotFPC.Agent.pas`](../source/HotFPC.Agent.pas)) is a unit that
+- **The agent** ([`source/HotFPC.Agent.pas`](../../source/HotFPC.Agent.pas)) is a unit that
   hotfpc compiles into your program. It does the actual swap, from inside the program.
 
 ## Why an agent inside the program
@@ -49,7 +49,7 @@ program it goes into:
 
 Shipping precompiled agents would mean one for every fpc version, target and option set.
 Instead, hotfpc carries the agent's source inside its own binary, as a resource made from
-[`source/HotFPC.rc`](../source/HotFPC.rc). On start it writes
+[`source/HotFPC.rc`](../../source/HotFPC.rc). On start it writes
 the source out and compiles it with your fpc and your target options into `.hot/agent/`.
 One hotfpc binary therefore works with every fpc from 3.2.2 on, including cross targets,
 and stays a single file you can copy anywhere. It also can't be paired with an agent of
