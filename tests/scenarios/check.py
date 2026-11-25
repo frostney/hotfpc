@@ -109,6 +109,8 @@ SAYS = {
     # the program starts with the units of the build it runs, without one a save left out
     "startunit": [r"v1: built in [\d.]+ ms, started in [\d.]+ ms, 2 units of its own",
                   r"restart needed: unit w is not part of the running program"],
+    # the save of Speed = 50, whose value PRINTS checks
+    "globals": [r"  note: U\.SPEED still had its initial value; set to the new one"],
 }
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
