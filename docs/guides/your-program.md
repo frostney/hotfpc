@@ -19,7 +19,10 @@ the few it needs, such as `-Xs-` to keep the symbols and `-FU` and `-o` to build
 relative paths, response files and a local `fpc.cfg` mean what they mean to fpc.
 
 Your program's output goes to the terminal as usual, and hotfpc's own lines start with
-`[hot]`. hotfpc ends when your program ends, with its exit code.
+`[hot]`. hotfpc ends when your program ends, with its exit code, except for a program that
+a restart started: when that one ends with a non-zero code, or before its agent connects,
+hotfpc keeps watching and starts it again with the next save that builds ([exit
+codes](../reference/cli.md#exit-codes)).
 
 hotfpc builds into `.hot/` next to the program's source. Add it to your `.gitignore`:
 
