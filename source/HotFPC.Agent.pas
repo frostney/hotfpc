@@ -1169,7 +1169,7 @@ end;
 
 // Whether the addend of a relocation of this kind is the target's offset from the symbol.
 // A pc-relative one's also holds the distance from the field to the end of the instruction.
-function ELFAddendIsTargetOffset(AKind: TRelocationKind): Boolean;
+function ELFAddendIsTargetOffset(const AKind: TRelocationKind): Boolean;
 begin
   Result := AKind in [rkAbsolute64, rkAbsolute32, rkAbsolute32Signed];
 end;
@@ -1215,11 +1215,14 @@ begin
   end;
 end;
 
-// Every aarch64 relocation computes the symbol plus the addend, minus the place for a
-// pc-relative one, so the addend is the target's offset from the symbol.
-function ELFAddendIsTargetOffset(AKind: TRelocationKind): Boolean;
+// The addend of an address, of a page and the offset in it (adrp with add, ldr or str), of a
+// branch, a GOT entry and a thread variable's offset is the target's offset from the symbol.
+// A word that holds a difference is not: gas assembles a jump table's entry, .long label -
+// table, as a pc-relative PREL32 and adds the entry's distance from the table to the addend,
+// which can then be the start of another routine in the section.
+function ELFAddendIsTargetOffset(const AKind: TRelocationKind): Boolean;
 begin
-  Result := AKind <> rkUnsupported;
+  Result := not (AKind in [rkPCRelative32, rkPCRelative64, rkUnsupported]);
 end;
 {$endif}
 
