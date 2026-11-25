@@ -3163,6 +3163,11 @@ type
     procedure SayEnd(const AExitCode: Integer);
     { The program's exit code; -1 when a signal ended it. }
     class function ExitCodeOf(const AProgram: TProcess): Integer;
+    { When the wait of Settle that starts at ANow ends, for a settle that started at AStart and
+      waits AWait between looks: AWait later, but never past MaximumSettleSeconds after AStart,
+      or one AWait after AStart when that is later. A file that keeps changing is then compiled
+      as it is. }
+    class function SettleWaitEnd(const AStart, ANow, AWait: Double): Double;
   public
     constructor Create(const AOptions: TOptions);
     destructor Destroy; override;
@@ -3901,22 +3906,47 @@ begin
     RefreshLiveAssembly(Problem);
 end;
 
-{ Waits for the save to stop changing the files, for MaximumSettleSeconds at most, and no
-  longer once the program has ended (Watch sees to that). The files as they are then. }
+{ Waits for the save to stop changing the files, for MaximumSettleSeconds at most, or for
+  one --settle wait when that is longer (SettleWaitEnd). Stops as soon as the program has
+  ended, also during a long wait (Watch then ends with it). The files as they are then. }
 function TDriver.Settle(const AStamps: TFileStamps): TFileStamps;
 var
   Again: TFileStamps;
-  Deadline: Double;
+  Start, Wait, WaitEnd, Remaining: Double;
 begin
   Result := AStamps;
-  Deadline := NowSeconds + MaximumSettleSeconds;
+  Wait := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  Start := NowSeconds;
   repeat
-    Sleep(Trunc(FOptions.SettleSeconds * MillisecondsPerSecond) + SettleSlackMilliseconds);
+    WaitEnd := SettleWaitEnd(Start, NowSeconds, Wait);
+    { in steps, to see the program end }
+    while NowSeconds < WaitEnd do
+    begin
+      if (FProgram <> nil) and not FProgram.Running then
+        Exit;
+      Remaining := WaitEnd - NowSeconds;
+      if Remaining * MillisecondsPerSecond > PollIntervalMilliseconds then
+        Sleep(PollIntervalMilliseconds)
+      else
+        Sleep(Trunc(Remaining * MillisecondsPerSecond) + 1);
+    end;
     Again := FWatcher.Stamps;
     if TSourceWatcher.SameStamps(Again, Result) then
       Break;
     Result := Again;
-  until (NowSeconds > Deadline) or ((FProgram <> nil) and not FProgram.Running);
+  until (SettleWaitEnd(Start, NowSeconds, Wait) <= NowSeconds) or ((FProgram <> nil) and not FProgram.Running);
+end;
+
+class function TDriver.SettleWaitEnd(const AStart, ANow, AWait: Double): Double;
+var
+  Deadline: Double;
+begin
+  Deadline := AStart + MaximumSettleSeconds;
+  if AStart + AWait > Deadline then
+    Deadline := AStart + AWait;
+  Result := ANow + AWait;
+  if Result > Deadline then
+    Result := Deadline;
 end;
 
 { True when the program has ended and hotfpc ends with it. A program that a restart started
@@ -4341,6 +4371,18 @@ begin
   finally
     Options.Free;
   end;
+end;
+
+{ A file that keeps changing is compiled after a second, or after one --settle wait when that
+  is longer: no wait goes past that. }
+procedure TestSettleWaitEnd;
+begin
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.0, 0.002) - 10.002) < 1E-9, 'the first wait is one --settle');
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.6, 0.6) - 11.0) < 1E-9,
+    'a later wait ends a second after the settle started, not a whole --settle later');
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.9995, 0.002) - 11.0) < 1E-9, 'nor a few milliseconds later');
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.0, 5.0) - 15.0) < 1E-9, 'a --settle longer than a second waits once');
+  Expect(TDriver.SettleWaitEnd(10.0, 15.0, 5.0) <= 15.0, 'and no more after it');
 end;
 
 procedure TestCompilerOptionsAndProgramArguments;
@@ -6594,6 +6636,7 @@ begin
     TestDefaults;
     TestValues;
     TestSettleFallback;
+    TestSettleWaitEnd;
     TestCompilerOptionsAndProgramArguments;
     TestMissingValue;
     TestLastSourceWins;
