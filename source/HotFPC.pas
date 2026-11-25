@@ -613,9 +613,12 @@ type
       files of AOld that ANew lacks. The caller frees the list. }
     class function ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
     { The files whose digest differs between the two lists of path=digest, or that are new
-      in ACurrent. APrevious may be nil: then every file is a change. }
+      in ACurrent. APrevious may be nil: then every file is a change. Each file is kept by
+      its whole path, with its case: a path may have = in it, and the digest has none. }
     class function ChangedFiles(const APrevious, ACurrent: TStrings): TStringList;
-    { The paths of every watched source file, sorted. The caller frees the list. }
+    { The paths of every watched source file, sorted, each with its case: two files whose
+      names differ only in case are two files where the file system keeps both. The caller
+      frees the list. }
     function Files: TStringList;
     { Names, sizes and times of the watched files. Times have whole seconds only. }
     function Stamps: TFileStamps;
@@ -780,21 +783,43 @@ begin
   end;
 end;
 
+{ An entry of a list of digests: the path, which may have =, then the digest, which has none. }
+function DigestPath(const AEntry: string): string;
+begin
+  Result := Copy(AEntry, 1, LastDelimiter('=', AEntry) - 1);
+end;
+
+function DigestValue(const AEntry: string): string;
+begin
+  Result := Copy(AEntry, LastDelimiter('=', AEntry) + 1, MaxInt);
+end;
+
 class function TSourceWatcher.ChangedFiles(const APrevious, ACurrent: TStrings): TStringList;
 var
-  I: Integer;
-  Name, Value: string;
+  Previous: TStringList;
+  I, K: Integer;
+  Path, Value: string;
 begin
   Result := TStringList.Create;
-  { Each value goes into a variable of its own first: fpc 3.3.1+3 for x86-64 gave the loop
-    counter and the temporary result of ValueFromIndex the same register when this was one
-    expression (docs/how-it-works.md, "A compiler bug"). }
-  for I := 0 to ACurrent.Count - 1 do
-  begin
-    Name := ACurrent.Names[I];
-    Value := ACurrent.ValueFromIndex[I];
-    if (APrevious = nil) or (APrevious.Values[Name] <> Value) then
-      Result.Add(Name);
+  Previous := TStringList.Create;
+  try
+    Previous.CaseSensitive := True;
+    Previous.Sorted := True;
+    if APrevious <> nil then
+      for I := 0 to APrevious.Count - 1 do
+        Previous.AddObject(DigestPath(APrevious[I]), TObject(PtrInt(I)));
+    { Each value goes into a variable of its own first: fpc 3.3.1+3 for x86-64 gave the loop
+      counter and the temporary result of ValueFromIndex the same register when this was one
+      expression (docs/how-it-works.md, "A compiler bug"). }
+    for I := 0 to ACurrent.Count - 1 do
+    begin
+      Path := DigestPath(ACurrent[I]);
+      Value := DigestValue(ACurrent[I]);
+      if not Previous.Find(Path, K) or (DigestValue(APrevious[PtrInt(Previous.Objects[K])]) <> Value) then
+        Result.Add(Path);
+    end;
+  finally
+    Previous.Free;
   end;
 end;
 
@@ -805,6 +830,7 @@ var
   Prefix: string;
 begin
   Result := TStringList.Create;
+  Result.CaseSensitive := True;
   Result.Sorted := True;
   Result.Duplicates := dupIgnore;
   for I := 0 to FDirectories.Count - 1 do
@@ -4736,6 +4762,27 @@ begin
     finally
       Changed.Free;
     end;
+    { a path may have = in it, and differ from another only in case }
+    Previous.Clear;
+    Current.Clear;
+    Previous.Add('/a=b/one.pas=0000000000000001');
+    Previous.Add('/a=b/two.pas=0000000000000002');
+    Previous.Add('/a=b/A.inc=0000000000000003');
+    Previous.Add('/a=b/a.inc=0000000000000004');
+    Current.Assign(Previous);
+    Changed := TSourceWatcher.ChangedFiles(Previous, Current);
+    try
+      ExpectEqual(Changed.Count, 0, 'files under a directory with = in its name, as they were');
+    finally
+      Changed.Free;
+    end;
+    Current[3] := '/a=b/a.inc=00000000000000FF';
+    Changed := TSourceWatcher.ChangedFiles(Previous, Current);
+    try
+      ExpectEqual(Changed.CommaText, '/a=b/a.inc', 'the one of two files that differ in case that changed');
+    finally
+      Changed.Free;
+    end;
   finally
     Previous.Free;
     Current.Free;
@@ -4832,6 +4879,68 @@ begin
         end;
       finally
         Changed.Free;
+      end;
+    finally
+      Digests.Free;
+    end;
+  finally
+    Watcher.Free;
+    Options.Free;
+  end;
+end;
+
+{ The sources of a program whose directory has = in its name, two of them differing only in
+  case where the file system keeps both: the watcher keeps each by its whole path, so it
+  sees them as they were and names the one that changed. }
+procedure TestWatchedPaths;
+var
+  Root, Contents: string;
+  Watcher: TSourceWatcher;
+  Options, Files, Digests, Changed: TStringList;
+  Stamps: TFileStamps;
+  BothCases: Boolean;
+begin
+  Root := MakeTestDirectory('watched-paths') + 'p=q' + PathDelim;
+  WriteTestFile(Root + 'main.pas', 'program Main;');
+  WriteTestFile(Root + 'u.pas', 'unit U;');
+  WriteTestFile(Root + 'A.inc', '{ upper }');
+  WriteTestFile(Root + 'a.inc', '{ lower }');
+  BothCases := ReadFileContents(Root + 'A.inc', Contents) and (Contents = '{ upper }');
+  Options := TStringList.Create;
+  Watcher := TSourceWatcher.Create(Root, Options);
+  try
+    Files := Watcher.Files;
+    try
+      if BothCases then
+      begin
+        ExpectEqual(Files.Count, 4, 'every file, also two whose names differ only in case');
+        Expect((Files.IndexOf(Root + 'A.inc') >= 0) and (Files.IndexOf(Root + 'a.inc') >= 0), 'both of them');
+      end
+      else
+        ExpectEqual(Files.Count, 3, 'every file');
+    finally
+      Files.Free;
+    end;
+    Stamps := Watcher.Stamps;
+    Expect(Watcher.ReadDigests(Digests), 'digests of the sources');
+    try
+      Changed := Watcher.ChangedSince(Stamps, Digests);
+      try
+        ExpectEqual(Changed.CommaText, '', 'the sources as they were, under a directory with = in its name');
+      finally
+        Changed.Free;
+      end;
+      if BothCases then
+      begin
+        { the same size; the stamps taken after it stand for an edit within the same tick }
+        WriteTestFile(Root + 'a.inc', '{ LOWER }');
+        Stamps := Watcher.Stamps;
+        Changed := Watcher.ChangedSince(Stamps, Digests);
+        try
+          ExpectEqual(Changed.CommaText, Root + 'a.inc', 'an edit of one of two files that differ in case names that one');
+        finally
+          Changed.Free;
+        end;
       end;
     finally
       Digests.Free;
@@ -6679,6 +6788,7 @@ begin
     TestChangedFiles;
     TestChangedStamps;
     TestChangedSince;
+    TestWatchedPaths;
     TestOptionDirectories;
     TestResponseFile;
     TestWatchedFiles;

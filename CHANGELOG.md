@@ -19,6 +19,12 @@
   running after the program has ended. On Windows a save whose sizes of variables with
   initial values are checked then needs a restart, as its compile and its compile to
   assembler may have read different sources.
+- hotfpc keeps each source file by its whole path, with its case. In a directory whose
+  path has `=` in it, the files used to share one entry, so unchanged sources looked
+  changed after every compile: each save was compiled four times, and on Windows a save
+  whose sizes of variables with initial values are checked needed a restart. Two files
+  whose names differ only in case, such as `A.inc` and `a.inc` on a case-sensitive file
+  system, used to count as one, so hotfpc didn't watch one of them.
 - On Windows, a variable with an initial value in the program file that changes size
   (`Calls: Integer = 0` to `Int64 = 0`) now needs a restart, as on the other systems, and
   so does a typed constant declared in a routine, or with fpc 3.2 in a unit's
