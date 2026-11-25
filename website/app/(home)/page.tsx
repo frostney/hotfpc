@@ -131,8 +131,9 @@ export default async function HomePage() {
         </video>
         <p className="mt-3 text-sm text-fd-muted-foreground text-center">
           A real run of the raylib example on macOS: five saves to{' '}
-          <code>scene.pas</code>. Four are swapped into the running game in about 100 ms; the
-          fifth grows a variable, and the game starts over with it by itself.{' '}
+          <code>scene.pas</code>. The first four are each swapped into the running game about
+          100 ms after hotfpc sees the save; the fifth grows a variable, and the game starts over
+          with it by itself.{' '}
           <Link href="/docs/guides/raylib" className="underline">
             With raylib →
           </Link>

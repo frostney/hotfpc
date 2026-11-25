@@ -46,7 +46,8 @@ So that nothing appeared on the screens in use, the game ran on a virtual displa
 only the recording used. The copy's `game.pas` opened its window hidden, without a frame,
 and moved it there; `scene.pas` was as it is in the repository.
 
-To record it again, run the example the same way, make the five edits the README describes
-in `scene.pas`, and keep each `[hot]` line in view. Commit the GIF for the README and the
+The virtual display was only a choice for the capture. To record it again, run
+`examples/raylib` as it is, with its ordinary window on any display, make the five edits
+the README describes in `scene.pas`, and keep each `[hot]` line in view. Commit the GIF for the README and the
 MP4, which the website's home page plays with the browser's controls, under the same names:
 the README, the guides and the site pick up the new files as they are.
