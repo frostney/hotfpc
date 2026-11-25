@@ -162,8 +162,9 @@ its old code instead.
 
 A restarted program that ends before its agent connects, or ends later with a non-zero exit
 code or by a signal, doesn't end hotfpc: a runtime error in an initialization section is
-fixed in the next save, so the next save that builds starts the program again. A restarted
-program that ends with 0, and the first program in every case, end hotfpc as before.
+fixed in the next save, so the next save that builds starts the program again. That holds
+for exit code 0 too while its agent hasn't connected. A restarted program that ends with 0
+after its agent connected, and the first program in every case, end hotfpc.
 
 ## Per system
 

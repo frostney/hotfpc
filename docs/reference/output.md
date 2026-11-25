@@ -277,7 +277,7 @@ check needs a restart ([Restart needed](#restart-needed)).
 | Line | What happened |
 | --- | --- |
 | `the program ended with <n>; the next save that builds starts it again` | A program that a restart started ended with a non-zero exit code, or a signal ended it. hotfpc keeps watching. |
-| `the next save that builds starts the program again` | A restarted program ended before its agent connected, such as from a runtime error in an initialization section. |
+| `the next save that builds starts the program again` | A restarted program ended before its agent connected, with any exit code, 0 included, such as from a runtime error or a `Halt` in an initialization section. hotfpc keeps watching. |
 | `the stopped program's connection is still open: a launcher (--run) that starts the program as its child has to end it too, or the old program keeps running` | After a restart stopped the launcher, the old program's agent stayed connected for 2 s: the launcher left its child running. |
 
 ## The end
@@ -286,8 +286,9 @@ check needs a restart ([Restart needed](#restart-needed)).
 the program ended with <n> after <s> s; <n> reloads applied, <n> refused, <n> failed to compile, <n> without a change in code, <n> restarts
 ```
 
-When the program ends, hotfpc prints this and ends with the program's exit code. `<n>` is
-`-1` when a signal ended the program. `--quiet` leaves it out.
+When a program whose agent connected ends and hotfpc ends with it
+([exit codes](cli.md#exit-codes)), hotfpc prints this and ends with the program's exit
+code. `<n>` is `-1` when a signal ended the program. `--quiet` leaves it out.
 
 ```text
 [hot] the program ended with 0 after 6.8 s; 0 reloads applied, 1 refused, 0 failed to compile, 0 without a change in code, 2 restarts

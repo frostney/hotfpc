@@ -76,7 +76,7 @@ many files it watches.
 
 | Code | When |
 | --- | --- |
-| the program's | The program ended. hotfpc ends with it, with its exit code. A program a restart started that ends with a non-zero code doesn't end hotfpc (see [What a save does](../guides/saves-and-restarts.md#when-a-restarted-program-fails)). |
+| the program's | The program ended. hotfpc ends with it, with its exit code. A program a restart started doesn't end hotfpc when it ends before its agent connects, whatever its code, or later with a non-zero code (see [What a save does](../guides/saves-and-restarts.md#when-a-restarted-program-fails)). |
 | 0 | `--version`. |
 | 1 | hotfpc stopped before the program ran: the compiler is missing or too old, the agent or the program didn't compile, hotfpc couldn't listen on 127.0.0.1, or the program didn't connect within 60 s. |
 | 2 | No program was named: hotfpc printed its usage. |

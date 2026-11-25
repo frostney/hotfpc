@@ -97,8 +97,11 @@ runtime error in an initialization section you just edited. That doesn't end hot
 says so, and the next save that builds starts the program again. So you fix the error,
 save, and carry on.
 
-A restarted program that ends with exit code 0, and the first program however it ends,
-end hotfpc, which ends with the program's exit code.
+A restarted program that ends before its agent connects doesn't end hotfpc whatever its
+exit code, 0 included: hotfpc says `the next save that builds starts the program again`
+and keeps watching. A restarted program that ends with exit code 0 after its agent
+connected, and the first program however it ends, end hotfpc, which ends with the
+program's exit code.
 
 ## Saves that change nothing
 
