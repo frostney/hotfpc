@@ -11,6 +11,7 @@
     "start": "node scripts/preview.mjs",
     "types:check": "next typegen && tsc --noEmit",
     "prebuild": "node scripts/sync-docs-assets.mjs",
+    "postbuild": "node scripts/check-export.mjs",
     "predev": "node scripts/sync-docs-assets.mjs"
   },
   "dependencies": {

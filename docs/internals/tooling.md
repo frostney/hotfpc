@@ -101,7 +101,11 @@ npm run start      # website/out at http://localhost:3000/hotfpc/
   draws the same block natively.
 - The site has a static search index, `llms.txt`, `llms-full.txt` and a Markdown copy of
   every page, whose links to pages, sections and files of the site are absolute URLs, an
-  Open Graph image per page and a sitemap.
+  Open Graph image per page and a sitemap. The Markdown copies are plain GitHub Markdown:
+  `lib/source.ts` turns off the `[#id]` that fumadocs puts after each heading by default.
+- `scripts/check-export.mjs` runs after each build and fails it when a search result's
+  `#anchor` is no id on its page, or when a heading in a Markdown copy or `llms-full.txt`
+  ends with `[#id]`.
 - `package.json` pins every package to an exact version, and `package-lock.json` the rest.
 
 `pages.yml` builds the site on every pull request, so a broken link fails the pull request,

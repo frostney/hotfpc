@@ -15,9 +15,10 @@ const docs = defineDocs({
   docs: {
     // docs/ is plain GitHub Markdown: a page's title is its H1, and the body keeps it.
     schema: pageSchema.extend({ title: z.string().optional() }),
-    // the Markdown of each page, for llms.txt, the Markdown copies and the search index
+    // the Markdown of each page, for llms.txt, the Markdown copies and the search index:
+    // plain GitHub Markdown, so without the `[#id]` fumadocs puts after each heading by default
     postprocess: {
-      includeProcessedMarkdown: true,
+      includeProcessedMarkdown: { headingIds: false },
     },
     // fumadocs' own preset: GitHub Markdown (tables), heading ids and the table of contents,
     // the search structure, and syntax highlighting. The macro takes plain processor
