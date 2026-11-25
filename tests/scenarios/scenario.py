@@ -51,7 +51,7 @@ EMPTIED_FIRST = "emptied first"
 # program's object file, .hot/units/main.o, so fpc has read main.pas and is linking. It comes
 # first, and has no outcome of its own: the program starts with it. A second such step waits
 # for the main.o of the next build, which the save before makes the driver do: one newer
-# than the program the build before linked.
+# than the program the build before linked after the main.o it waited for.
 AT_START = "at the start"
 
 
@@ -1532,7 +1532,9 @@ def run(name):
     def built(before):
         made = written(os.path.join("units", "main.o"))
         linked = max(written("main") or 0, written("main.exe") or 0)
-        return made is not None and (before is None or (made != before and 0 < linked < made))
+        # fpc may still be writing the main.o the step before saw: only a link after it ends
+        # that build
+        return made is not None and (before is None or before < linked < made)
     before = None
     while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
         desc, edits = steps[0][:2]
