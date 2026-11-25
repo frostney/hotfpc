@@ -2,10 +2,15 @@
 // docs/ becomes a site route; a link to a file the docs keep beside their pages (the demo
 // recordings) and an image become that file in the site's copy, docs-assets/; a link that
 // leaves docs/ (README.md, the source, the examples) becomes its GitHub URL. Every target is
-// checked against the working tree, so a broken link or image fails the build.
+// checked against the working tree, and a fragment against the target's headings, so a
+// broken link, image or section fails the build.
 import path from 'node:path';
 import fs from 'node:fs';
 import { visit } from 'unist-util-visit';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
+import { remarkHeading } from 'fumadocs-core/mdx-plugins';
 
 const githubBase = 'https://github.com/frostney/hotfpc';
 // Mirrors basePath in lib/shared.ts and next.config.mjs: an <img> or a plain <a> doesn't
@@ -29,11 +34,38 @@ function isAbsolute(href) {
   return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || href.startsWith('//');
 }
 
-// The target of a relative link, checked: it exists and stays in the repository.
+// The ids of a Markdown file's headings, as the site renders them: fumadocs' preset gives
+// each heading its id with remark-heading (github-slugger, or a custom `[#id]`), which is
+// also how GitHub names the anchors of a file outside docs/, such as README.md.
+const headingProcessor = unified().use(remarkParse).use(remarkGfm).use(remarkHeading, { generateToc: false });
+
+function headingIds(markdownPath) {
+  const tree = headingProcessor.runSync(headingProcessor.parse(fs.readFileSync(markdownPath, 'utf8')));
+  const ids = new Set();
+  visit(tree, 'heading', (node) => {
+    if (node.data?.hProperties?.id) ids.add(node.data.hProperties.id);
+  });
+  return ids;
+}
+
+// A fragment in a link to a Markdown file must name one of its headings.
+function checkFragment(href, hash, resolved, filePath, repoRoot) {
+  if (!hash || !resolved.endsWith('.md')) return;
+  const id = decodeURIComponent(hash);
+  if (!headingIds(resolved).has(id)) {
+    const from = path.relative(repoRoot, filePath);
+    throw new Error(
+      `broken link "${href}" in ${from}: ${path.relative(repoRoot, resolved)} has no heading with the id "${id}"`,
+    );
+  }
+}
+
+// The target of a relative link, checked: it exists and stays in the repository, and its
+// fragment names a heading of a Markdown target.
 function resolveTarget(href, filePath, what) {
   const repoRoot = findRepoRoot(path.dirname(filePath));
   const [target, hash] = href.split('#');
-  const resolved = path.resolve(path.dirname(filePath), decodeURI(target));
+  const resolved = target === '' ? filePath : path.resolve(path.dirname(filePath), decodeURI(target));
   const from = path.relative(repoRoot, filePath);
   if (!fs.existsSync(resolved)) {
     throw new Error(`broken ${what} "${href}" in ${from}: ${path.relative(repoRoot, resolved)} does not exist`);
@@ -41,6 +73,7 @@ function resolveTarget(href, filePath, what) {
   if (path.relative(repoRoot, resolved).startsWith('..')) {
     throw new Error(`${what} "${href}" in ${from} leaves the repository`);
   }
+  checkFragment(href, hash, resolved, filePath, repoRoot);
   return { repoRoot, resolved, suffix: hash ? '#' + hash : '' };
 }
 
@@ -53,6 +86,11 @@ function assetPath(repoRoot, resolved) {
 }
 
 function mapLink(node, filePath) {
+  // a link to a section of the same page stays as it is, once its heading is found
+  if (node.url.startsWith('#')) {
+    resolveTarget(node.url, filePath, 'link');
+    return;
+  }
   if (isAbsolute(node.url)) return;
   const { repoRoot, resolved, suffix } = resolveTarget(node.url, filePath, 'link');
   const fromDocs = path.relative(path.join(repoRoot, 'docs'), resolved);

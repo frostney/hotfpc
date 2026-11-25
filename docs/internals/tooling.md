@@ -91,7 +91,8 @@ npm run start      # website/out at http://localhost:3000/hotfpc/
   page's route, a link to a file under `docs/` that isn't a page (the demo recordings, an
   image) becomes the site's copy of it, which `scripts/sync-docs-assets.mjs` makes before
   each build, and any other link in the repository becomes its GitHub URL. A link or image
-  whose target doesn't exist fails the build.
+  whose target doesn't exist fails the build, and so does a link whose fragment
+  (`page.md#section`, `#section`) names no heading of the Markdown file it points to.
 - `lib/remark-term-links.mjs` links the first mention of a few tools on each page (Free
   Pascal, raylib, lwpt, Wine).
 - A ```` ```mermaid ```` block is drawn in the browser by `components/mermaid.tsx`; GitHub
