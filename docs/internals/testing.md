@@ -86,8 +86,9 @@ after the branch on arm64 and inside the jump on x86-64.
 | `HOT_TRANSCRIPT` | A file to write the whole run to. |
 
 The programs are written to `tests/scenarios/work/<case>/`, which git ignores. Every case
-but `restart`, `linkfail`, `crash`, `shortentry`, `shortcall`, `sighandler` and `sigmasked`
-passes `--no-restart`, so the program it checks keeps running after a refused edit.
+but `restart`, `linkfail`, `crash`, `newconst`, `shortentry`, `shortcall`, `sighandler` and
+`sigmasked` passes `--no-restart`, so the program it checks keeps running after a refused
+edit.
 
 ### Adding a scenario
 
