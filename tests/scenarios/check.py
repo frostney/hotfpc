@@ -67,6 +67,9 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    # Speed, a variable of the implementation section that nothing has written, takes its
+    # new initial value: on Windows with fpc 3.2 the agent knows it only by its section
+    "globals": [re.compile(r"TOTAL \d+ hidden \d+ speed 50 extra \d+")],
     "procvars": [re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V2 \d+, same address: TRUE TRUE"),
                  re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V3 \d+, same address: TRUE TRUE")],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
@@ -106,6 +109,8 @@ SAYS = {
     # the program starts with the units of the build it runs, without one a save left out
     "startunit": [r"v1: built in [\d.]+ ms, started in [\d.]+ ms, 2 units of its own",
                   r"restart needed: unit w is not part of the running program"],
+    # the save of Speed = 50, whose value PRINTS checks
+    "globals": [r"  note: U\.SPEED still had its initial value; set to the new one"],
 }
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
