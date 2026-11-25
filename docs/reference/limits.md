@@ -12,6 +12,12 @@ the edits that need a restart; these are the limits around them.
   `{$codealign proc=1}`, an assembler routine can be shorter than that and the next one can
   follow right after it; then every save of its unit restarts the program
   ([Output](output.md#restart-needed)).
+- **On x86-64, a routine that calls another within its first 5 bytes needs a restart.**
+  A thread waiting in the routine it called would return into the middle of the jump that
+  a swap writes there. An assembler routine can start with such a call, through a register
+  or memory. The agent can't tell where the instructions of an entry begin, so it also
+  takes bytes that could be such a call for one: rarely, a routine that starts with another
+  instruction restarts too ([Output](output.md#restart-needed)).
 - **The main program's block keeps its old code.** It is already running. Code you want to
   change belongs in routines and units; the main block can call them.
 - **In the program file, hotfpc checks sizes, not types.** It finds a type that changed

@@ -197,6 +197,15 @@ const
   X86ModRMJumpRIP = $25;
   X86OpcodeJumpRel32 = $e9;
   X86OpcodeCallRel32 = $e8;
+  X86OperandSizePrefix = $66;     // before e8: a call with a 16-bit offset (AMD)
+  X86CallNear = 2;                // ff /2: call through a register or memory
+  X86CallFar = 3;                 // ff /3
+  X86ModRMNoOffset = 0;           // ModRM mode: memory, with no displacement but for X86ModRMNoBase
+  X86ModRMByteOffset = 1;         // mode: an 8-bit displacement follows
+  X86ModRMLongOffset = 2;         // mode: a 32-bit displacement follows
+  X86ModRMRegister = 3;           // mode: a register, nothing follows
+  X86ModRMSIB = 4;                // r/m: a SIB byte follows
+  X86ModRMNoBase = 5;             // r/m in mode 0 (rip + disp32), or a SIB's base: a 32-bit displacement follows
   X86OpcodeTwoByte = $0f;
   X86OpcodeJccFirst = $80;
   X86OpcodeJccLast = $8f;
@@ -2862,6 +2871,13 @@ begin
   Result.ByteCount := RedirectSize;
   Move(Instruction, Result.Bytes[0], RedirectSize);
 end;
+
+// An A64 instruction is as long as the branch a redirect writes, so a call at the entry
+// returns after it.
+function CallReturnsInsideRedirect(const AEntry: PByte): Boolean;
+begin
+  Result := False;
+end;
 {$else}
 // An island: jmp qword ptr [rip + slot]. The slot is ordinary memory within 2 GiB.
 function WriteIsland(var ANext: PByte; ALimit: PByte; ASlot: PQWord): QWord;
@@ -2888,6 +2904,46 @@ begin
   Result.ByteCount := RedirectSize;
   Result.Bytes[0] := X86OpcodeJumpRel32;
   PLongInt(@Result.Bytes[1])^ := LongInt(Int64(ATarget - (AFrom + X86JumpRel32Size)));
+end;
+
+// Whether a call in the bytes a redirect replaces ends before them: a thread stopped in the
+// routine it called would return into the middle of the jump. Where the instructions of the
+// entry begin isn't known, so every byte is taken as the opcode of a call in turn: e8 with a
+// 16-bit offset after an operand-size prefix (with 32 bits, it ends at the jump's end or
+// after it), and ff /2 or /3 through a register or memory. Other prefixes come before the
+// opcode, so they don't move where the call ends.
+function CallReturnsInsideRedirect(const AEntry: PByte): Boolean;
+var
+  Opcode, CallLength: LongInt;
+  ModRM, Mode, Memory: Byte;
+begin
+  Result := False;
+  for Opcode := 0 to RedirectSize - 2 do
+  begin
+    CallLength := 0;
+    if (AEntry[Opcode] = X86OpcodeCallRel32) and (Opcode > 0) and (AEntry[Opcode - 1] = X86OperandSizePrefix) then
+      CallLength := 1 + SizeOf(SmallInt)
+    else if AEntry[Opcode] = X86OpcodeGroup5 then
+    begin
+      ModRM := AEntry[Opcode + 1];
+      Mode := ModRM shr 6;
+      Memory := ModRM and 7;
+      if ((ModRM shr 3) and 7) in [X86CallNear, X86CallFar] then
+      begin
+        CallLength := 2;   // the opcode and ModRM
+        if (Mode <> X86ModRMRegister) and (Memory = X86ModRMSIB) then Inc(CallLength);
+        case Mode of
+          X86ModRMNoOffset:
+            // a SIB byte past the jump's end: the call ends after it either way
+            if (Memory = X86ModRMNoBase) or ((Memory = X86ModRMSIB) and ((Opcode + 2 >= RedirectSize) or ((AEntry[Opcode + 2] and 7) = X86ModRMNoBase))) then
+              Inc(CallLength, SizeOf(LongInt));
+          X86ModRMByteOffset: Inc(CallLength, SizeOf(ShortInt));
+          X86ModRMLongOffset: Inc(CallLength, SizeOf(LongInt));
+        end;
+      end;
+    end;
+    if (CallLength > 0) and (Opcode + CallLength < RedirectSize) then Exit(True);
+  end;
 end;
 {$endif}
 
@@ -4598,6 +4654,14 @@ begin
       if Room < RedirectSize then
       begin
         Restart(Pretty(Symbol^.Name) + ' is ' + UnsignedToString(Room) + ' bytes from the next routine, too close for the ' + SignedToString(RedirectSize) + '-byte jump to its new code');
+        Succeeded := False;
+        Break;
+      end;
+      // A thread can wait in a routine this one called from its first bytes, on any system
+      // and whether or not the agent can stop it; it would return into the jump.
+      if CallReturnsInsideRedirect(PByte(PtrUInt(OldCurrentAddress))) then
+      begin
+        Restart(Pretty(Symbol^.Name) + ' may call a routine within its first ' + SignedToString(RedirectSize) + ' bytes, and a thread could return from it into the middle of the jump to its new code');
         Succeeded := False;
         Break;
       end;

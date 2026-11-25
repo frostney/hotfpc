@@ -10,6 +10,10 @@
   jump right before the next one, on macOS and on Linux with `-Aas`, and the program then
   crashed when it called one of them through its old address. Such a save now needs a
   restart.
+- On x86-64, a swap no longer writes the jump at a routine's entry over a call in its
+  first 5 bytes, such as an assembler routine's `call rdi`. A thread waiting in the routine
+  it called returned into the middle of the jump: in the `shortcall` scenario, it failed
+  with an access violation. Such a save now needs a restart.
 - On macOS, a swap now also stops a thread that another thread started while the agent was
   stopping them, and a thread that can't be suspended makes the agent let the others run
   and try again. Such a thread used to run on while the agent rewrote code. The agent

@@ -1028,6 +1028,109 @@ end.
     ("Small returns 3", [("u.pas", "  xor eax, eax\n", "  mov eax, 3\n"), ("u.pas", "Result := 0;", "Result := 3;")]),
 ], opts=SHORT_ENTRY_OPTS, restart=True)
 
+# ---------------------------------------------------------------------------- a call at the entry
+# A thread waits in a routine that Relay calls with its first instruction. On x86-64 that
+# call is 2 bytes long, so the return address is inside the 5 bytes of the jump a swap
+# writes at Relay's entry, and the thread would return into the middle of it: the save needs
+# a restart. On arm64 the call is one instruction, as long as the branch a swap writes, so
+# the thread returns after it, into the old code, and the save is swapped. Through calls Wait
+# with the stack aligned for it; on arm64, Enter passes Relay where to return in x3, since
+# Relay's call overwrites x30. Relay is in the interface: fpc 3.2 gives a routine of the
+# implementation section no symbol in a Windows object, so a swap there would not redirect it.
+case("shortcall", {
+    "main.pas": MAIN.replace("uses SysUtils, u;", "uses {$ifdef unix}cthreads,{$endif} SysUtils, u;"),
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+function Relay(AThrough, ATarget: Pointer): LongInt;
+implementation
+uses Classes, SysUtils;
+type
+  TWaiter = class(TThread)
+    procedure Execute; override;
+  end;
+var
+  Waiter: TWaiter;
+  Seen: LongInt;
+procedure Wait;
+begin
+  Sleep(100);
+end;
+{$if defined(cpux86_64)}
+{$asmmode intel}
+function Relay(AThrough, ATarget: Pointer): LongInt; assembler; nostackframe;
+asm
+{$ifdef windows}
+  call rcx
+{$else}
+  call rdi
+{$endif}
+  mov eax, 1
+end;
+procedure Through; assembler; nostackframe;
+asm
+{$ifdef windows}
+  sub rsp, 32
+  call rdx
+  add rsp, 32
+{$else}
+  call rsi
+{$endif}
+end;
+function Outer(AThrough, ATarget: Pointer): LongInt;
+begin
+  Result := Relay(AThrough, ATarget);
+end;
+{$else}
+function Relay(AThrough, ATarget: Pointer): LongInt; assembler; nostackframe;
+asm
+  blr x0
+  mov w0, #1
+  br x3
+end;
+procedure Enter; assembler; nostackframe;
+asm
+  mov x3, x30
+  b Relay
+end;
+function Outer(AThrough, ATarget: Pointer): LongInt; assembler; nostackframe;
+asm
+  stp x29, x30, [sp, #-16]!
+  mov x29, sp
+  bl Enter
+  ldp x29, x30, [sp], #16
+end;
+procedure Through; assembler; nostackframe;
+asm
+  stp x29, x30, [sp, #-32]!
+  str x3, [sp, #16]
+  mov x29, sp
+  blr x1
+  ldr x3, [sp, #16]
+  ldp x29, x30, [sp], #32
+end;
+{$endif}
+procedure TWaiter.Execute;
+begin
+  while not Terminated do Seen := Outer(@Through, @Wait);
+end;
+function Tick(n: Integer): string;
+begin
+  Result := Format('relay %d', [Seen]);
+  if Waiter.FatalException <> nil then Result := Result + ', the waiting thread failed: ' + Exception(Waiter.FatalException).Message;
+end;
+initialization
+  Waiter := TWaiter.Create(False);
+finalization
+  Waiter.Terminate;
+  Waiter.WaitFor;
+  Waiter.Free;
+end.
+'''}, [
+    ("Relay returns 2", [("u.pas", "  mov eax, 1\n", "  mov eax, 2\n"), ("u.pas", "  mov w0, #1\n", "  mov w0, #2\n")]),
+], restart=True)
+
 
 # The driver's line that ends its work on a save: the swap, the code that came out the same, a
 # compile or link that failed, or a restart done or given up. A refusal ends it too, unless the
