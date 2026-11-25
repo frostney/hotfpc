@@ -20,9 +20,9 @@ the hook with `--no-verify` unless the maintainer agrees.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push and pull request. On Linux x86-64, Linux arm64
-(GitHub's `ubuntu-24.04-arm` runner) and macOS arm64 with fpc 3.2.2 it builds hotfpc, runs
-the unit tests and runs the scenarios. On Windows it builds `hotfpc.exe` with `build.bat`,
+`.github/workflows/ci.yml` runs on pull requests and on pushes to main. On Linux x86-64,
+Linux arm64 (GitHub's `ubuntu-24.04-arm` runner) and macOS arm64 with fpc 3.2.2 it builds
+hotfpc, runs the unit tests and runs the scenarios. On Windows it builds `hotfpc.exe` with `build.bat`,
 runs the unit tests and runs the scenarios with `hotfpc.exe`.
 
 `.github/workflows/release.yml` builds the release binaries for a version tag

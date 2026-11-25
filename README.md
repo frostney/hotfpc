@@ -223,7 +223,7 @@ On Windows, fpc's linker always leaves out runtime routines the program never ca
 code that calls one of them needs a restart there. Linux and macOS link the whole unit.
 
 On Windows itself, CI runs the unit tests and the scenarios with `hotfpc.exe` and fpc 3.2.2
-on every push.
+on pull requests and on pushes to main.
 
 A swap usually takes 40 to 150 ms from save to running, and most of that is fpc compiling
 the unit. A unit with about 500 functions takes 0.5 to 1.1 s. For a Windows program, a save
