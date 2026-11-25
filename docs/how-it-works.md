@@ -84,10 +84,12 @@ symbols and `-FU`/`-o` to build into `.hot/`.
 4. For a Windows program whose changed units have a variable with an initial value or a
    typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
    `.hot/asm/`, which keeps units of its own. The driver counts each one's bytes there and
-   compares them with the running unit's: a COFF object doesn't show one that grows (see
+   compares them with the running program's: a COFF object doesn't show one that grows (see
    [Per system](#per-system)). The running program's sizes come from the same compile when
-   the program starts and when it starts over. It costs about as much as the first
-   compile.
+   the program starts and when it starts over, and a swap adds those of the variables it
+   brings. A variable keeps its first size until the program starts over, also when a save
+   removed it: the agent keeps it at its first address, so bringing it back larger needs a
+   restart. It costs about as much as the first compile.
 5. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
    next to the program. Like a linker, it works out which parts the program can reach.
    Type information that nothing uses is never read, because it may refer to things the

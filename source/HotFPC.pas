@@ -1736,7 +1736,10 @@ end;
   section's typed constant too. fpc's assembler output (-s -Aas) has every one of them as a
   label followed by its data, so for a Windows program hotfpc also compiles to assembler,
   into .hot/asm, and compares the sizes it counts there with the running program's. A size
-  is name=bytes, under the label's name (TC_$U_$$_CALLS). }
+  is name=bytes, under the label's name (TC_$U_$$_CALLS). The running program's sizes are
+  those it started with, and those of the labels that swaps added, each as the program first
+  had it: the agent keeps a variable at its first address, also when a save removed it and a
+  later one brings it back. }
 
 type
   TDataSizes = class
@@ -1753,6 +1756,9 @@ type
       bytes", for each name both have; a name only one of them has is no change. The caller
       frees the list. }
     class function Changes(const AOld, ANew: TStrings): TStringList;
+    { Adds to ASizes the sizes in AAdded of the names ASizes doesn't have; a name it has keeps
+      its size. }
+    class procedure Keep(const ASizes, AAdded: TStrings);
     { A label as the agent prints names: TC_$U_$$_CALLS is U.CALLS, and
       TC_$U$_$TICK$LONGINT$$LONGINT_$$_N is U.TICK(LONGINT):LONGINT.N. }
     class function Pretty(const AName: string): string;
@@ -1919,6 +1925,15 @@ begin
       Result.Add('variable ' + Pretty(Name) + ' changed size from ' + AOld.Values[Name] + ' to '
         + ANew.ValueFromIndex[I] + ' bytes');
   end;
+end;
+
+class procedure TDataSizes.Keep(const ASizes, AAdded: TStrings);
+var
+  I: Integer;
+begin
+  for I := 0 to AAdded.Count - 1 do
+    if ASizes.IndexOfName(AAdded.Names[I]) < 0 then
+      ASizes.Add(AAdded[I]);
 end;
 
 class function TDataSizes.Pretty(const AName: string): string;
@@ -2863,6 +2878,9 @@ type
     FCheckSizes: Boolean;
     { This save compiled the program to assembler. }
     FAssemblyWritten: Boolean;
+    { The sizes of the running program's initialised data (see "sizes of initialised data"),
+      name=bytes; nil while they are unknown. }
+    FSizes: TStringList;
     { The running program; nil while hotfpc waits for a save that builds to start it again. }
     FProgram: TProcess;
     { FProgram was started by a restart. }
@@ -2890,7 +2908,7 @@ type
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
     function HasInitialisedData(const AObjects: TStrings): Boolean;
-    procedure KeepAssembly(const AObjectName: string);
+    function ReadAssembly(const AObjects: TStrings): TStringList;
     function RefreshLiveAssembly(out AProblem: string): Boolean;
     procedure StartSizeCheck;
     procedure SayUncheckedSizes(const AProblem: string);
@@ -2946,6 +2964,7 @@ end;
 destructor TDriver.Destroy;
 begin
   FProgram.Free;
+  FSizes.Free;
   FDigests.Free;
   FBased.Free;
   FLayouts.Free;
@@ -3162,31 +3181,42 @@ begin
   Result := False;
 end;
 
-{ The running program's assembler of a unit (named by its object file) becomes the one this
-  save wrote, or none when this save wrote none: the unit then has no initialised data, or
-  its sizes are unknown. }
-procedure TDriver.KeepAssembly(const AObjectName: string);
+{ The sizes in this save's assembler of the units (named by their object files); none for a
+  unit with no assembler there. The caller frees the list. }
+function TDriver.ReadAssembly(const AObjects: TStrings): TStringList;
 var
-  Name: string;
+  I: Integer;
+  Text: string;
+  Sizes: TStringList;
 begin
-  Name := ChangeFileExt(AObjectName, AssemblerExtension);
-  if FAssemblyWritten and FileExists(FWorkspace.AssemblyDirectory + Name) then
-    CopyFileContents(FWorkspace.AssemblyDirectory + Name, FWorkspace.LiveDirectory + Name)
-  else
-    DeleteFile(FWorkspace.LiveDirectory + Name);
+  Result := TStringList.Create;
+  if not FAssemblyWritten then
+    Exit;
+  for I := 0 to AObjects.Count - 1 do
+    if ReadFileContents(FWorkspace.AssemblyDirectory + ChangeFileExt(AObjects[I], AssemblerExtension), Text) then
+    begin
+      Sizes := TDataSizes.Read(Text);
+      try
+        Result.AddStrings(Sizes);
+      finally
+        Sizes.Free;
+      end;
+    end;
 end;
 
-{ The assembler of the units the program was just started with, when one of them has
-  initialised data. After a compile to assembler, every unit's file in the assembly directory
-  is current: the units whose source changed since were made to recompile there too. }
+{ The sizes of the units the program was just started with become the running program's
+  (FSizes), from fpc's assembler when one of them has initialised data. After a compile to
+  assembler, every unit's file in the assembly directory is current: the units whose source
+  changed since were made to recompile there too. False when fpc failed; the sizes are then
+  unknown. }
 function TDriver.RefreshLiveAssembly(out AProblem: string): Boolean;
 var
   Objects: TStringList;
-  I: Integer;
   Seconds: Double;
 begin
   AProblem := '';
   Result := True;
+  FreeAndNil(FSizes);
   Objects := FWorkspace.UnitObjects;
   try
     if not FAssemblyWritten and HasInitialisedData(Objects) then
@@ -3196,8 +3226,8 @@ begin
       if GetEnvironmentVariable(DebugVariable) <> '' then
         WriteLn('[hot debug] assembler of the running program in ', FormatMilliseconds(Seconds), ' ms');
     end;
-    for I := 0 to Objects.Count - 1 do
-      KeepAssembly(Objects[I]);
+    if Result then
+      FSizes := ReadAssembly(Objects);
   finally
     Objects.Free;
   end;
@@ -3231,10 +3261,9 @@ function TDriver.SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds:
   var AInterfaceSeconds: Double): Boolean;
 var
   Start, Seconds: Double;
-  I, K: Integer;
-  Problem, Name: string;
-  Running, Compiled, Changes: TStringList;
-  Text: string;
+  K: Integer;
+  Problem: string;
+  Compiled, Changes: TStringList;
 begin
   Result := True;
   if not FCheckSizes or not HasInitialisedData(AChanged) then
@@ -3245,42 +3274,44 @@ begin
     WriteLn('[hot debug] assembler in ', FormatMilliseconds(Seconds), ' ms');
   if not FAssemblyWritten then
     SayUncheckedSizes(Problem);
-  if FAssemblyWritten then
-    for I := 0 to AChanged.Count - 1 do
-    begin
-      Name := ChangeFileExt(AChanged[I], AssemblerExtension);
-      if not ReadFileContents(FWorkspace.LiveDirectory + Name, Text) then
-        Continue;
-      Running := TDataSizes.Read(Text);
-      if ReadFileContents(FWorkspace.AssemblyDirectory + Name, Text) then
-        Compiled := TDataSizes.Read(Text)
-      else
-        Compiled := TStringList.Create;
-      Changes := TDataSizes.Changes(Running, Compiled);
-      try
-        if Changes.Count > 0 then
-        begin
-          Inc(FRefused);
-          for K := 0 to Changes.Count - 1 do
-            FReporter.Say('restart needed: ' + Changes[K] + ' (not applied; compile '
-              + FormatMilliseconds(ACompileSeconds) + ' ms)');
-          Exit(False);
-        end;
-      finally
-        Changes.Free;
-        Compiled.Free;
-        Running.Free;
+  if FAssemblyWritten and (FSizes <> nil) then
+  begin
+    Compiled := ReadAssembly(AChanged);
+    Changes := TDataSizes.Changes(FSizes, Compiled);
+    try
+      if Changes.Count > 0 then
+      begin
+        Inc(FRefused);
+        for K := 0 to Changes.Count - 1 do
+          FReporter.Say('restart needed: ' + Changes[K] + ' (not applied; compile '
+            + FormatMilliseconds(ACompileSeconds) + ' ms)');
+        Exit(False);
       end;
+    finally
+      Changes.Free;
+      Compiled.Free;
     end;
+  end;
   AInterfaceSeconds := AInterfaceSeconds + NowSeconds - Start;
 end;
 
-{ The swap is applied: the staged files become the running program's, and so do the layouts. }
+{ The swap is applied: the staged files become the running program's, and so do the layouts
+  and the sizes of the initialised data the new code adds. }
 procedure TDriver.Accept(const AChanged: TStrings; const AStage: string);
 var
   I: Integer;
   RecordName: string;
+  Added: TStringList;
 begin
+  if FCheckSizes and (FSizes <> nil) then
+  begin
+    Added := ReadAssembly(AChanged);
+    try
+      TDataSizes.Keep(FSizes, Added);
+    finally
+      Added.Free;
+    end;
+  end;
   for I := 0 to AChanged.Count - 1 do
   begin
     CopyFileContents(AStage + AChanged[I], FWorkspace.LiveDirectory + AChanged[I]);
@@ -3289,8 +3320,6 @@ begin
       CopyFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName);
     if FLayouts <> nil then
       FLayouts.Accept(RecordName);
-    if FCheckSizes then
-      KeepAssembly(AChanged[I]);
     if FBased.IndexOf(AChanged[I]) < 0 then
       FBased.Add(AChanged[I]);
   end;
@@ -5147,6 +5176,42 @@ begin
   end;
 end;
 
+{ The running program's sizes keep a variable that a save removed: the agent keeps it at its
+  first address, so a later save that brings it back larger needs a restart. }
+procedure TestKeepDataSizes;
+var
+  Running, Removed, Back, Changes: TStringList;
+begin
+  Running := TStringList.Create;
+  Removed := TStringList.Create;
+  Back := TStringList.Create;
+  try
+    Running.Add('TC_$P$MAIN_$$_COUNT=4');
+    Running.Add('TC_$P$MAIN_$$_CALLS=4');
+    Removed.Add('TC_$P$MAIN_$$_COUNT=4');
+    Removed.Add('TC_$P$MAIN_$$_ADDED=2');
+    TDataSizes.Keep(Running, Removed);
+    ExpectEqual(Running.CommaText, 'TC_$P$MAIN_$$_COUNT=4,TC_$P$MAIN_$$_CALLS=4,TC_$P$MAIN_$$_ADDED=2',
+      'a swap that removes CALLS and adds ADDED keeps CALLS and adds ADDED');
+    Back.Add('TC_$P$MAIN_$$_CALLS=8');
+    Back.Add('TC_$P$MAIN_$$_ADDED=4');
+    Changes := TDataSizes.Changes(Running, Back);
+    try
+      ExpectEqual(Changes.Text, 'variable MAIN.CALLS changed size from 4 to 8 bytes' + LineEnding
+        + 'variable MAIN.ADDED changed size from 2 to 4 bytes' + LineEnding,
+        'CALLS back with another size, and ADDED with another size, each need a restart');
+    finally
+      Changes.Free;
+    end;
+    TDataSizes.Keep(Running, Back);
+    ExpectEqual(Running.Values['TC_$P$MAIN_$$_CALLS'], '4', 'a size the program has is not replaced');
+  finally
+    Back.Free;
+    Removed.Free;
+    Running.Free;
+  end;
+end;
+
 procedure TestPrettyDataNames;
 begin
   ExpectEqual(TDataSizes.Pretty('TC_$P$MAIN_$$_CALLS'), 'MAIN.CALLS', 'the program''s variable');
@@ -5961,6 +6026,7 @@ begin
     TestReadDataSizes;
     TestStringBytes;
     TestDataSizeChanges;
+    TestKeepDataSizes;
     TestPrettyDataNames;
     TestHasInitialisedData;
     TestEncodeCommand;
