@@ -37,6 +37,11 @@ EXPECT = {
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
     "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
+    # a variable of the program that a save removes and the next brings back larger: the agent
+    # still has it at its first address, with its first size; back at that size, it swaps. In
+    # a unit, variables back with another type of the same size: the check of layouts keeps
+    # their first types
+    "readdvar": (2, 1, 0), "readdtype": (2, 1, 0),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -96,6 +101,12 @@ SAYS = {
     # the program starts with the units of the build it runs, without one a save left out
     "startunit": [r"v1: built in [\d.]+ ms, started in [\d.]+ ms, 2 units of its own",
                   r"restart needed: unit w is not part of the running program"],
+    "readdvar": [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes",
+                 r"  note: MAIN\.CALLS is back after a save removed it; it keeps its running value"],
+    "readdtype": [r"restart needed: u\.Hits: the declaration changed its layout or type",
+                  r"restart needed: u\.Calls: the declaration changed its layout or type",
+                  r"  note: U\.HITS is back after a save removed it; it keeps its running value",
+                  r"  note: U\.CALLS is back after a save removed it; it keeps its running value"],
 }
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,

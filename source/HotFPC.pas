@@ -1148,7 +1148,10 @@ type
       kept until Accept. The unit is named by its file, such as "foo.ppu". The caller frees the
       list. }
     function Differences(const APPUName: string): TStringList;
-    { The swap happened: the new layout of the unit is the running one. }
+    { The swap happened: the new layout of the unit is the running one. It keeps the
+      variables of the layout before it that the new one doesn't have: the program keeps
+      them, at their addresses, and a save that brings one back with another type needs a
+      restart. }
     procedure Accept(const APPUName: string);
     { The declarations (names as in a layout) that ANew has with other text than AOld. A
       declaration only one of them has is not a difference: adding one is a restart only
@@ -1963,12 +1966,18 @@ end;
 
 procedure TLayoutHistory.Accept(const APPUName: string);
 var
-  Pending, Live: Integer;
+  Pending, Live, I: Integer;
+  Old, Fresh: TLayout;
 begin
   Pending := FPending.IndexOf(APPUName);
   Live := FLive.IndexOf(APPUName);
   if (Pending >= 0) and (Live >= 0) then
   begin
+    Old := TLayout(FLive.Objects[Live]);
+    Fresh := TLayout(FPending.Objects[Pending]);
+    for I := 0 to Old.Count - 1 do
+      if StartsWith(Old.Names[I], VariablePrefix) and (Fresh.IndexOfName(Old.Names[I]) < 0) then
+        Fresh.Add(Old[I]);
     FLive.Objects[Live].Free;
     FLive.Objects[Live] := FPending.Objects[Pending];
     FPending.Delete(Pending);
@@ -5668,7 +5677,9 @@ end;
 { A unit with a record of two fields, a class that has one of them and an integer, a compiler
   type, and a variable. AFirst and ASecond name the record's fields; AType is the type id of
   the first. }
-function UnitJSON(const AFirst, ASecond: string; const AType: Integer; const AVariableType: Integer = 10): string;
+{ AWithVariable: whether the unit has its variable, Counter. }
+function UnitJSON(const AFirst, ASecond: string; const AType: Integer; const AVariableType: Integer = 10;
+  const AWithVariable: Boolean = True): string;
 begin
   Result :=
     '[{"Type":"unit","Name":"a","Units":["system"],"Interface":['
@@ -5680,9 +5691,11 @@ begin
     + '{"Type":"obj","Name":"TThing","Id":1,"SymId":7,"ObjType":"class","Ancestor":{"Unit":0,"Id":690},"Size":24,"Fields":['
     + '{"Type":"field","Name":"FCount","SymId":2,"VarType":{"Unit":0,"Id":10}},'
     + '{"Type":"field","Name":"FPoint","SymId":3,"VarType":{"Id":0}}]},'
-    + '{"Type":"rec","Name":"$vmtdef$TTHING","Id":2,"SymId":8,"Size":208,"Fields":[]},'
-    + '{"Type":"var","Name":"Counter","Id":3,"SymId":9,"VarType":{"Unit":0,"Id":' + IntToStr(AVariableType) + '}}'
-    + ']}]';
+    + '{"Type":"rec","Name":"$vmtdef$TTHING","Id":2,"SymId":8,"Size":208,"Fields":[]}';
+  if AWithVariable then
+    Result := Result + ',{"Type":"var","Name":"Counter","Id":3,"SymId":9,"VarType":{"Unit":0,"Id":'
+      + IntToStr(AVariableType) + '}}';
+  Result := Result + ']}]';
 end;
 
 { A unit with a variable of a type of another unit of the program, which numbers that type
@@ -6183,6 +6196,25 @@ begin
     Reader.RegisterText(Units + 'c.ppu', UnitText('X', 'Y', 9));
     Differing := History.Differences('c.ppu');
     ExpectEqual(Differing.CommaText, '"variable Calls"', 'a variable of the implementation section that changed its type');
+    Differing.Free;
+    { a variable that a swap removed keeps its type: the program keeps it }
+    Reader.Register(Units + 'a.ppu', UnitJSON('X', 'Y', 10, 10, False));
+    Differing := History.Differences('a.ppu');
+    ExpectEqual(Differing.Count, 0, 'a variable removed');
+    Differing.Free;
+    History.Accept('a.ppu');
+    Reader.Register(Units + 'a.ppu', UnitJSON('X', 'Y', 10, 11));
+    Differing := History.Differences('a.ppu');
+    ExpectEqual(Differing.CommaText, '"variable Counter"', 'the variable a swap removed, back with another type');
+    Differing.Free;
+    Reader.Register(Units + 'a.ppu', UnitJSON('X', 'Y', 10, 10));
+    Differing := History.Differences('a.ppu');
+    ExpectEqual(Differing.Count, 0, 'and back with its type');
+    Differing.Free;
+    History.Accept('a.ppu');
+    Reader.Register(Units + 'a.ppu', UnitJSON('X', 'Y', 10, 11));
+    Differing := History.Differences('a.ppu');
+    ExpectEqual(Differing.CommaText, '"variable Counter"', 'once back, it is compared as before');
     Differing.Free;
   finally
     History.Free;

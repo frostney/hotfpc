@@ -79,6 +79,7 @@ A swap can be followed by notes:
 | `note: the main block changed; the frame that is running keeps its old code` | The program's main block is already running and keeps its old code. Keep the code you change in routines and units. |
 | `note: <name> is gone from the source; its old code stays for callers that were not recompiled` | A function was removed or its signature changed. Code that still calls it keeps calling the old one. At most four are named. |
 | `note: ... and <n> more functions gone from the source` | Follows the fourth. |
+| `note: <name> is back after a save removed it; it keeps its running value` | A variable that an earlier save removed is back, at the size it had. The program kept it at its address: the new code uses it, with the value it had then, not its initial value. |
 | `note: <name> exists in the program but not in the version of <unit> the agent knows; kept without a check` | The new code uses a variable of the program that the agent couldn't compare with an earlier version. It is bound to the program's and keeps its value. |
 
 Names of symbols in notes and in the agent's reasons below are the compiler's: upper case,

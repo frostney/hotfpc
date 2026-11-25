@@ -3019,6 +3019,7 @@ type
 var
   Registry: TMap;
   Units: TMap;      // unit name -> PObjectFile, the live version
+  GoneData: TMap;   // name -> PObjectSymbol: named data a save removed, as the last version that had it
   Veneers: TMap;    // target address -> veneer, for calls out of reach of bl
   Indirects: TMap;  // X$indirect the program does not have -> the pointer to X made for it
   PendingSymbols: array of PRegistrySymbol;
@@ -3176,6 +3177,38 @@ end;
 type
   TCounts = record Functions, Changed, Added, Kept, NewData, Notes: LongInt; end;
 
+// The restart for data of the program whose new version has another size than its storage.
+procedure RestartForSize(AObjectFile: PObjectFile; AOld, ANew: PObjectSymbol);
+begin
+  if StartsWith(ANew^.Name, PrefixVariable) or StartsWith(ANew^.Name, PrefixTypedConstant) then
+    Restart('variable ' + Pretty(ANew^.Name) + ' changed size ' + SizeChange(AOld, ANew))
+  else if StartsWith(ANew^.Name, PrefixThreadVarList) then Restart('the thread variables of unit ' + AObjectFile^.UnitName + ' changed')
+  else Restart(Pretty(ANew^.Name) + ' changed size ' + SizeChange(AOld, ANew));
+end;
+
+// Keeps a copy of each named datum of AOld, the version a load replaces, that ANew no longer
+// has: the program keeps its storage, at its address and size, and a later version that
+// brings it back is bound to it.
+procedure KeepGoneData(AOld, ANew: PObjectFile);
+var
+  I: SizeInt;
+  Symbol, Gone: PObjectSymbol;
+begin
+  for I := 0 to High(AOld^.Symbols) do
+  begin
+    Symbol := @AOld^.Symbols[I];
+    if not Symbol^.Defined or not Symbol^.External or (Symbol^.Kind <> KindData) or IsAnonymous(Symbol^.Name)
+      or IsUnwindSection(AOld^.Sections[Symbol^.Section].Name) or (MapGet(ANew^.ByName, Symbol^.Name) <> nil) then Continue;
+    Gone := MapGet(GoneData, Symbol^.Name);
+    if Gone = nil then
+    begin
+      New(Gone);
+      MapPut(GoneData, Symbol^.Name, Gone);
+    end;
+    Gone^ := Symbol^;
+  end;
+end;
+
 // Decide, for every named symbol the object defines, which address it has from now on.
 procedure BindSymbols(AObjectFile: PObjectFile; var ACounts: TCounts);
 var
@@ -3191,6 +3224,7 @@ var
   NewInstanceSize, OldInstanceSize: Int64;
   Removed: LongInt;
   HostSymbol: PHostSymbol;
+  GoneSymbol: PObjectSymbol;
   MainBlockNoted: Boolean;
 begin
   Previous := AObjectFile^.Previous;
@@ -3302,7 +3336,20 @@ begin
     Inc(ACounts.Kept);
     if PreviousSymbol = nil then
     begin
-      Say('note ' + Pretty(Symbol^.Name) + ' exists in the program but not in the version of ' + AObjectFile^.UnitName + ' the agent knows; kept without a check');
+      // The program keeps the storage of data a save removed: what comes back under its name
+      // must fit it.
+      GoneSymbol := MapGet(GoneData, Symbol^.Name);
+      if (GoneSymbol <> nil) and SizeChanged(GoneSymbol, Symbol) then
+      begin
+        RestartForSize(AObjectFile, GoneSymbol, Symbol);
+        Continue;
+      end;
+      // Of a variable that comes back, its size is all there is to compare; a table, such as
+      // a virtual method table, would need its contents compared, which the agent didn't keep.
+      if (GoneSymbol <> nil) and (StartsWith(Symbol^.Name, PrefixVariable) or StartsWith(Symbol^.Name, PrefixTypedConstant)) then
+        Say('note ' + Pretty(Symbol^.Name) + ' is back after a save removed it; it keeps its running value')
+      else
+        Say('note ' + Pretty(Symbol^.Name) + ' exists in the program but not in the version of ' + AObjectFile^.UnitName + ' the agent knows; kept without a check');
       Inc(ACounts.Notes);
       Continue;
     end;
@@ -3339,10 +3386,7 @@ begin
     end;
     if SizeChanged(PreviousSymbol, Symbol) then
     begin
-      if StartsWith(Name, PrefixVariable) or StartsWith(Name, PrefixTypedConstant) then
-        Restart('variable ' + Pretty(Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol))
-      else if StartsWith(Name, PrefixThreadVarList) then Restart('the thread variables of unit ' + AObjectFile^.UnitName + ' changed')
-      else Restart(Pretty(Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol));
+      RestartForSize(AObjectFile, PreviousSymbol, Symbol);
       Continue;
     end;
     if Contains(Name, IndirectSuffix) then Continue;
@@ -5257,6 +5301,7 @@ begin
       OldObject := ObjectFiles[I]^.Previous;
       ObjectFiles[I]^.Previous := nil;
       MapPut(Units, ObjectFiles[I]^.UnitName, ObjectFiles[I]);
+      if OldObject <> nil then KeepGoneData(OldObject, ObjectFiles[I]);
       FreeObjectFile(OldObject);
     end;
     Say('stat units=' + SignedToString(Length(ObjectFiles)) + ' functions=' + SignedToString(Counts.Functions) + ' changed=' + SignedToString(Counts.Changed) + ' added=' + SignedToString(Counts.Added)
