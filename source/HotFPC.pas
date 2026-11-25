@@ -1939,6 +1939,10 @@ begin
   begin
     if Copy(Text, Index, 4) = '_$$_' then
     begin
+      { the routine's parameters end where the constant's name begins }
+      if Open then
+        Result := Result + ')';
+      Open := False;
       Result := Result + '.';
       Inc(Index, 4);
     end
@@ -5151,6 +5155,10 @@ begin
     'a routine''s');
   ExpectEqual(TDataSizes.Pretty('TC_$U$_$TICK$LONGINT$$LONGINT_$$_N'), 'U.TICK(LONGINT):LONGINT.N',
     'a routine''s with a parameter');
+  ExpectEqual(TDataSizes.Pretty('TC_$U$_$TICK$LONGINT_$$_CALLS'), 'U.TICK(LONGINT).CALLS',
+    'a procedure''s with a parameter');
+  ExpectEqual(TDataSizes.Pretty('TC_$U$_$MOVE$LONGINT$SMALLINT_$$_STEPS'), 'U.MOVE(LONGINT,SMALLINT).STEPS',
+    'a procedure''s with two parameters');
 end;
 
 procedure TestHasInitialisedData;
