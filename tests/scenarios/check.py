@@ -47,6 +47,9 @@ EXPECT = {
     # the third, and the grown variable needs a restart, once or twice as hotfpc compiles it
     # alone or with the save after it
     "startcap": (0, (1, 2), 0),
+    # startcap's saves, with no assembler for the fourth build: the check stays on, and the
+    # grown variable needs a restart, once or twice
+    "startnoasm": (0, (1, 2), 0),
     # a unit the program no longer uses after a save during the first build, then uses again:
     # a restart, for a unit the running program does not have
     "startunit": (0, 1, 0),
@@ -72,7 +75,7 @@ PRINTS = {
     # the program runs the save made during the start from its first tick
     "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
     "newconst": ["n 1 limit 7", "n 1 limit 8"],
-    "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"],
+    "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"], "startnoasm": ["n 1 main four 1"],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code
@@ -107,6 +110,11 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # a save whose sizes hotfpc cannot check, because fpc did not write the assembler,
     # needs a restart (progvar, second step)
     EXPECT["progvar"] = (1, 2, 0)
+    # the reason a Windows program gives, so that the sizes it is checked against are the
+    # ones the case is about: the program's sizes when it started are unknown, and the check
+    # stays on (startnoasm)
+    SAYS["startnoasm"] = [r".* did not compile the program to assembler \(.*\): until the program starts over, a save that needs the sizes of variables with initial values needs a restart",
+                          r"restart needed: the sizes of variables with initial values are unknown: .* did not compile the program to assembler"]
 # On arm64 a redirect is one 4-byte instruction, which every routine has room for. A COFF
 # object pads the section of each of fpc's routines to 16 bytes, so on Windows the jump
 # fits too. There, shortentry is swapped.

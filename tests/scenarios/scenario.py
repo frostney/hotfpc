@@ -958,6 +958,24 @@ case("startcap", {
     ("another text", [("main.pas", "' main four", "' main five")]),
 ])
 
+# ---------------------------------------------------------------------------- the build the program starts from without assembler
+# startcap's saves, but fpc cannot write the program's assembler for the fourth build, the one
+# the program starts from, used as it is. On Windows the program's sizes are then unknown, and
+# the check stays on: every save that needs them, such as the fourth once the program runs,
+# needs a restart
+case("startnoasm", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, while hotfpc builds the program to start it",
+     [("main.pas", "' main one", "' main two")], AT_START),
+    ("another text, while hotfpc builds it again", [("main.pas", "' main two", "' main three")], AT_START),
+    ("another text, while hotfpc builds it a third time", [("main.pas", "' main three", "' main four")], AT_START),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0, while hotfpc builds it a fourth time, uses that build and fpc cannot write its assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")], AT_START),
+    ("another text, while fpc can write the program's assembler again",
+     [(".hot/asm/main.s", None, None), ("main.pas", "' main four", "' main five")]),
+])
+
 # ---------------------------------------------------------------------------- a unit left out during the start
 # progvar's program, which also uses w, a unit with an initialization section. A save during
 # the first build leaves w out, so the program starts without it: when main uses it again, w

@@ -123,10 +123,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    cover a unit the link adds to the program. A swap adds
    the sizes of the variables it brings. A variable keeps its first size until the program
    starts over, also when a save removed it: the agent keeps it at its first address, so
-   bringing it back larger needs a restart. When fpc can't write the assembler at the start,
-   the check is off for the run and hotfpc says so. When it can't for a save, or couldn't
-   when the program started over, that save needs a restart: a size it can't see may have
-   grown. The object file names the data the assembler must give a size for, a section of
+   bringing it back larger needs a restart. When fpc can't write the assembler for a save,
+   or couldn't when the program started or started over, that save needs a restart: a size
+   it can't see may have grown. At the start hotfpc says so; the check stays on, with the
+   program's sizes unknown until a restart. The object file names the data the assembler must give a size for, a section of
    its own for each: one it names that the assembler has no size for, for this save or when
    the program started, needs a restart too, and so does a save when an object file can't
    be read. It costs about as much as the first compile.

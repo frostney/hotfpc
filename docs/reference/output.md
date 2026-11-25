@@ -105,7 +105,7 @@ restart needed: the sizes of variables with initial values are unknown: <why> (n
 | `<unit>.<declaration>: the declaration changed its layout or type` | A variable's type, or a record's or class's fields, in a unit, by ppudump: also when the size stays the same (`Integer` to `Single`, two fields swapped). The program file has no unit file for ppudump, so there only a change of size is found ([limits](limits.md)). | `globals`, `records`, `hidden`, `restart` |
 | `unit <unit> is not part of the running program` | The program now uses a unit of its own that it didn't use when it started, or a unit was renamed. | `newunit`, `rename`, `linkfail` |
 | `variable <name> changed size from <n> to <n> bytes` | A variable, a variable with an initial value or a typed constant changed size. | `typedconst`, `progvar`, `localconst` |
-| `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (<problem>)` | A Windows program: fpc didn't write the assembler that shows the sizes of the changed units' variables with initial values and typed constants, for this save or when the program last started over, so one of them may have grown. | `progvar` on Windows |
+| `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (<problem>)` | A Windows program: fpc didn't write the assembler that shows the sizes of the changed units' variables with initial values and typed constants, for this save, or when the program started or last started over, so one of them may have grown. | `progvar`, `startnoasm` on Windows |
 | `the sizes of variables with initial values are unknown: the sources changed while fpc compiled them` | A Windows program: the files kept changing during three compiles in a row, so the fourth's object files and its compile to assembler may come from different sources. The same after the files kept changing during the builds the program started from: until it starts over, every save that needs the sizes needs a restart. | `startcap` on Windows |
 | `the sizes of variables with initial values are unknown: the times of the sources may not show a save while fpc compiled them` | A Windows program: a save that came and was put back during the compiles, at the same size, would leave the files' times as they were, as for a file written less than 20 ms before the compile, or less than two seconds before on a file system that keeps whole seconds. Its object files and its compile to assembler may then come from different sources. | |
 | `the sizes of variables with initial values are unknown: fpc's assembler has no size for <name>` | A Windows program: the object file of a changed unit defines a variable with an initial value or a typed constant that the assembler fpc wrote has no size for, such as when fpc wrote no assembler for that unit in this compile (hotfpc removes the program's and each changed unit's assembler before it) or wrote its data with a directive hotfpc doesn't count. An unknown size is never taken as the same. | |
@@ -273,14 +273,16 @@ name a place in a source file, or fpc's closing lines when there are none. It en
 ## Windows programs: the check of sizes
 
 ```text
-<fpc> did not compile the program to assembler (<problem>): the check of sizes of variables with initial values is off
+<fpc> did not compile the program to assembler (<problem>): until the program starts over, a save that needs the sizes of variables with initial values needs a restart
 ```
 
 For a Windows program hotfpc compiles to assembler as well, to see the sizes of variables
 with initial values and typed constants ([Windows programs](../guides/windows.md)). The
-line comes at the start, when that compile failed: the check is off for the run. When it
-fails later, for a save or when the program started over, a save whose sizes hotfpc can't
-check needs a restart ([Restart needed](#restart-needed)).
+line comes at the start, when that compile failed for the build the program starts from.
+The check stays on: the program's sizes are unknown, so every save whose sizes need
+checking needs a restart until one starts the program over with its sizes known, as it
+does when that compile fails for a save or when the program started over
+([Restart needed](#restart-needed)).
 
 ## While it runs
 

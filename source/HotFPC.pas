@@ -3471,14 +3471,13 @@ begin
     (ForgetNewUnits) removed every object file of a build that was set aside, such as one of
     a unit the program no longer uses }
   CopyObjectsToLive;
+  { the check stays on: with the sizes unknown, every save that needs them needs a restart,
+    until one establishes them }
   if not SizesKnown then
-  begin
-    FCheckSizes := False;
-    FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + Problem
-      + '): the check of sizes of variables with initial values is off');
-  end;
+    FReporter.Say(NotAssembled(Problem) + ': until the program starts over, a save that needs the sizes of '
+      + 'variables with initial values needs a restart');
   if FCheckSizes then
-    KeepLiveSizes(True, '');
+    KeepLiveSizes(SizesKnown, Problem);
 end;
 
 procedure TDriver.CopyObjectsToLive;

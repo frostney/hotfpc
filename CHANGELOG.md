@@ -73,9 +73,9 @@
   compares the sizes there. The running program's sizes come from such a compile after the
   program is built or linked to start over, checked with its build or link against saves
   that land meanwhile, so they are the sizes of the sources the program was built from,
-  also of a unit the restart adds. A save whose
-  sizes it can't compare, because fpc didn't write the assembler or the assembler has no
-  size for a variable the object file defines, needs a restart too.
+  also of a unit the restart adds. A save whose sizes it can't compare, because fpc didn't
+  write the assembler for it or for the build the program started from, or the assembler
+  has no size for a variable the object file defines, needs a restart too.
 - Linux arm64: the releases have a `linux-arm64` archive, and CI builds hotfpc, runs the
   unit tests and runs the scenarios on GitHub's arm64 runner.
 - On Linux arm64, new code now uses the variables of its unit's implementation section
