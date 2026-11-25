@@ -36,18 +36,35 @@ The example was written against raylib 6.2.
 
 ## Run it
 
+On macOS, with raylib from Homebrew:
+
 ```sh
 cd examples/raylib
-hotfpc -Fl/opt/homebrew/lib game.pas                       # macOS with Homebrew
-hotfpc -Fl$RAYLIB/lib -k-rpath -k$RAYLIB/lib game.pas      # an unpacked release, macOS or Linux
-hotfpc -Twin64 -Px86_64 game.pas                           # Windows, with raylib.dll here
+hotfpc -Fl/opt/homebrew/lib game.pas
 ```
 
-`$RAYLIB` is where you unpacked the release. `-Fl` tells fpc where the library is, and
-`-k-rpath` tells the program where to find it when it starts. hotfpc passes both to fpc,
-and builds the agent with them too. On Windows, `-Twin64 -Px86_64` makes the installer's
-fpc build a 64-bit program, which hotfpc needs and the 64-bit `raylib.dll` loads into
-([Windows programs](windows.md)).
+With a release unpacked on macOS or Linux, name the directory you unpacked it into:
+
+```sh
+cd examples/raylib
+RAYLIB="$HOME/raylib-6.2_linux_amd64"
+hotfpc "-Fl$RAYLIB/lib" -k-rpath "-k$RAYLIB/lib" game.pas
+```
+
+`-Fl` tells fpc where the library is, and `-k-rpath` tells the program where to find it when
+it starts. hotfpc passes both to fpc, and builds the agent with them too. fpc hands a `-k`
+option to the linker split at its spaces, so unpack the release into a directory whose
+path has none.
+
+On Windows, with `raylib.dll` in `examples\raylib`, in `cmd.exe` or PowerShell:
+
+```bat
+cd examples\raylib
+hotfpc -Twin64 -Px86_64 game.pas
+```
+
+`-Twin64 -Px86_64` makes the installer's fpc build a 64-bit program, which hotfpc needs and
+the 64-bit `raylib.dll` loads into ([Windows programs](windows.md)).
 
 Click to drop a ball, press space to make them all jump, and r to start again.
 

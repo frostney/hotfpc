@@ -10,14 +10,8 @@ there are no bindings to install. If you want another function, copy its line fr
 
 ## Run it
 
-With raylib installed ([how to get it](../../docs/guides/raylib.md#get-raylib)):
-
-```sh
-cd examples/raylib
-hotfpc -Fl/opt/homebrew/lib game.pas                       # macOS with Homebrew
-hotfpc -Fl$RAYLIB/lib -k-rpath -k$RAYLIB/lib game.pas      # an unpacked release, macOS or Linux
-hotfpc -Twin64 -Px86_64 game.pas                           # Windows, with raylib.dll here
-```
+Get raylib and run `game.pas` under hotfpc as
+[With raylib](../../docs/guides/raylib.md#run-it) shows for macOS, Linux and Windows.
 
 Click to drop a ball, press space to make them all jump, and r to start again. Then change
 `Gravity`, the colours or the shapes in `scene.pas` and save: the balls carry on from where
