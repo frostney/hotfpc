@@ -67,6 +67,7 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    "nestedframe": ["last 42 v1"],
     "procvars": [re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V2 \d+, same address: TRUE TRUE"),
                  re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V3 \d+, same address: TRUE TRUE")],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
@@ -100,10 +101,10 @@ UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n *
 SWAPPED["procvars"] = lambda n: "PLAIN V2 %d, METHOD V2 %d, HIDDEN V4 %d, same address: TRUE TRUE" % (n, n, n)
 UNSWAPPED["procvars"] = lambda n: re.compile(r"PLAIN V2 %d, METHOD V2 %d, HIDDEN V[34] %d, same address: TRUE (TRUE|FALSE)" % (n, n, n))
 # nestedframe: the frame of Run that runs across the swap calls the old Show once more, with
-# Run's values (the new Show would read that frame with the new layout), and the fresh frames
-# of the new Run after it call the new Show
+# its own values (PRINTS: the new Show would read that frame with the new layout), and the
+# fresh frames of the new Run after it call the new Show
 SWAPPED["nestedframe"] = lambda n: "base 42 v2"
-UNSWAPPED["nestedframe"] = lambda n: "base 42 v1"
+UNSWAPPED["nestedframe"] = lambda n: "last 42 v1"
 # case: notes every swap of the case gives: these change the main block
 NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")

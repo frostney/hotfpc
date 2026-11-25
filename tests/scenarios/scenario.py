@@ -609,9 +609,10 @@ end.
 # Run's frame runs across the swap, and calls its nested Show, which reads Run's locals. The
 # save puts locals around them, so the new Show would read the old frame in the wrong
 # places: the old frame must keep the old Show. The save also gives Done the initial value
-# True, which the swap applies, so the old frame shows once more and returns; the main block
-# then calls the new Run, whose fresh frame calls the new Show. The main block keeps running
-# across the swap too, and ends with its old frame's finally.
+# True, which the swap applies: the old frame, which sees Done only after the swap, sets
+# Text to 'last', shows once more and returns, and the main block then calls the new Run,
+# whose fresh frame calls the new Show. The main block keeps running across the swap too,
+# and ends with its old frame's finally.
 case("nestedframe", {
     "main.pas": r"""program main;
 {$mode objfpc}{$H+}
@@ -641,9 +642,16 @@ var
   end;
 begin
   Base := 42; Text := 'base';
-  while not Done and not FileExists(AStop) do
+  while not FileExists(AStop) do
   begin
-    Inc(Ticks); Sleep(300); Show;
+    Sleep(300);
+    if Done then Break;
+    Inc(Ticks); Show;
+  end;
+  if Done then
+  begin
+    Text := 'last';
+    Inc(Ticks); Show;
   end;
 end;
 end.
@@ -652,7 +660,7 @@ end.
      [("u.pas", "var\n  Base: Integer;\n  Text: string;", "var\n  Before: array[0..31] of Integer;\n  Base: Integer;\n  Text: string;\n  After: array[0..31] of Integer;"),
       ("u.pas", "' v1'", "' v2'"),
       ("u.pas", "Done: Boolean = False;", "Done: Boolean = True;"),
-      ("u.pas", "while not Done and not FileExists(AStop) do\n  begin\n    Inc(Ticks); Sleep(300); Show;", "while not FileExists(AStop) do\n  begin\n    Inc(Ticks); Sleep(300); if Done then Show;"),
+      ("u.pas", "    if Done then Break;\n    Inc(Ticks); Show;\n  end;\n  if Done then\n  begin\n    Text := 'last';\n    Inc(Ticks); Show;\n  end;", "    Inc(Ticks);\n    if Done then Show;\n  end;"),
       ("main.pas", "begin\n  while", "begin\n  if ParamStr(3) <> '' then WriteLn('more ' + IntToStr(Length(ParamStr(0))) + ' ' + ParamStr(1) + ' ' + ParamStr(2));\n  while")]),
 ])
 

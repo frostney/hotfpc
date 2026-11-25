@@ -3325,6 +3325,8 @@ begin
       Symbol^.ResolvedAddress := NewAddress;
       Symbol^.CallAddress := NewAddress;
       Symbol^.Resolved := True;
+      if Symbol^.Size = 0 then Continue;
+      Inc(ACounts.Functions);
       if PreviousSymbol = nil then
       begin
         if Previous <> nil then Inc(ACounts.Added);
