@@ -82,8 +82,9 @@ many files it watches.
 | 2 | No program was named: hotfpc printed its usage. |
 
 The closing summary, and the line of a program that ended before its agent connected,
-print `-1` as the exit code of a program that a signal ended, and hotfpc then ends with 255
-on Linux and macOS.
+print `-1` as the exit code of a program that a signal ended. When that program's end ends
+hotfpc, hotfpc ends with 255 on Linux and macOS. A program a restart started that ends
+before its agent connects prints the same line, and hotfpc keeps watching.
 
 ## The `.hot/` directory
 
