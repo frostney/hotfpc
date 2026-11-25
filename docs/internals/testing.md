@@ -8,7 +8,7 @@ edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 39 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 40 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 python3 tests/agent/check.py                   # the agent on its own
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
@@ -16,7 +16,7 @@ HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 
 ## When a change is done
 
-A change is done when the unit tests pass, `check.py` prints "39 of 39 cases as expected"
+A change is done when the unit tests pass, `check.py` prints "40 of 40 cases as expected"
 and `tests/agent/check.py` passes, on every system the change can affect: macOS arm64,
 macOS x86-64, Linux x86-64, Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64
 units, under Wine or on Windows). Changes to the agent or to the checks of layouts and
@@ -53,7 +53,7 @@ for a Windows target on another system, in `tests/agent/work/`.
 
 ## The scenarios
 
-`tests/scenarios/scenario.py` holds 39 cases. Each is a small program, `main.pas` and its
+`tests/scenarios/scenario.py` holds 40 cases. Each is a small program, `main.pas` and its
 units, and a list of steps: the edits the script saves into the files while the program
 runs. The script saves a step once hotfpc has reported its outcome for the step before (a
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
@@ -135,7 +135,7 @@ case("records", {
 
 Each step is a description and a list of `(file, old text, new text)` replacements, saved
 together. A description that starts with `+` is saved 0.12 s after the step before it, and
-a third element, `WHILE_COMPILING` or `AT_START`, times the save as above. `restart=True` lets hotfpc start the program over. Then add the case's expected numbers to
+a third element, `WHILE_COMPILING` or `AT_START`, times the save as above. `restart=True` lets hotfpc start the program over, and `env={...}` adds variables to hotfpc's environment, which the program inherits, such as one of the agent's test variables ([environment](../reference/environment.md#read-by-the-agent-for-testing)). Then add the case's expected numbers to
 `EXPECT` in `check.py`, from a run on every system the case can differ on, and say in a
 comment why where it isn't obvious.
 

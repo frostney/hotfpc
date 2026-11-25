@@ -56,12 +56,13 @@ EMPTIED_FIRST = "emptied first"
 AT_START = "at the start"
 
 
-def case(name, files, steps, opts=(), restart=False):
+def case(name, files, steps, opts=(), restart=False, env=None):
     """steps: (description, edits) or (description, edits, WHILE_COMPILING, EMPTIED_FIRST or AT_START), or
     (description, edits, AT_START, EMPTIED_FIRST). restart: the driver
     starts the program over when an edit needs a restart; the other cases pass --no-restart, so
-    that the program they check keeps running."""
-    CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
+    that the program they check keeps running. env: variables to add to the driver's
+    environment, which the program inherits, such as one of the agent's test variables."""
+    CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)), dict(env or {}))
 
 
 # ---------------------------------------------------------------------------- globals
@@ -919,6 +920,30 @@ end.
     ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
 ])
 
+# ---------------------------------------------------------------------------- an initial value written during the load
+# Speed still holds its old initial value when the agent binds the save, and HOT_TEST_DATA_WRITE
+# writes it after that check and before the commit, as a thread of the program could while the
+# swap loads: the commit, with the threads stopped, finds it written, so Speed keeps the value
+# the program has, 6, and the note says so.
+case("initrace", {
+    "main.pas": MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+var
+  Speed: Integer = 5;
+function Tick(n: Integer): string;
+begin
+  Result := Format('speed %d', [Speed]);
+end;
+end.
+"""}, [
+    ("Speed = 5 becomes Speed = 50, and the variable is written during the load", [("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;")]),
+], env={"HOT_TEST_DATA_WRITE": "1"})
+
 # ---------------------------------------------------------------------------- a typed constant
 # like a variable with an initial value, but fpc 3.2 leaves an implementation section's typed
 # constant out of the unit file
@@ -1537,7 +1562,7 @@ MAX_TICKS = 1000
 
 
 def run(name):
-    files, steps, opts = CASES[name]
+    files, steps, opts, env = CASES[name]
     work = os.path.join(HERE, "work", name)
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
@@ -1559,7 +1584,8 @@ def run(name):
 
     print("=== %s" % name, flush=True)
     p = subprocess.Popen(driver_cmd() + list(opts) + [os.path.join(work, "main.pas"), "--", str(MAX_TICKS), stop],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                         env=dict(os.environ, **env))
     ended = threading.Event()
 
     def pump():

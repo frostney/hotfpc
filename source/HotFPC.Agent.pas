@@ -3132,7 +3132,9 @@ type
   end;
   TStore = record Destination: PQWord; Value: QWord; end;
   TVMTUpdate = record ObjectFile: PObjectFile; Symbol: PObjectSymbol; OldAddress: QWord; end;
-  TDataCopy = record Destination: QWord; Source: PByte; Size: QWord; end;
+  // A new initial value to copy in at the commit, while the variable still holds Expected,
+  // the old one; Taken says whether it was.
+  TDataCopy = record Destination: QWord; Source, Expected: PByte; Size: QWord; Name: AnsiString; Taken: Boolean; end;
 var
   Registry: TMap;
   Units: TMap;      // unit name -> PObjectFile, the live version
@@ -3152,6 +3154,7 @@ var
   Poisoned: Boolean;
   PatchedCount: LongInt;
   SuspendThreads: Boolean = True;
+  TestDataWrite: Boolean = False;   // HOT_TEST_DATA_WRITE: see the commit
 
 procedure AddPatch(const APatch: TPatch);
 begin
@@ -3540,6 +3543,8 @@ begin
     begin
       // An initialised variable or typed constant whose initial value was edited. If the
       // running value is still the old initial value, nothing has written it: take the new one.
+      // A thread can write it while the swap loads, so the commit compares again, with the
+      // threads stopped, and the note says what it found.
       NewBytes := SymbolBytes(AObjectFile, Symbol);
       OldBytes := SymbolBytes(Previous, PreviousSymbol);
       if (NewBytes <> nil) and (OldBytes <> nil) and not HasRelocations(AObjectFile, Symbol) and not HasRelocations(Previous, PreviousSymbol) and (CompareByte(PByte(PtrUInt(ExistingAddress))^, OldBytes^, Symbol^.Size) = 0) then
@@ -3547,9 +3552,11 @@ begin
         if DataCopyCount = Length(DataCopies) then SetLength(DataCopies, ListGrowthSmall + 2 * Length(DataCopies));
         DataCopies[DataCopyCount].Destination := ExistingAddress;
         DataCopies[DataCopyCount].Source := NewBytes;
+        DataCopies[DataCopyCount].Expected := OldBytes;
         DataCopies[DataCopyCount].Size := Symbol^.Size;
+        DataCopies[DataCopyCount].Name := Name;
+        DataCopies[DataCopyCount].Taken := False;
         Inc(DataCopyCount);
-        Say('note ' + Pretty(Name) + ' still had its initial value; set to the new one');
       end
       else Say('note the initial value of ' + Pretty(Name) + ' changed; the running value is kept');
       Inc(ACounts.Notes);
@@ -5717,6 +5724,10 @@ begin
     end;
     PatchedCount := 0;
     Cleared := False;
+    // Test only: HOT_TEST_DATA_WRITE writes each variable about to get its new initial value
+    // here, after the check and before the threads stop, as a thread of the program could.
+    if TestDataWrite then
+      for I := 0 to DataCopyCount - 1 do Inc(PByte(PtrUInt(DataCopies[I].Destination))^);
     // A thread can be about to resume inside an entry without being there: a signal or an
     // exception that interrupted it there saved where in its handler's frame. While the
     // handler runs, the commit waits; one that keeps running makes the save a restart.
@@ -5743,7 +5754,11 @@ begin
     if Applied then
     begin
       for I := 0 to StoreCount - 1 do InterLockedExchange64(PInt64(Stores[I].Destination)^, Int64(Stores[I].Value));
-      for I := 0 to DataCopyCount - 1 do Move(DataCopies[I].Source^, PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Size);
+      for I := 0 to DataCopyCount - 1 do
+      begin
+        DataCopies[I].Taken := CompareByte(PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Expected^, DataCopies[I].Size) = 0;
+        if DataCopies[I].Taken then Move(DataCopies[I].Source^, PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Size);
+      end;
     end;
     WorldStart;
     if not Cleared and (StopFailure = '') and (ResumeHit >= 0) then
@@ -5791,6 +5806,9 @@ begin
       MapPut(Units, ObjectFiles[I]^.UnitName, ObjectFiles[I]);
       FreeObjectFile(OldObject);
     end;
+    for I := 0 to DataCopyCount - 1 do
+      if DataCopies[I].Taken then Say('note ' + Pretty(DataCopies[I].Name) + ' still had its initial value; set to the new one')
+      else Say('note the initial value of ' + Pretty(DataCopies[I].Name) + ' changed; the running value is kept');
     Say('stat units=' + SignedToString(Length(ObjectFiles)) + ' functions=' + SignedToString(Counts.Functions) + ' changed=' + SignedToString(Counts.Changed) + ' added=' + SignedToString(Counts.Added)
       + ' redirected=' + SignedToString(RedirectCount) + ' kept=' + SignedToString(Counts.Kept) + ' newdata=' + SignedToString(Counts.NewData) + ' vmtwords=' + SignedToString(VMTWords) + ' bytes=' + UnsignedToString(Bytes));
     Say('time parse=' + FloatToString(ParsedTime - StartTime) + ' place=' + FloatToString(PlacedTime - ParsedTime) + ' commit=' + FloatToString(CommittedTime - PlacedTime) + ' total=' + FloatToString(CommittedTime - StartTime) + ' hostsyms=' + FloatToString(HostMilliseconds));
@@ -6032,6 +6050,7 @@ begin
   if Count > 0 then Move(Value[1], AgentToken[0], Count);
   AgentToken[Count] := #0;
   if TryGetEnvironmentVariable('HOT_NOSUSPEND', Value) then SuspendThreads := False;
+  if TryGetEnvironmentVariable('HOT_TEST_DATA_WRITE', Value) then TestDataWrite := True;
 {$if defined(darwin) and defined(cpux86_64)}
   MainThread := MachThreadSelf;   // a send right, kept: the name the thread lists have for it
 {$endif}

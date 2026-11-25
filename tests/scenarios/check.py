@@ -36,7 +36,7 @@ EXPECT = {
     # a variable with an initial value and a typed constant that grow inside the 16 bytes fpc
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
-    "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
+    "initvar": (1, 1, 0), "initrace": (1, 0, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -67,6 +67,7 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    "initrace": ["speed 6"],
     # Speed, a variable of the implementation section that nothing has written, takes its
     # new initial value: on Windows with fpc 3.2 the agent knows it only by its section
     "globals": [re.compile(r"TOTAL \d+ hidden \d+ speed 50 extra \d+")],
@@ -111,6 +112,8 @@ SAYS = {
                   r"restart needed: unit w is not part of the running program"],
     # the save of Speed = 50, whose value PRINTS checks
     "globals": [r"  note: U\.SPEED still had its initial value; set to the new one"],
+    # written during the load: the commit finds it so and keeps the program's value
+    "initrace": [r"  note: the initial value of U\.SPEED changed; the running value is kept"],
 }
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
