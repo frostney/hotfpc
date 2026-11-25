@@ -545,17 +545,19 @@ case("procvars", {
 uses SysUtils, u;
 var
   Count: Integer = 0;
-  Plain: TPlain;
+  Plain, Hidden: TPlain;
   Event: TEvent;
   Target: TTarget;
 begin
   Plain := @OnPlain;
+  Hidden := HiddenRoutine;
   Target := TTarget.Create;
   Event := @Target.OnEvent;
   while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
-    WriteLn('tick ', Count, ': ', Plain(Count), ', ', Event(Count), ', same address: ', Pointer(Plain) = Pointer(@OnPlain));
+    WriteLn('tick ', Count, ': ', Plain(Count), ', ', Event(Count), ', ', Hidden(Count),
+      ', same address: ', Pointer(Plain) = Pointer(@OnPlain), ' ', Pointer(Hidden) = Pointer(HiddenRoutine));
     Flush(Output);
     Sleep(300);
   end;
@@ -571,11 +573,21 @@ type
     function OnEvent(n: Integer): string;
   end;
 function OnPlain(n: Integer): string;
+function HiddenRoutine: TPlain;
 implementation
 uses SysUtils;
 function OnPlain(n: Integer): string;
 begin
   Result := 'plain v1 ' + IntToStr(n);
+end;
+// declared only here: fpc 3.2 gives it no symbol in a Windows object file
+function OnHidden(n: Integer): string;
+begin
+  Result := 'hidden v1 ' + IntToStr(n);
+end;
+function HiddenRoutine: TPlain;
+begin
+  Result := @OnHidden;
 end;
 function TTarget.OnEvent(n: Integer): string;
 begin
@@ -583,8 +595,14 @@ begin
 end;
 end.
 '''}, [
-    ("both bodies; the main block holds a procedure variable and a method pointer taken before the reload",
-     [("u.pas", "'plain v1 '", "'PLAIN V2 '"), ("u.pas", "'method v1 '", "'METHOD V2 '")]),
+    ("three bodies; the main block holds procedure variables and a method pointer taken before the reload, one of a routine of the implementation section",
+     [("u.pas", "'plain v1 '", "'PLAIN V2 '"), ("u.pas", "'method v1 '", "'METHOD V2 '"), ("u.pas", "'hidden v1 '", "'HIDDEN V2 '")]),
+    ("the routine of the implementation section is declared in the interface too, with another body",
+     [("u.pas", "function HiddenRoutine: TPlain;\nimplementation", "function HiddenRoutine: TPlain;\nfunction OnHidden(n: Integer): string;\nimplementation"),
+      ("u.pas", "'HIDDEN V2 '", "'HIDDEN V3 '")]),
+    ("its declaration in the interface is removed again, with another body",
+     [("u.pas", "function HiddenRoutine: TPlain;\nfunction OnHidden(n: Integer): string;\nimplementation", "function HiddenRoutine: TPlain;\nimplementation"),
+      ("u.pas", "'HIDDEN V3 '", "'HIDDEN V4 '")]),
 ])
 
 # ---------------------------------------------------------------------------- records

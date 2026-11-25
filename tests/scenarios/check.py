@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
-    "slowsave": (1, 0, 0), "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
+    "slowsave": (1, 0, 0), "procvars": (3, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
     "include": (3, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
@@ -67,6 +67,8 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    "procvars": [re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V2 \d+, same address: TRUE TRUE"),
+                 re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V3 \d+, same address: TRUE TRUE")],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
     "rapid": [re.compile(r"text five \d+")],
     # the save whose v.pas was emptied first runs with both of its files
@@ -89,6 +91,14 @@ SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n
 # once after the swap's line, as its Tick ran the old code or had its result already
 UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
              for name in ("signature", "slowsave")}
+# procvars: procedure variables and a method pointer taken before the swaps call the new
+# code, and @OnHidden keeps its first address: the old entry of each, also of a routine
+# declared only in the implementation section, jumps to the new code, also after a save
+# that declares it in the interface and one that takes that back (PRINTS has the save in
+# between). The tick a swap is written in makes three calls, so it may print any mix of old
+# and new
+SWAPPED["procvars"] = lambda n: "PLAIN V2 %d, METHOD V2 %d, HIDDEN V4 %d, same address: TRUE TRUE" % (n, n, n)
+UNSWAPPED["procvars"] = lambda n: re.compile(r"PLAIN V2 %d, METHOD V2 %d, HIDDEN V[34] %d, same address: TRUE (TRUE|FALSE)" % (n, n, n))
 # case: notes every swap of the case gives: these change the main block
 NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")
@@ -198,8 +208,11 @@ for name in names:
     # every tick after the last swap's record ran its code, but the first, which may have been
     # running when the swap was written; and one of them did
     after = tick_records(lines[swapped[-1] + 1:]) if name in SWAPPED and swapped else []
+    def unswapped(tick, text):
+        expected = UNSWAPPED[name](int(tick))
+        return expected.fullmatch(text.strip()) if isinstance(expected, re.Pattern) else text == " " + expected
     stale = [(tick, text.strip()) for i, (tick, text) in enumerate(after)
-             if text != " " + SWAPPED[name](int(tick)) and not (i == 0 and text == " " + UNSWAPPED[name](int(tick)))]
+             if text != " " + SWAPPED[name](int(tick)) and not (i == 0 and unswapped(tick, text))]
     if name in SWAPPED and not any(text == " " + SWAPPED[name](int(tick)) for tick, text in after):
         stale.append(("", "no tick"))
     ok = ok and not stale

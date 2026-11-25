@@ -10,6 +10,15 @@
   made. On Windows the agent resumes only the threads it suspended. Under Wine before 6.8,
   which lacks a call the agent needs for this, every swap is now refused; on Linux a thread
   that blocks the agent's signal and sleeps isn't stopped ([limits](docs/reference/limits.md)).
+- On Windows with fpc 3.2, a swap now redirects the old entry of a routine declared only
+  in a unit's implementation section, other than a method, to its new code, as it does on
+  macOS and Linux and with fpc 3.3.1. fpc 3.2 gives such a routine no symbol in a Windows
+  object file, so the agent couldn't find its old entry: a procedure variable taken before
+  the swap, or a frame that kept calling the routine, ran its old code. The agent now
+  finds the routine's section in the linker's map, as it does for such a variable.
+- On Linux x86-64, a file the agent was given that is no relocatable ELF object for the
+  system is reported as `<file> is not an x86-64 ELF object`. The error named aarch64,
+  Linux arm64's architecture.
 - A swap that changes the program's main block prints `note: the main block changed` once.
   It printed it twice: fpc gives the main block two names, `PASCALMAIN` and `main`.
 - An empty source file in a watched directory, such as an empty `.inc` nothing uses, no
