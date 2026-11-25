@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- On Windows and Linux, a swap now also stops a thread that another thread started while
+  the agent was stopping them, and a thread that can't be stopped, or on Windows whose
+  state can't be read, makes the agent let the others run and try again. Such a thread used
+  to run on while the agent rewrote code, and on Linux no thread was stopped at all when
+  `/proc/self/task` couldn't be read, nor on Windows when the list of threads couldn't be
+  made. On Windows the agent resumes only the threads it suspended.
 - A swap that changes the program's main block prints `note: the main block changed` once.
   It printed it twice: fpc gives the main block two names, `PASCALMAIN` and `main`.
 - An empty source file in a watched directory, such as an empty `.inc` nothing uses, no
