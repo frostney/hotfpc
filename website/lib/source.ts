@@ -1,5 +1,5 @@
 import { loader } from 'fumadocs-core/source';
-import { docsContentRoute, docsImageRoute, docsRoute, siteUrl } from './shared';
+import { basePath, docsContentRoute, docsImageRoute, docsRoute, siteUrl } from './shared';
 import { defineDocs } from 'fumadocs-mdx/macro';
 import { metaSchema, pageSchema } from 'fumadocs-core/source/schema';
 import { z } from 'zod';
@@ -103,9 +103,45 @@ export function absoluteUrl(path: string): string {
   return `${siteUrl}${path}`;
 }
 
+// The links remark-repo-links writes are site paths: a page as /docs/..., which Next
+// prefixes with the basePath in the HTML, and a file as /hotfpc/docs-assets/.... Read
+// outside the site, both need the origin, and a page also the basePath. Code blocks are
+// left as they are.
+const siteOrigin = new URL(siteUrl).origin;
+
+function absoluteSitePath(target: string): string {
+  if (target.startsWith(`${basePath}/`)) return `${siteOrigin}${target}`;
+  if (target === docsRoute || target.startsWith(`${docsRoute}/`) || target.startsWith(`${docsRoute}#`)) {
+    return absoluteUrl(target);
+  }
+  return target;
+}
+
+export function absoluteLinks(markdown: string): string {
+  const fence = /^ {0,3}(`{3,}|~{3,})/;
+  let open: string | undefined;
+  return markdown
+    .split('\n')
+    .map((line) => {
+      const marker = fence.exec(line)?.[1];
+      if (open) {
+        if (marker && marker[0] === open[0] && marker.length >= open.length) open = undefined;
+        return line;
+      }
+      if (marker) {
+        open = marker;
+        return line;
+      }
+      return line
+        .replace(/(\]\(\s*<?)(\/[^\s)>]*)/g, (_, before: string, target: string) => before + absoluteSitePath(target))
+        .replace(/^(\s*\[[^\]]+\]:\s*<?)(\/\S*?)(>?)$/, (_, before: string, target: string, after: string) => before + absoluteSitePath(target) + after);
+    })
+    .join('\n');
+}
+
 export async function getLLMText(page: DocsPage) {
   const processed = await page.data.getText('processed');
   return `URL: ${absoluteUrl(page.url)}/
 
-${processed}`;
+${absoluteLinks(processed)}`;
 }
