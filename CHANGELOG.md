@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- On Windows with fpc 3.2, a swap now applies a changed initial value of a variable in a
+  unit's implementation section while the variable still holds the old one, as on the other
+  systems, and prints `note: U.SPEED still had its initial value; set to the new one`. It
+  kept the running value and printed `note: U.SPEED changed; the running copy is kept`:
+  fpc 3.2 names such a variable only by its section, and the agent recognised a variable
+  with an initial value only by the `TC_$` prefix of a symbol's name.
 - A swap no longer breaks a running routine that calls a routine nested in it. When a save
   moved the parent's locals, the frame that was still running called the new nested
   routine, which read that frame with the new layout: in the `nestedframe` scenario, the

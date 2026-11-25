@@ -281,14 +281,15 @@ after its agent connected, and the first program in every case, end hotfpc.
   - fpc 3.2 gives an implementation-section variable, and a unit's routine declared only
     in the implementation section, no symbol at all, only a section named after it (it
     names methods). hotfpc links Windows programs with `-Xm`, and the agent finds those
-    sections' addresses in the linker's map: such a variable keeps its value, and such a
-    routine's old entry jumps to its new code. A routine that a save moves between the
-    interface and the implementation section has both names, the symbol and the
-    section's, for one record, so its first entry follows every version. fpc 3.2 names
-    neither a nested routine nor the helper it makes for each `finally`, implicit ones
-    included, in a routine, the main block or a unit's initialization or finalization.
-    These work in their parent's frame, so the agent leaves their old entries with the
-    old code, for a parent that is still running it.
+    sections' addresses in the linker's map: such a variable keeps its value, a changed
+    initial value of one is applied as for a named variable, and such a routine's old
+    entry jumps to its new code. A routine that a save moves between the interface and the
+    implementation section has both names, the symbol and the section's, for one record,
+    so its first entry follows every version. fpc 3.2 names neither a nested routine nor
+    the helper it makes for each `finally`, implicit ones included, in a routine, the main
+    block or a unit's initialization or finalization. These work in their parent's frame,
+    so the agent leaves their old entries with the old code, for a parent that is still
+    running it.
   - fpc gives a variable with an initial value, and a typed constant, a section of its own
     and pads it to 16 bytes, on Linux and Windows alike. On Linux the agent takes the size
     from the ELF symbol. COFF symbols have no size, and the unit file doesn't cover every
