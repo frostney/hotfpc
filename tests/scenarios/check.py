@@ -115,8 +115,14 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # needs a restart (progvar, second step)
     EXPECT["progvar"] = (1, 2, 0)
     # the reason a Windows program gives, so that the sizes it is checked against are the
-    # ones the case is about: the program's sizes when it started are unknown, and the check
-    # stays on (startnoasm)
+    # ones the case is about: the sizes of the build the program started from (startblock),
+    # of the unit a restart added (newconst; with fpc 3.3 the unit file has the constant's
+    # type, and the check of layouts finds it first), unknown after the sources kept changing
+    # during the builds at the start (startcap), and unknown when fpc wrote no assembler for
+    # the build the program started from, with the check still on (startnoasm)
+    SAYS["startblock"] = [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes"]
+    SAYS["newconst"] = [r"restart needed: (variable W\.LIMIT changed size from 4 to 8 bytes|w\.Limit: the declaration changed its layout or type)"]
+    SAYS["startcap"] = [r"restart needed: the sizes of variables with initial values are unknown: the sources changed while fpc compiled them"]
     SAYS["startnoasm"] = [r".* did not compile the program to assembler \(.*\): until the program starts over, a save that needs the sizes of variables with initial values needs a restart",
                           r"restart needed: the sizes of variables with initial values are unknown: .* did not compile the program to assembler"]
 # On arm64 a redirect is one 4-byte instruction, which every routine has room for. A COFF

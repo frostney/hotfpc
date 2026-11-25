@@ -73,7 +73,10 @@ lists every step and its outcome.
 For a Windows target (`-Twin` in `HOT_DRIVER_OPTS`), `check.py` expects a restart in three
 cases where the other systems swap: in two, fpc's Windows linker leaves out runtime
 routines the program never called; in `progvar`, fpc can't write the assembler that shows
-a save's sizes. The comments in `check.py` say which. `shortentry` is swapped on Windows
+a save's sizes. The comments in `check.py` say which. In the cases that check how a start
+leaves the sizes, `startblock`, `startcap`, `startnoasm` and `newconst`, it also requires
+the reason a Windows program gives for its restart, so that a case passes only with the
+sizes it is about. `shortentry` is swapped on Windows
 and arm64, where the jump at a routine's entry fits, and restarted on x86-64 macOS and
 Linux. `shortcall` is swapped on arm64, where a call is as long as the jump, and restarted
 on every x86-64 system; so are `sighandler` and `sigmasked`, whose trapped thread resumes
