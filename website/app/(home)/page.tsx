@@ -37,7 +37,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'Which systems and compilers does it support?',
-    a: 'Programs for macOS on arm64, Linux on x86-64 and arm64, and Windows on x86-64, natively or under Wine, with Free Pascal 3.2.2 or later. hotfpc compiles its agent with your fpc, so one hotfpc works with every fpc from 3.2.2 on.',
+    a: 'Programs for macOS on arm64 and x86-64, Linux on x86-64 and arm64, and Windows on x86-64, natively or under Wine, with Free Pascal 3.2.2 or later. hotfpc compiles its agent with your fpc, so one hotfpc works with every fpc from 3.2.2 on.',
   },
 ];
 

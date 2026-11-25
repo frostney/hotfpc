@@ -24,8 +24,9 @@ the edits that need a restart; these are the limits around them.
 - **Memory for new code and data is never freed.** Old code stays where it was, because
   something may still call it. A long session of swaps grows the program a little each time.
 - **Hardened and notarised macOS programs aren't supported.** The agent rewrites the
-  program's signed code pages and puts new code into `MAP_JIT` memory, which the hardened
-  runtime allows only with entitlements.
+  program's signed code pages and puts new code into memory that is writable and
+  executable (`MAP_JIT` memory on Apple silicon), which the hardened runtime allows only
+  with entitlements.
 - **Programs for 32-bit targets aren't supported.** The agent is written for macOS on
   arm64 and x86-64, Linux on arm64 and x86-64, and Windows on x86-64. For any other
   target its compile stops with an error, and hotfpc says the agent did not compile.

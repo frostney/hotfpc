@@ -221,7 +221,7 @@ say that hotfpc can't load it; please report them with the unit that causes them
 
 | Error | Where |
 | --- | --- |
-| `<file> is not an arm64 Mach-O object` | macOS |
+| `<file> is not an <arm64 or x86-64> Mach-O object` | macOS |
 | `<file> is not an aarch64 ELF object` | Linux arm64 |
 | `<file> is not an x86-64 COFF object` | Windows |
 | `<file> has no symbol table` | any |
@@ -235,7 +235,7 @@ say that hotfpc can't load it; please report them with the unit that causes them
 | `<unit>: <symbol> is out of reach of a 32-bit offset from the image base` | Windows |
 | `<unit>: a branch into the middle of <symbol> is out of reach` | x86-64 |
 | `<unit>: <symbol> is out of reach of adrp` | arm64 |
-| `<unit>: a GOT relocation without a symbol` | arm64, Linux x86-64 |
+| `<unit>: a GOT relocation without a symbol` | macOS, Linux |
 | `<unit>: misaligned load of <symbol>` | arm64 |
 | `<unit>: a thread-variable relocation to <symbol>, which is not a thread variable of the program` | Linux |
 | `<unit>: thread variable <symbol> out of reach` | Linux |
