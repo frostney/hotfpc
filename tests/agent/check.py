@@ -10,7 +10,8 @@ build/hotfpc) and $HOT_DRIVER_OPTS adds options to it, as for the scenarios.
 import os, platform, shlex, shutil, socket, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DRIVER = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc")
+# absolute: hotfpc runs in the work directory, so that fpc's link files go there
+DRIVER = os.path.abspath(os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc"))
 OPTS = shlex.split(os.environ.get("HOT_DRIVER_OPTS", ""))
 WORK = os.path.join(HERE, "work")
 TOKEN = "agent-check"
@@ -80,15 +81,20 @@ class Agent:
         env = dict(os.environ, HOT_PORT=str(listener.getsockname()[1]), HOT_TOKEN=TOKEN)
         self.process = subprocess.Popen((["wine"] if WINE else []) + [executable, agent_path(self.stop)], cwd=WORK, env=env,
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.connection = None
         try:
-            self.connection, _ = listener.accept()
-        finally:
-            listener.close()
-        self.connection.settimeout(TIMEOUT)
-        self.pending = b""
-        hello = self.line()
-        if hello != "hello " + TOKEN:
-            raise RuntimeError("the agent said %r instead of its hello" % hello)
+            try:
+                self.connection, _ = listener.accept()
+            finally:
+                listener.close()
+            self.connection.settimeout(TIMEOUT)
+            self.pending = b""
+            hello = self.line()
+            if hello != "hello " + TOKEN:
+                raise RuntimeError("the agent said %r instead of its hello" % hello)
+        except BaseException:
+            self.close()
+            raise
 
     def line(self):
         while b"\n" not in self.pending:
@@ -110,12 +116,18 @@ class Agent:
             reply.append(line)
 
     def close(self):
+        """Ends the program through the file it waits for, or kills it when it doesn't end."""
         with open(self.stop, "w"):
             pass
         try:
             self.process.wait(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+            raise
         finally:
-            self.connection.close()
+            if self.connection is not None:
+                self.connection.close()
 
 
 def bad_object(agent):
