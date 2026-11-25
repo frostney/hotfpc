@@ -89,7 +89,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    the program starts and when it starts over, and a swap adds those of the variables it
    brings. A variable keeps its first size until the program starts over, also when a save
    removed it: the agent keeps it at its first address, so bringing it back larger needs a
-   restart. It costs about as much as the first compile.
+   restart. When fpc can't write the assembler at the start, the check is off for the run
+   and hotfpc says so. When it can't for a save, or couldn't when the program started over,
+   that save needs a restart: a size it can't see may have grown. It costs about as much as
+   the first compile.
 5. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
    next to the program. Like a linker, it works out which parts the program can reach.
    Type information that nothing uses is never read, because it may refer to things the

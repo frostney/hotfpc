@@ -34,6 +34,10 @@ end.
 '''
 
 CASES = {}
+# An edit (path, None, BLOCKED) puts a directory where the driver writes a file, such as the
+# compile to assembler's .hot/asm/main.s, so that fpc cannot write it; (path, None, None)
+# removes it again.
+BLOCKED = object()
 
 
 def case(name, files, steps, ticks=None, opts=(), restart=False):
@@ -822,7 +826,9 @@ end.
 ])
 
 # ---------------------------------------------------------------------------- a variable of the program
-# like initvar, but in the program file, for which fpc writes no unit file
+# like initvar, but in the program file, for which fpc writes no unit file. The second save
+# lands while fpc cannot write the program's assembler: on Windows its sizes are then unknown,
+# so it needs a restart, and the running program's sizes stay what they were for the third
 case("progvar", {
     "main.pas": r'''program main;
 {$mode objfpc}{$H+}
@@ -858,7 +864,10 @@ end;
 end.
 '''}, [
     ("another text", [("main.pas", "' main one", "' main two")]),
-    ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
+    ("another text, while fpc cannot write the program's assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "' main two", "' main three")]),
+    ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0",
+     [(".hot/asm/main.s", None, None), ("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
 ])
 
 # ---------------------------------------------------------------------------- a routine's typed constant
@@ -996,9 +1005,16 @@ def run(name):
                 out("!!! the edit does not apply: %r" % old)
             texts[path] = texts[path].replace(old, new)
         for path, text in texts.items():
-            if text is None:   # (file, None, None): the file goes away
+            if text is None:   # (file, None, None): the file, or the directory BLOCKED put there, goes away
+                if os.path.isdir(path):
+                    os.rmdir(path)
+                elif os.path.exists(path):
+                    os.remove(path)
+                continue
+            if text is BLOCKED:
                 if os.path.exists(path):
                     os.remove(path)
+                os.makedirs(path)
                 continue
             with open(path, "w") as fh:
                 fh.write(text)

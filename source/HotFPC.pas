@@ -2879,8 +2879,9 @@ type
     { This save compiled the program to assembler. }
     FAssemblyWritten: Boolean;
     { The sizes of the running program's initialised data (see "sizes of initialised data"),
-      name=bytes; nil while they are unknown. }
+      name=bytes; nil while they are unknown, FSizesProblem then says why. }
     FSizes: TStringList;
+    FSizesProblem: string;
     { The running program; nil while hotfpc waits for a save that builds to start it again. }
     FProgram: TProcess;
     { FProgram was started by a restart. }
@@ -2911,7 +2912,8 @@ type
     function ReadAssembly(const AObjects: TStrings): TStringList;
     function RefreshLiveAssembly(out AProblem: string): Boolean;
     procedure StartSizeCheck;
-    procedure SayUncheckedSizes(const AProblem: string);
+    function NotAssembled(const AProblem: string): string;
+    procedure RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
     function SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       var AInterfaceSeconds: Double): Boolean;
     function Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
@@ -3208,7 +3210,7 @@ end;
   (FSizes), from fpc's assembler when one of them has initialised data. After a compile to
   assembler, every unit's file in the assembly directory is current: the units whose source
   changed since were made to recompile there too. False when fpc failed; the sizes are then
-  unknown. }
+  unknown (FSizesProblem). }
 function TDriver.RefreshLiveAssembly(out AProblem: string): Boolean;
 var
   Objects: TStringList;
@@ -3227,7 +3229,9 @@ begin
         WriteLn('[hot debug] assembler of the running program in ', FormatMilliseconds(Seconds), ' ms');
     end;
     if Result then
-      FSizes := ReadAssembly(Objects);
+      FSizes := ReadAssembly(Objects)
+    else
+      FSizesProblem := NotAssembled(AProblem);
   finally
     Objects.Free;
   end;
@@ -3248,15 +3252,24 @@ begin
   end;
 end;
 
-procedure TDriver.SayUncheckedSizes(const AProblem: string);
+function TDriver.NotAssembled(const AProblem: string): string;
 begin
-  FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + AProblem
-    + '): the sizes of variables with initial values are not checked');
+  Result := FOptions.Compiler + ' did not compile the program to assembler (' + AProblem + ')';
+end;
+
+{ A save whose sizes cannot be checked is not swapped: one of them may have grown. }
+procedure TDriver.RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
+begin
+  Inc(FRefused);
+  FReporter.Say('restart needed: the sizes of variables with initial values are unknown: ' + AReason
+    + ' (not applied; compile ' + FormatMilliseconds(ACompileSeconds) + ' ms)');
 end;
 
 { Each changed unit's variables with initial values and typed constants, by the sizes in
   fpc's assembler: on Windows the object file does not show one that grows inside the
-  padding of its section. Compiles to assembler only when a changed unit has such data. }
+  padding of its section. Compiles to assembler only when a changed unit has such data. A
+  save whose sizes cannot be compared, because fpc did not write the assembler or the
+  running program's sizes are unknown, needs a restart too. }
 function TDriver.SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
   var AInterfaceSeconds: Double): Boolean;
 var
@@ -3268,29 +3281,34 @@ begin
   Result := True;
   if not FCheckSizes or not HasInitialisedData(AChanged) then
     Exit;
+  if FSizes = nil then
+  begin
+    RefuseUncheckedSizes(FSizesProblem, ACompileSeconds);
+    Exit(False);
+  end;
   Start := NowSeconds;
   FAssemblyWritten := FCompiler.WriteAssembler(Problem, Seconds);
   if GetEnvironmentVariable(DebugVariable) <> '' then
     WriteLn('[hot debug] assembler in ', FormatMilliseconds(Seconds), ' ms');
   if not FAssemblyWritten then
-    SayUncheckedSizes(Problem);
-  if FAssemblyWritten and (FSizes <> nil) then
   begin
-    Compiled := ReadAssembly(AChanged);
-    Changes := TDataSizes.Changes(FSizes, Compiled);
-    try
-      if Changes.Count > 0 then
-      begin
-        Inc(FRefused);
-        for K := 0 to Changes.Count - 1 do
-          FReporter.Say('restart needed: ' + Changes[K] + ' (not applied; compile '
-            + FormatMilliseconds(ACompileSeconds) + ' ms)');
-        Exit(False);
-      end;
-    finally
-      Changes.Free;
-      Compiled.Free;
+    RefuseUncheckedSizes(NotAssembled(Problem), ACompileSeconds);
+    Exit(False);
+  end;
+  Compiled := ReadAssembly(AChanged);
+  Changes := TDataSizes.Changes(FSizes, Compiled);
+  try
+    if Changes.Count > 0 then
+    begin
+      Inc(FRefused);
+      for K := 0 to Changes.Count - 1 do
+        FReporter.Say('restart needed: ' + Changes[K] + ' (not applied; compile '
+          + FormatMilliseconds(ACompileSeconds) + ' ms)');
+      Exit(False);
     end;
+  finally
+    Changes.Free;
+    Compiled.Free;
   end;
   AInterfaceSeconds := AInterfaceSeconds + NowSeconds - Start;
 end;
@@ -3540,9 +3558,10 @@ begin
   FReporter.Say(Format('v%d restarted: the program starts over; %s ms after the save was seen (link %s, stop %s, start %s)',
     [FVersion, FormatMilliseconds(NowSeconds - ASeen), FormatMilliseconds(LinkSeconds), FormatMilliseconds(StopSeconds),
      FormatMilliseconds(NowSeconds - FStartedAt)]));
-  { the sizes the next save is checked against, once the program runs }
-  if FCheckSizes and not RefreshLiveAssembly(Problem) then
-    SayUncheckedSizes(Problem);
+  { the sizes the next save is checked against, once the program runs; when fpc fails, a save
+    that needs them is refused until the program starts over again }
+  if FCheckSizes then
+    RefreshLiveAssembly(Problem);
 end;
 
 { Waits for the save to stop changing the files. }

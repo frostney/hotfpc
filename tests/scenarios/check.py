@@ -25,7 +25,7 @@ EXPECT = {
     # a variable with an initial value and a typed constant that grow inside the 16 bytes fpc
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
-    "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (1, 1, 0), "localconst": (1, 1, 0),
+    "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
 }
 # case: restarts; every other case passes --no-restart and expects none
 RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2}
@@ -48,6 +48,9 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # third step). Linux and macOS link the whole unit.
     EXPECT["interfaces"] = (1, 2, 0)
     EXPECT["newunit"] = (0, 3, 0)
+    # a save whose sizes hotfpc cannot check, because fpc did not write the assembler,
+    # needs a restart (progvar, second step)
+    EXPECT["progvar"] = (1, 2, 0)
 names = sys.argv[1:] or list(EXPECT)
 run = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True)
 out = run.stdout
