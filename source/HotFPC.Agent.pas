@@ -4345,8 +4345,10 @@ end;
 // Linux has no call that suspends another thread: send each one a signal whose handler
 // waits until the agent lets it go. A thread that runs until it parks, or until it ends,
 // can start another after the list was read, so the agent reads /proc/self/task again until
-// a list has none it hasn't met before. The list is read with getdents64 into a buffer of
-// its own, so that nothing is allocated while a parked thread may hold a lock.
+// a list has none it hasn't met before. A list read while a thread ends can leave out
+// another, so a list counts as complete only when it has as many threads as the process's
+// status says. The list is read with getdents64 into a buffer of its own, so that nothing
+// is allocated while a parked thread may hold a lock.
 var
   Hold, Parked, Arrived: LongInt;
   ListedIDs: array[0..MaxThreads - 1] of LongInt;    // the threads of the last list
@@ -4467,29 +4469,37 @@ end;
 // that block every signal, such as the workers of Mesa's software renderer. Such a thread
 // never parks, and sending it the signal each time would queue real-time signals until
 // the process may queue no more.
-function BlocksParkSignal(AThreadID: LongInt): Boolean;
+// Where the value of a field of /proc/self/task/<thread>/status starts, or -1.
+function FindStatusField(const ABuffer: TStatusBuffer; const ACount: TSsize; const AField: ShortString): TSsize;
+var
+  K: TSsize;
+begin
+  Result := 0;
+  while Result + Length(AField) <= ACount do
+  begin
+    K := 0;
+    while (K < Length(AField)) and (ABuffer[Result + K] = AField[K + 1]) do Inc(K);
+    if K = Length(AField) then Break;
+    Inc(Result);
+  end;
+  if Result + Length(AField) > ACount then Exit(-1);
+  Result := Result + Length(AField);
+  while (Result < ACount) and (ABuffer[Result] in [' ', #9]) do Inc(Result);
+end;
+
+function BlocksParkSignal(const AThreadID: LongInt): Boolean;
 const
-  BlockedField = 'SigBlk:';
   HexBase = 16;
   HexLetterBase = 10;   // the value of 'a'
 var
   Buffer: TStatusBuffer;
-  Count, Index, K: TSsize;
+  Count, Index: TSsize;
   Mask: QWord;
 begin
   Result := False;
   Count := ReadTaskFile(AThreadID, 'status', Buffer);
-  Index := 0;
-  while Index + Length(BlockedField) <= Count do
-  begin
-    K := 0;
-    while (K < Length(BlockedField)) and (Buffer[Index + K] = BlockedField[K + 1]) do Inc(K);
-    if K = Length(BlockedField) then Break;
-    Inc(Index);
-  end;
-  if Index + Length(BlockedField) > Count then Exit;
-  Index := Index + Length(BlockedField);
-  while (Index < Count) and (Buffer[Index] in [' ', #9]) do Inc(Index);
+  Index := FindStatusField(Buffer, Count, 'SigBlk:');
+  if Index < 0 then Exit;
   Mask := 0;
   while (Index < Count) and (Buffer[Index] in ['0'..'9', 'a'..'f']) do
   begin
@@ -4498,6 +4508,23 @@ begin
     Inc(Index);
   end;
   Result := (Mask and (QWord(1) shl (ParkSignal - 1))) <> 0;
+end;
+
+// How many threads the process has (Threads: in the status file), or -1 when it can't be read.
+function ThreadCount(const AThreadID: LongInt): LongInt;
+var
+  Buffer: TStatusBuffer;
+  Count, Index: TSsize;
+begin
+  Count := ReadTaskFile(AThreadID, 'status', Buffer);
+  Index := FindStatusField(Buffer, Count, 'Threads:');
+  if (Index < 0) or (Index >= Count) or not (Buffer[Index] in ['0'..'9']) then Exit(-1);
+  Result := 0;
+  while (Index < Count) and (Buffer[Index] in ['0'..'9']) do
+  begin
+    Result := Result * 10 + Ord(Buffer[Index]) - Ord('0');
+    Inc(Index);
+  end;
 end;
 
 // Whether a thread waits in the kernel (state S or D in /proc/self/task/<thread>/stat, after
@@ -4610,7 +4637,7 @@ end;
 
 procedure WorldStop;
 var
-  CurrentThread, ProcessID, I, Sent, Met: LongInt;
+  CurrentThread, ProcessID, I, Sent, Met, Count: LongInt;
   StartTime: Double;
 
   procedure AwaitParked;
@@ -4669,6 +4696,12 @@ begin
     end;
     AwaitParked;
     if InterlockedCompareExchange(Parked, 0, 0) < Sent then StopFailure := ParkTimeoutFailure;
+    if (StopFailure = '') and (Met = 0) then
+    begin
+      Count := ThreadCount(CurrentThread);
+      if Count < 0 then StopFailure := ThreadListFailure
+      else if Count > ListedCount then Met := Count - ListedCount;   // the list left a thread out
+    end;
     if (StopFailure = '') and (Met > 0) and (NowMilliseconds - StartTime >= ParkTimeoutMilliseconds) then
       StopFailure := ParkTimeoutFailure;   // threads kept starting
   until (StopFailure <> '') or (Met = 0);
@@ -4935,11 +4968,13 @@ end;
 // whose context can't be read fails the stop: the commit lets the others run and tries
 // again. Only the threads the agent suspended are resumed.
 //
-// NtGetNextThread leaves out a thread it can't open with the access asked for, so the agent
-// also lists the IDs of the process's threads (NtQuerySystemInformation) before it suspends
-// any; one of them that still runs once the passes are done fails the stop. Wine allocates
-// for that list, which is why it is made while nothing is suspended. Wine before 6.8 has no
-// NtGetNextThread: there the agent suspends the threads of that list, once.
+// On Windows NtGetNextThread leaves out a thread it can't open with the access asked for, so
+// once the passes are done the agent lists the IDs of the process's threads
+// (NtQuerySystemInformation, which runs in the kernel there), and one of them that still
+// runs fails the stop. Wine's NtGetNextThread fails on such a thread instead, and Wine
+// allocates for that list, so under Wine the agent leaves it out. Wine before 6.8 has no
+// NtGetNextThread: there the agent makes the list before it suspends any thread, and
+// suspends the threads of the list, once.
 //
 // Under Wine a thread exists before it has started, with no TEB yet, and GetThreadContext
 // waits until it starts, which a suspended creator never lets it do. Once suspended, such a
@@ -4949,13 +4984,14 @@ const
   ThreadAccess = THREAD_SUSPEND_RESUME or THREAD_GET_CONTEXT or THREAD_QUERY_LIMITED_INFORMATION or SYNCHRONIZE;
 var
   NextThread: TNextThread;   // nil without NtGetNextThread
+  UnderWine: Boolean;
   ThreadHandles: array[0..MaxThreads - 1] of TWindowsHandle;   // the threads the agent suspended, until WorldStart
   ThreadIDs: array[0..MaxThreads - 1] of LongWord;
   ThreadStarted: array[0..MaxThreads - 1] of Boolean;   // False for one with no TEB yet
   ThreadHandleCount: LongInt;
   EndedIDs: array[0..MaxThreads - 1] of LongWord;   // threads a pass found ended
   EndedCount: LongInt;
-  CensusIDs: array[0..MaxThreads - 1] of LongWord;   // the process's threads before the stop
+  CensusIDs: array[0..MaxThreads - 1] of LongWord;   // the process's threads, from NtQuerySystemInformation
   CensusCount: LongInt;
   Census: PByte;   // NtQuerySystemInformation's buffer, from VirtualAlloc
   CensusSize: LongWord;
@@ -5006,8 +5042,8 @@ begin
   Result := NtQueryInformationThread(AHandle, ThreadBasicInformation, @AInformation, SizeOf(AInformation), nil) = 0;
 end;
 
-// The IDs of the process's threads into CensusIDs. Made before any thread is suspended. False,
-// with StopFailure set, when they can't be listed.
+// The IDs of the process's threads into CensusIDs. False, with StopFailure set, when they
+// can't be listed.
 function TakeCensus: Boolean;
 var
   Status: LongInt;
@@ -5194,8 +5230,8 @@ begin
   until (StopFailure <> '') or (Met = 0);
 end;
 
-// After the passes: every thread of the census that runs was suspended. One NtGetNextThread
-// couldn't open is still running.
+// After the passes, with the other threads stopped: every thread of the census that runs was
+// suspended. One NtGetNextThread couldn't open is still running.
 procedure CheckCensus;
 var
   I: LongInt;
@@ -5218,13 +5254,13 @@ begin
   EndedCount := 0;
   StopFailure := '';
   if not SuspendThreads then Exit;
-  if not TakeCensus then Exit;
-  if Assigned(NextThread) then
+  if not Assigned(NextThread) then
   begin
-    SuspendPasses;
-    CheckCensus;
-  end
-  else SuspendCensus;
+    if TakeCensus then SuspendCensus;
+    Exit;
+  end;
+  SuspendPasses;
+  if (StopFailure = '') and not UnderWine and TakeCensus then CheckCensus;
 end;
 
 procedure WorldStart;
@@ -5240,8 +5276,12 @@ begin
 end;
 
 procedure SetupWorldStop;
+var
+  NTDLL: PtrUInt;
 begin
-  NextThread := TNextThread(GetProcAddress(GetModuleHandleA('ntdll.dll'), 'NtGetNextThread'));
+  NTDLL := GetModuleHandleA('ntdll.dll');
+  NextThread := TNextThread(GetProcAddress(NTDLL, 'NtGetNextThread'));
+  UnderWine := GetProcAddress(NTDLL, 'wine_get_version') <> nil;
 end;
 
 // A thread stopped after the first byte of an entry about to be overwritten would resume in

@@ -218,8 +218,10 @@ after its agent connected, and the first program in every case, end hotfpc.
   signal whose handler waits. It reads the threads from `/proc/self/task` with
   `getdents64` into a buffer of its own, so that nothing is allocated while a stopped
   thread may hold a lock, and reads them again until a list has none it hasn't met before,
-  as on macOS; a thread that has ended may have started another before it did. A thread
-  that ended before its signal is left out. When the list can't be read, or the signal
+  as on macOS; a thread that has ended may have started another before it did. A list read
+  while a thread ends can leave out another, so a list counts as complete only when it has
+  as many threads as the `Threads:` line of the status file. A thread that ended before its
+  signal is left out. When the list can't be read, or the signal
   can't be sent for another reason, the agent lets everything run and tries again; when
   new threads keep coming for 2 s, the swap is refused. Libraries start threads that block every signal (Mesa's
   software renderer starts one per core). The agent doesn't send those the signal, because
@@ -245,15 +247,17 @@ after its agent connected, and the first program in every case, end hotfpc.
   `NtGetNextThread`, which opens one after another and allocates nothing (a Toolhelp
   snapshot takes its memory from the process heap, whose lock a suspended thread may hold),
   and goes through them again until a pass meets none it hasn't met before, as on macOS; new
-  threads that keep coming for 2 s refuse the swap. `NtGetNextThread` leaves out a thread it
-  can't open, so the agent first lists the IDs of the process's threads with
-  `NtQuerySystemInformation`, while nothing is suspended (Wine allocates for it), and one of
-  those that still runs after the passes fails the stop. A thread that ended is left out.
+  threads that keep coming for 2 s refuse the swap. On Windows `NtGetNextThread` leaves out a
+  thread it can't open, so after the passes the agent lists the IDs of the process's threads
+  with `NtQuerySystemInformation`, which runs in the kernel there, and one of those that
+  still runs fails the stop. Wine's `NtGetNextThread` fails on such a thread instead, and
+  Wine allocates for that list, so under Wine the agent doesn't make it. A thread that ended
+  is left out.
   When a list can't be made, or a thread can't be suspended for another reason or its
   context can't be read, the agent lets the others run and tries again, and it resumes only
-  the threads it suspended. Wine before 6.8 has no `NtGetNextThread`; there the agent
-  suspends the threads of that first list, so a thread started while it stops them keeps
-  running. Under Wine a thread exists before it has started, with no TEB yet, and
+  the threads it suspended. Wine before 6.8 has no `NtGetNextThread`; there the agent makes
+  that list before it suspends any thread and suspends the threads of the list, so a thread
+  started while it stops them keeps running. Under Wine a thread exists before it has started, with no TEB yet, and
   `GetThreadContext` would wait until it starts, which a suspended creator never lets it do;
   suspended, such a thread stops before it runs any of the program's code, so the agent
   keeps it suspended without its context. On x86-64
