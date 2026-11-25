@@ -40,7 +40,8 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | `Calls: Integer` in the implementation section becomes `Calls: Single`, the same size | restart: `u.Calls: the declaration changed its layout or type` | `hidden` |
 | `Calls: Integer = 0` in the implementation section becomes `Int64 = 0` | restart: `u.Calls: the declaration changed its layout or type` | `initvar` |
 | The typed constant `Calls: Integer = 0` becomes `Int64 = 0` | restart: `variable U.CALLS changed size from 4 to 8 bytes` | `typedconst` |
-| `Calls: Integer = 0` in the program file becomes `Int64 = 0` | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes` | `progvar` |
+| Another text in the program file, saved while fpc can't write the program's assembler (`.hot/asm/main.s` is a directory) | swap; on Windows, restart: `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (...)` | `progvar` |
+| `Calls: Integer = 0` in the program file becomes `Int64 = 0` | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes`, also on Windows after the save before | `progvar` |
 | A typed constant in a routine, `Calls: Integer = 0`, becomes `Int64 = 0` | restart: `variable U.TICK(LONGINT):ANSISTRING.CALLS changed size from 4 to 8 bytes` | `localconst` |
 
 The program's variables keep their values through every swap: the scenarios `globals` and

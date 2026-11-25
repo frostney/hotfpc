@@ -102,5 +102,7 @@ Several saves in quick succession can be compiled together: what you see is alwa
 newest text. A save that lands while fpc is compiling, such as the second file of a "save
 all" or the next save, makes hotfpc set that compile aside and compile again once the files
 settle, so it never swaps or reports a mix of old and new files. A file that keeps changing
-faster than fpc compiles holds a save back for three compiles at most: the fourth is used as
-it is ([how it works](../internals/how-it-works.md#one-save)).
+faster than fpc compiles holds a save back for three compiles at most, and hotfpc waits a
+second at most for the files to settle before each: the fourth is used as it is, except
+that on Windows a save whose variables with initial values hotfpc checks needs a restart
+then ([how it works](../internals/how-it-works.md#one-save)).

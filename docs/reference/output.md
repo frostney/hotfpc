@@ -94,12 +94,19 @@ restart needed: <reason> (not applied; compile <ms> ms)
 
 The reason names the declaration in the way. hotfpc finds most of them before the agent
 sees the new code; the agent finds the rest when it binds it. One save can print several.
+For a Windows program whose sizes it can't check, the reason says why:
+
+```text
+restart needed: the sizes of variables with initial values are unknown: <why> (not applied; compile <ms> ms)
+```
 
 | Reason | What changed | Scenario |
 | --- | --- | --- |
 | `<unit>.<declaration>: the declaration changed its layout or type` | A variable's type, or a record's or class's fields, by ppudump: also when the size stays the same (`Integer` to `Single`, two fields swapped). | `globals`, `records`, `hidden`, `restart` |
 | `unit <unit> is not part of the running program` | The program now uses a unit of its own that it didn't use when it started, or a unit was renamed. | `newunit`, `rename`, `linkfail` |
 | `variable <name> changed size from <n> to <n> bytes` | A variable, a variable with an initial value or a typed constant changed size. | `typedconst`, `progvar`, `localconst` |
+| `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (<problem>)` | A Windows program: fpc didn't write the assembler that shows the sizes of the changed units' variables with initial values and typed constants, for this save or when the program last started over, so one of them may have grown. | `progvar` on Windows |
+| `the sizes of variables with initial values are unknown: the sources changed while fpc compiled them` | A Windows program: the files kept changing during three compiles in a row, so the fourth's object files and its compile to assembler may come from different sources. | |
 | `<name> changed size from <n> to <n> bytes` | Other data the program has changed size, such as the resource string tables when a unit of the runtime is added. | `newunit` |
 | `class <name>: instance size changed from <n> to <n> bytes` | A class gained or lost fields. | |
 | `class <name>: the virtual method table changed from <n> to <n> slots` | A class gained or lost a virtual method, or one it inherits did. | `classes` |
@@ -252,14 +259,13 @@ name a place in a source file, or fpc's closing lines when there are none. It en
 
 ```text
 <fpc> did not compile the program to assembler (<problem>): the check of sizes of variables with initial values is off
-<fpc> did not compile the program to assembler (<problem>): the sizes of variables with initial values are not checked
 ```
 
 For a Windows program hotfpc compiles to assembler as well, to see the sizes of variables
 with initial values and typed constants ([Windows programs](../guides/windows.md)). The
-first line comes at the start, when that compile failed: the check is off for the run. The
-second comes after a save or a restart: the sizes weren't checked this time. A swap still
-goes ahead.
+line comes at the start, when that compile failed: the check is off for the run. When it
+fails later, for a save or when the program started over, a save whose sizes hotfpc can't
+check needs a restart ([Restart needed](#restart-needed)).
 
 ## While it runs
 

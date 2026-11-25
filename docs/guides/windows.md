@@ -59,7 +59,9 @@ it too; otherwise the old program keeps running, and hotfpc says so:
   and fpc pads a variable with an initial value, and a typed constant, to 16 bytes. So when
   a changed unit has one, hotfpc also compiles the program to assembler, into `.hot/asm/`,
   and compares the sizes there. That compile costs about as much as the first. If it
-  fails, hotfpc says that the sizes weren't checked, and swaps anyway.
+  fails at the start, hotfpc says so and the check is off for the run. If it fails for a
+  save, or when the program started over, a save that needs the sizes needs a restart: a
+  variable it can't see may have grown.
 - **A restart waits for the file.** Windows keeps a program's file locked for a moment after
   the program ends. hotfpc links the new program into `.hot/next/` and moves it into place,
   trying for up to 5 s.
