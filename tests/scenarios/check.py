@@ -67,7 +67,6 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
-    "nestedframe": ["last 42 v1"],
     "procvars": [re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V2 \d+, same address: TRUE TRUE"),
                  re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V3 \d+, same address: TRUE TRUE")],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
@@ -100,11 +99,6 @@ UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n *
 # and new
 SWAPPED["procvars"] = lambda n: "PLAIN V2 %d, METHOD V2 %d, HIDDEN V4 %d, same address: TRUE TRUE" % (n, n, n)
 UNSWAPPED["procvars"] = lambda n: re.compile(r"PLAIN V2 %d, METHOD V2 %d, HIDDEN V[34] %d, same address: TRUE (TRUE|FALSE)" % (n, n, n))
-# nestedframe: the frame of Run that runs across the swap calls the old Show once more, with
-# its own values (PRINTS: the new Show would read that frame with the new layout), and the
-# fresh frames of the new Run after it call the new Show
-SWAPPED["nestedframe"] = lambda n: "base 42 v2"
-UNSWAPPED["nestedframe"] = lambda n: "last 42 v1"
 # case: notes every swap of the case gives: these change the main block
 NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")
@@ -117,6 +111,13 @@ SAYS = {
 # is a variable of the unit's implementation section, which every swap must leave in place,
 # so every tick prints it and the two numbers stay equal
 COUNTERS = {"globals": "hidden", "hidden": "calls"}
+# case: (what every tick before the marker prints, the marker, what every tick after it
+# prints): the program hands over from old code to new at the marker, which it prints once,
+# and at least one tick follows it. The driver's record of the swap is no boundary: the
+# program runs on while the driver prints it. In nestedframe the frame of Run that runs
+# across the swap calls the old Show once more, with its own values (the new Show would read
+# that frame with the new layout), and the fresh frames of the new Run after it the new Show
+HANDOFFS = {"nestedframe": ("base 42 v1", "last 42 v1", "base 42 v2")}
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
 LOAD_LIMITS = {"signals": 1000}
@@ -240,6 +241,20 @@ for name in names:
     # and the notes every swap of the case must give
     unnoted = [text for text in NOTES.get(name, []) if not swaps or any(text not in notes for notes in swaps)]
     ok = ok and not unnoted
+    handoff = []
+    if name in HANDOFFS:
+        before, marker, later = HANDOFFS[name]
+        texts = [text.strip() for _, text in records]
+        marks = [i for i, text in enumerate(texts) if text == marker]
+        if len(marks) != 1:
+            handoff.append("printed %r %d times" % (marker, len(marks)))
+        else:
+            wrong = [(records[i][0], text) for i, text in enumerate(texts) if text != (before if i < marks[0] else marker if i == marks[0] else later)]
+            if wrong:
+                handoff.append("tick %s printed %r" % wrong[0])
+            if marks[0] == len(texts) - 1:
+                handoff.append("no tick after %r" % marker)
+    ok = ok and not handoff
     loads = [float(m.group(1)) for m in (re.search(r"of which in the program (-?[\d.]+)\)$", lines[i]) for i in swapped) if m]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
@@ -253,7 +268,8 @@ for name in names:
           + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
                     for tick, text in stale[:1])
           + "".join("; a swap noted %r twice" % text for text in repeated[:1])
-          + "".join("; a swap did not note %r" % text for text in unnoted[:1]))
+          + "".join("; a swap did not note %r" % text for text in unnoted[:1])
+          + "".join("; " + text for text in handoff[:1]))
     if not ok:
         failing.append((name, body))
 for name, body in failing:

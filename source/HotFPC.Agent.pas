@@ -1556,14 +1556,17 @@ end;
 // a frame of the parent that still runs the old code; new code calls the new routine.
 function IsNestedRoutineName(const AName: AnsiString): Boolean;
 var
-  Separator: SizeInt;
+  Separator, ScopeStart: SizeInt;
   Head: AnsiString;
 begin
   Separator := Pos(UnitLevelSeparator, AName);
   if Separator = 0 then Exit(False);
   if IsFinallyHelperName(Copy(AName, Separator + Length(UnitLevelSeparator), Length(AName))) then Exit(True);
   Head := Copy(AName, 1, Separator - 1);
-  Result := Contains(Head, ScopeSeparator) and not EndsWith(Head, TypeScopeSuffix);
+  ScopeStart := Pos(ScopeSeparator, Head);
+  if ScopeStart = 0 then Exit(False);
+  // the scope alone: a routine named _ nests as <unit>$_$__$$_<name>, whose head ends in _$_
+  Result := not EndsWith(Copy(Head, ScopeStart + Length(ScopeSeparator), Length(Head)), TypeScopeSuffix);
 end;
 
 // ---------------------------------------------------------------- COFF (Windows)

@@ -87,8 +87,9 @@ start, so a line the program prints is never taken for one of hotfpc's:
   of them may still print the old code's line, as it may have been running when the swap
   was written, and every one after it the saved code's), a counter in the implementation
   section that every tick prints and that must keep pace with the ticks (`COUNTERS`),
-  `[hot]` lines hotfpc must print (`SAYS`), and the most a load may take inside the program
-  (`LOAD_LIMITS`).
+  `[hot]` lines hotfpc must print (`SAYS`), the most a load may take inside the program
+  (`LOAD_LIMITS`), and a tick the program prints once where it hands over from the old code
+  to the new, with what every tick before it and after it prints (`HANDOFFS`).
 
 It prints one line per case, the run of each case that failed, and "N of M cases as
 expected", and ends with 1 when one failed. [Edits and what they do](../guides/edits.md)

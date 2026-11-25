@@ -626,11 +626,10 @@ end.
 interface
 var
   Ticks: Integer;
+  Done: Boolean = False;
 procedure Run(const AStop: string);
 implementation
 uses SysUtils;
-var
-  Done: Boolean = False;
 procedure Run(const AStop: string);
 var
   Base: Integer;
