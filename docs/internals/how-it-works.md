@@ -250,9 +250,10 @@ after its agent connected, and the first program in every case, end hotfpc.
     names methods). hotfpc links Windows programs with `-Xm`, and the agent finds those
     sections' addresses in the linker's map: such a variable keeps its value, and such a
     routine's old entry jumps to its new code. fpc 3.2 names neither a nested routine nor
-    the helper that runs a routine's or the main block's implicit `finally`. These work in
-    their parent's frame, so the agent leaves their old entries with the old code, for a
-    parent that is still running it.
+    the helper it makes for each `finally`, implicit ones included, in a routine, the main
+    block or a unit's initialization or finalization. These work in their parent's frame,
+    so the agent leaves their old entries with the old code, for a parent that is still
+    running it.
   - fpc gives a variable with an initial value, and a typed constant, a section of its own
     and pads it to 16 bytes, on Linux and Windows alike. On Linux the agent takes the size
     from the ELF symbol. COFF symbols have no size, and the unit file doesn't cover every

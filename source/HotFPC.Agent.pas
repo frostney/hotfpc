@@ -172,6 +172,8 @@ const
   SectionNameInfix = '.n_';                 // fpc's section of one item: .text.n_<its name>
   ProgramNamePrefix = 'p$';                 // a program's names start with P$<program>
   UnitLevelSeparator = '_$$_';              // <unit>_$$_<routine>; a nested routine has $_$
+  FinallyHelperName = 'fin$';               // fpc's helper for a finally: fin$ and a label
+  FinallyHelperLabelLength = 8;             // the label's number, in hexadecimal digits
   AnchorSymbolName = 'HOTFPC.AGENT_$$_HOTANCHOR';
   DebugSectionPrefix = '.debug';
   PDataSectionPrefix = '.pdata';
@@ -1621,11 +1623,13 @@ end;
 // frame, so its old entry must keep its old code for a parent that runs the old code. fpc
 // 3.2 names a program's own routines; the program's sections without a symbol are the
 // main block's helpers (.text.n_p$main_$$_fin$00000003), which the running main block
-// calls with its frame.
+// calls with its frame. The helper of a unit's initialization or finalization has the
+// unit's level (.text.n_variants_$$_fin$000001e9); a label's number starts with a digit,
+// which no routine's or type's name does.
 function IsUnitLevelRoutineSection(const AName: AnsiString): Boolean;
 var
-  Index: SizeInt;
-  Rest: AnsiString;
+  Index, Digit: SizeInt;
+  Rest, Routine: AnsiString;
 begin
   Index := Pos(SectionNameInfix, AName);
   if Index = 0 then Exit(False);
@@ -1633,6 +1637,13 @@ begin
   if StartsWith(Rest, ProgramNamePrefix) then Exit(False);
   Index := Pos('$', Rest);
   Result := (Index > 1) and (Copy(Rest, Index - 1, Length(UnitLevelSeparator)) = UnitLevelSeparator);
+  if not Result then Exit;
+  Routine := Copy(Rest, Index - 1 + Length(UnitLevelSeparator), Length(Rest));
+  if not StartsWith(Routine, FinallyHelperName) or (Length(Routine) <> Length(FinallyHelperName) + FinallyHelperLabelLength)
+    or not (Routine[Length(FinallyHelperName) + 1] in ['0'..'9']) then Exit;
+  for Digit := Length(FinallyHelperName) + 1 to Length(Routine) do
+    if not (Routine[Digit] in ['0'..'9', 'a'..'f']) then Exit;
+  Result := False;
 end;
 
 function ParseCOFF(AObjectFile: PObjectFile): Boolean;
