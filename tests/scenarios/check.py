@@ -89,6 +89,8 @@ SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n
 # once after the swap's line, as its Tick ran the old code or had its result already
 UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
              for name in ("signature", "slowsave")}
+# case: notes every swap of the case gives: these change the main block
+NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")
 SAYS = {
     # the program starts with the units of the build it runs, without one a save left out
@@ -152,7 +154,13 @@ sections = re.findall(r"^=== (\S+)\n(.*?)(?=\n=== |\Z)", out, re.S | re.M)
 failing = []
 for name in names:
     body = sections.pop(0)[1] if sections and sections[0][0] == name else None
-    end = re.search(r"ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts", body or "")
+    # the run's lines without the script's timestamps: the driver's start with "[hot] ", the
+    # script's own with "--- " or "!!! ", the program's with what it printed. Each check
+    # matches a whole record from its start, so a line of the program that has a driver's
+    # words in it is no record of the driver's
+    lines = re.findall(r"^ *\d+\.\d+s  (.*)$", body or "", re.M)
+    ends = [m for m in (re.match(r"\[hot\] the program ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts$", line) for line in lines) if m]
+    end = ends[-1] if ends else None
     if not end:
         print("%-11s FAIL  %s" % (name, "no closing line" if body is not None else "did not run"))
         failing.append((name, body))
@@ -164,17 +172,20 @@ for name in names:
     # during it, so none finds the same code ("not swapped")
     # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
     # gave no outcome for
-    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! " not in body
-    # the program's tick records, each a line of its own after the script's timestamp: the
-    # same records count toward continuity and carry the counters
-    records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and not any(line.startswith("!!! ") for line in lines)
+    # the program's tick records: the same records count toward continuity and carry the
+    # counters
+    def tick_records(lines):
+        return [m.groups() for m in (re.match(r"tick (\d+):(.*)$", line) for line in lines) if m]
+    records = tick_records(lines)
     ticks = [int(tick) for tick, _ in records]
     seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
     ok = ok and seq
     missing = [text for text in PRINTS.get(name, [])
-               if not re.search(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", body, re.M)]
+               if not any(re.match(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", line)
+                          for line in lines)]
     ok = ok and not missing
-    unsaid = [pattern for pattern in SAYS.get(name, []) if not re.search(r"\[hot\] " + pattern, body)]
+    unsaid = [pattern for pattern in SAYS.get(name, []) if not any(re.match(r"\[hot\] " + pattern, line) for line in lines)]
     ok = ok and not unsaid
     drift = []
     for tick, text in records if name in COUNTERS else []:
@@ -182,17 +193,35 @@ for name in names:
         if not count or count.group(1) != tick:
             drift.append((tick, count and count.group(1)))
     ok = ok and not drift
-    # every tick after the last swap's line ran its code, but the first, which may have been
+    # the driver's records of its swaps, by their place among the lines
+    swapped = [i for i, line in enumerate(lines) if re.match(r"\[hot\] v\d+ swapped: ", line)]
+    # every tick after the last swap's record ran its code, but the first, which may have been
     # running when the swap was written; and one of them did
-    swaps = list(re.finditer(r"\] v\d+ swapped", body))
-    swapped = body[swaps[-1].end():] if swaps else ""
-    after = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", swapped, re.M) if name in SWAPPED else []
+    after = tick_records(lines[swapped[-1] + 1:]) if name in SWAPPED and swapped else []
     stale = [(tick, text.strip()) for i, (tick, text) in enumerate(after)
              if text != " " + SWAPPED[name](int(tick)) and not (i == 0 and text == " " + UNSWAPPED[name](int(tick)))]
     if name in SWAPPED and not any(text == " " + SWAPPED[name](int(tick)) for tick, text in after):
         stale.append(("", "no tick"))
     ok = ok and not stale
-    loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
+    # each note of a swap comes once, though fpc may give what it notes two names (the main
+    # block is PASCALMAIN and main); a swap's notes follow its record, up to the driver's next
+    # record of another kind, and the program's lines may come between them
+    swaps, notes = [], None
+    for i, line in enumerate(lines):
+        note = re.match(r"\[hot\]   note: (.*)$", line)
+        if i in swapped:
+            notes = []
+            swaps.append(notes)
+        elif note and notes is not None:
+            notes.append(note.group(1))
+        elif line.startswith("[hot] "):
+            notes = None
+    repeated = [text for notes in swaps for text in sorted(set(notes)) if notes.count(text) > 1]
+    ok = ok and not repeated
+    # and the notes every swap of the case must give
+    unnoted = [text for text in NOTES.get(name, []) if not swaps or any(text not in notes for notes in swaps)]
+    ok = ok and not unnoted
+    loads = [float(m.group(1)) for m in (re.search(r"of which in the program (-?[\d.]+)\)$", lines[i]) for i in swapped) if m]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
@@ -203,7 +232,9 @@ for name in names:
                     for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow)
           + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
-                    for tick, text in stale[:1]))
+                    for tick, text in stale[:1])
+          + "".join("; a swap noted %r twice" % text for text in repeated[:1])
+          + "".join("; a swap did not note %r" % text for text in unnoted[:1]))
     if not ok:
         failing.append((name, body))
 for name, body in failing:
