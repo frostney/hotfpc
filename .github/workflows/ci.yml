@@ -68,6 +68,9 @@ jobs:
       - name: Scenarios
         run: python3 tests/scenarios/check.py
 
+      - name: The agent on its own
+        run: python3 tests/agent/check.py
+
   windows:
     name: Windows x86-64, fpc 3.2.2
     runs-on: windows-latest
@@ -114,6 +117,13 @@ jobs:
           HOT_DRIVER: build/hotfpc.exe
           HOT_DRIVER_OPTS: -Twin64 -Px86_64
         run: python tests/scenarios/check.py
+
+      - name: The agent on its own
+        timeout-minutes: 10
+        env:
+          HOT_DRIVER: build/hotfpc.exe
+          HOT_DRIVER_OPTS: -Twin64 -Px86_64
+        run: python tests/agent/check.py
 
   docs:
     name: Documentation

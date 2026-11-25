@@ -2,8 +2,9 @@
 /build/
 # what hotfpc builds next to a program it runs
 .hot/
-# scenario test programs
+# scenario test programs, and the agent check's
 /tests/scenarios/work/
+/tests/agent/work/
 # lwpt's local state in the example
 /examples/lwpt/.lwpt/
 /examples/lwpt/build/
