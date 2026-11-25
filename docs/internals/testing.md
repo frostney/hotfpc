@@ -38,7 +38,9 @@ units, and a list of steps: the edits the script saves into the files while the 
 runs. The script saves a step once hotfpc has reported its outcome for the step before (a
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
 how fast the machine compiles. A step marked `+` comes 0.12 s after the one before instead,
-while hotfpc is still busy with it. After the last step the script tells the program to
+while hotfpc is still busy with it. An edit `(path, None, BLOCKED)` puts a directory where
+hotfpc writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
+`(path, None, None)` removes it again. After the last step the script tells the program to
 end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
 
 `check.py` runs `scenario.py` and checks each case's run:
@@ -48,17 +50,20 @@ end. The program prints a numbered tick every 0.3 s, with what the unit's code r
 - a clean exit (code 0), and no step whose text didn't apply to the file;
 - the ticks: every number from 1 to the last is there, so the program's output has no gaps
   (a restart where none was expected shows in the count of restarts);
-- for some cases, lines the program must print after a swap (`PRINTS`), a counter in the
-  implementation section that must keep pace with the ticks (`COUNTERS`), and the most a
-  load may take inside the program (`LOAD_LIMITS`).
+- for some cases, lines the program must print after a swap (`PRINTS`), what every tick
+  after the last swap prints, so that the program runs the saved code (`SWAPPED`), a
+  counter in the implementation section that every tick prints and that must keep pace
+  with the ticks (`COUNTERS`), and the most a load may take inside the program
+  (`LOAD_LIMITS`).
 
 It prints one line per case, the run of each case that failed, and "N of M cases as
 expected", and ends with 1 when one failed. [Edits and what they do](../guides/edits.md)
 lists every step and its outcome.
 
-For a Windows target (`-Twin` in `HOT_DRIVER_OPTS`), `check.py` expects a restart in two
-cases where the other systems swap: fpc's Windows linker leaves out runtime routines the
-program never called. The comments in `check.py` say which.
+For a Windows target (`-Twin` in `HOT_DRIVER_OPTS`), `check.py` expects a restart in three
+cases where the other systems swap: in two, fpc's Windows linker leaves out runtime
+routines the program never called; in `progvar`, fpc can't write the assembler that shows
+a save's sizes. The comments in `check.py` say which.
 
 | Variable | Effect |
 | --- | --- |
