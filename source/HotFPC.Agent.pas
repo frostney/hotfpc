@@ -4825,6 +4825,7 @@ end;
 procedure Park(const AProcessID, AThreadID: LongInt);
 var
   FirstArrival: LongInt;
+  Start: QWord;
 begin
   if HandledCount > High(HandledIDs) then
   begin
@@ -4832,6 +4833,7 @@ begin
     Exit;
   end;
   FirstArrival := InterlockedCompareExchange(Arrived, 0, 0);
+  Start := ThreadStartTime(AThreadID);
   if LibCTGKill(AProcessID, AThreadID, ParkSignal) <> 0 then
   begin
     if LibCErrnoLocation^ <> NoSuchThread then StopFailure := ThreadSuspendFailure;
@@ -4840,7 +4842,9 @@ begin
   MarkHandled(AThreadID, SignalledCount);
   SignalledIDs[SignalledCount] := AThreadID;
   SignalStates[SignalledCount] := SignalPending;
-  SignalStarts[SignalledCount] := ThreadStartTime(AThreadID);
+  // the thread that took the signal, when the ID named the same one before and after it
+  if ThreadStartTime(AThreadID) <> Start then Start := 0;
+  SignalStarts[SignalledCount] := Start;
   SignalArrivals[SignalledCount] := FirstArrival;
   Inc(SignalledCount);
   Inc(UnparkedCount);
@@ -4876,7 +4880,7 @@ begin
     if HandledIDs[I] = AThreadID then
     begin
       if (HandledSignals[I] < 0) or (SignalStates[HandledSignals[I]] <> SignalEnded) then Exit(True);
-      Exit(ThreadEnded(AProcessID, AThreadID, SignalStarts[HandledSignals[I]]));
+      Exit(ThreadEnded(AProcessID, AThreadID, 0));   // whether any thread runs under the ID now
     end;
 end;
 
@@ -4887,11 +4891,16 @@ begin
   Result := InterlockedCompareExchange(Left, 0, 0) >= InterlockedCompareExchange(Arrived, 0, 0);
 end;
 
-// Whether every handler that started has saved where its thread was: it counts itself in
-// Arrived first and in Parked once it has.
+// Whether every handler that started has saved where its thread was or has returned: it
+// counts itself in Arrived first, in Parked once it has saved, and in Left when it returns,
+// as one that ran before the threads were held does without parking.
 function HandlersSettled: Boolean;
+var
+  Started, Returned: LongInt;
 begin
-  Result := InterlockedCompareExchange(Parked, 0, 0) >= InterlockedCompareExchange(Arrived, 0, 0);
+  Started := InterlockedCompareExchange(Arrived, 0, 0);
+  Returned := InterlockedCompareExchange(Left, 0, 0);
+  Result := InterlockedCompareExchange(Parked, 0, 0) + Returned >= Started;
 end;
 
 // Matches the threads that parked since the last call to their pending signals, each once.
