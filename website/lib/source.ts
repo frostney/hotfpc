@@ -33,7 +33,7 @@ const docs = defineDocs({
           dark: 'github-dark',
         },
         // the languages the docs' fences name
-        langs: ['pascal', 'sh', 'bash', 'bat', 'python', 'toml', 'json', 'yaml'],
+        langs: ['pascal', 'sh', 'bash', 'bat', 'powershell', 'python', 'toml', 'json', 'yaml'],
       },
     }),
   },
