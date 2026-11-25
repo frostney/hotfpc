@@ -78,11 +78,11 @@ See [with lwpt](docs/guides/lwpt.md) and [`examples/lwpt`](examples/lwpt).
 
 This is a real run of [`examples/raylib`](examples/raylib) on macOS arm64 with Homebrew's
 fpc 3.2.2 and raylib ([video](docs/raylib-demo.mp4)), recorded on 25 Nov 2026 with hotfpc
-built from this repository: version 1.1.0 and the changes under Unreleased in the
-[changelog](CHANGELOG.md). The terminal on the left runs tmux, with `scene.pas` open in vim
-above and a shell below that runs `hotfpc -Fl/opt/homebrew/lib game.pas`. The game window
-is on the right: balls that fall, bounce and change colour, with a count of bounces at the
-top.
+built from commit `0cbf4ea` ([pull request #24](https://github.com/frostney/hotfpc/pull/24)),
+which reports version 1.1.0. The terminal on the left runs tmux, with `scene.pas` open in
+vim above and a shell below that runs `hotfpc -Fl/opt/homebrew/lib game.pas`. The game
+window is on the right: balls that fall, bounce and change colour, with a count of bounces
+at the top.
 
 Five edits to `scene.pas` get saved while the game runs:
 
@@ -95,11 +95,12 @@ Five edits to `scene.pas` get saved while the game runs:
    turned by their hue, so they spin as their colour changes.
 5. `MaxBalls = 64` to `128`: room for more balls.
 
-The first four are swapped in 96 to 109 ms after the save (`v2` to `v5`). The balls carry
-on from where they were, and the count of bounces keeps going. The fifth changes the size
-of `Balls`, which a swap can't do to a variable the program already has, so hotfpc prints
-`restart needed: scene.Balls` and starts the game over with the new code (`v6`), 479 ms
-after the save. The game begins again with its first balls, with all five edits in it.
+The first four are swapped in 96 to 109 ms after hotfpc saw the save (`v2` to `v5`). The
+balls carry on from where they were, and the count of bounces keeps going. The fifth
+changes the size of `Balls`, which a swap can't do to a variable the program already has,
+so hotfpc prints `restart needed: scene.Balls` and starts the game over with the new code.
+It reports `v6 restarted` 479 ms after it saw that save. The game begins again with its
+first balls, with all five edits in it.
 
 [With raylib](docs/guides/raylib.md) shows how to get raylib, run the example and lay out a
 game for hot reloading.

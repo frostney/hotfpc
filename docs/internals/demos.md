@@ -32,7 +32,8 @@ reference for these steps.
 ## The raylib demo
 
 `docs/raylib-demo.gif` and `docs/raylib-demo.mp4` were recorded on macOS arm64 on
-25 Nov 2026, with Homebrew's fpc 3.2.2 and raylib and hotfpc built from this repository.
+25 Nov 2026, with Homebrew's fpc 3.2.2 and raylib and hotfpc built from commit `0cbf4ea`
+([pull request #24](https://github.com/frostney/hotfpc/pull/24)), which reports version 1.1.0.
 The run was `hotfpc -Fl/opt/homebrew/lib game.pas` in a copy of `examples/raylib`, and the
 five edits the README describes were typed into vim one key at a time through
 `tmux send-keys`, five seconds apart. The terminal (tmux with vim and the shell, 84 by 30)

@@ -91,7 +91,9 @@
 - The documentation is a tree under `docs/`: guides from an introduction to
   troubleshooting, a reference for the command line, every `[hot]` line, the environment
   variables, the platforms and the limits, and pages for contributors. The README shows the
-  Homebrew install and a recording of `examples/raylib`, and CONTRIBUTING.md is new.
+  Homebrew install and a recording of `examples/raylib`: four saves swapped into the
+  running game, then a fifth that grows a variable, after which hotfpc starts the game over
+  by itself. CONTRIBUTING.md is new.
 
 ## 1.1.0
 
