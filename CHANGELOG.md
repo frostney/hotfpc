@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On Linux x86-64, an object file the agent can't read is reported as `<file> is not an
+  x86-64 ELF object`. The error named aarch64, Linux arm64's architecture.
 - A swap that changes the program's main block prints `note: the main block changed` once.
   It printed it twice: fpc gives the main block two names, `PASCALMAIN` and `main`.
 - An empty source file in a watched directory, such as an empty `.inc` nothing uses, no

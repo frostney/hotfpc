@@ -2,24 +2,27 @@
 
 > **Audience: contributors.** How hotfpc is tested, and when a change is done.
 
-hotfpc has two layers of tests: unit tests of the driver's internals, and end-to-end
-scenarios that run real programs under hotfpc and save edits into them.
+hotfpc has three layers of tests: unit tests of the driver's internals, a check of the
+agent on its own, and end-to-end scenarios that run real programs under hotfpc and save
+edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
 python3 tests/scenarios/check.py               # all 38 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
+python3 tests/agent/check.py                   # the agent on its own
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
 ## When a change is done
 
-A change is done when the unit tests pass and `check.py` prints "38 of 38 cases as
-expected" on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
-Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
-Windows). Changes to the agent or to the checks of layouts and sizes are tested with fpc
-3.2.2 and 3.3.1. CI runs the unit tests and the scenarios with fpc 3.2.2 on all five
-systems ([tooling](tooling.md#ci)); the other compilers and Wine are run by hand.
+A change is done when the unit tests pass, `check.py` prints "38 of 38 cases as expected"
+and `tests/agent/check.py` passes, on every system the change can affect: macOS arm64,
+macOS x86-64, Linux x86-64, Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64
+units, under Wine or on Windows). Changes to the agent or to the checks of layouts and
+sizes are tested with fpc 3.2.2 and 3.3.1. CI runs the unit tests, the scenarios and the
+check of the agent with fpc 3.2.2 on all five systems ([tooling](tooling.md#ci)); the other
+compilers and Wine are run by hand.
 
 ## The unit tests
 
@@ -30,6 +33,20 @@ no framework: `Expect` and `ExpectEqual` print `FAIL: ...` and count, and the pr
 with 1 when a check failed. `./build.sh tests` compiles `source/HotFPC.pas` with
 `-dHOTFPC_TESTS` into `build/tests/hotfpc-tests` and runs it
 ([build system](build-system.md#the-unit-tests)).
+
+## The agent on its own
+
+`tests/agent/check.py` checks what the agent answers to commands that hotfpc doesn't send in
+a scenario, such as an object file it can't read. hotfpc builds a small program with the
+agent in `tests/agent/work/`, which git ignores, and starts it once; the program ends at
+once. The script then starts the program itself, with `HOT_PORT` and `HOT_TOKEN` naming a
+port it listens on, and stands in for hotfpc on the agent's protocol (the comment at the top
+of `source/HotFPC.Agent.pas`): it waits for the agent's hello, sends each case's command and
+checks the reply. The one case so far, `badobject`, loads a file that is no object file and
+expects the error to name the object files of the system the agent runs on, such as
+`is not an x86-64 ELF object`. `HOT_DRIVER` and `HOT_DRIVER_OPTS` pick the hotfpc and its
+options as for the scenarios; for a Windows target on another system the script runs the
+program under Wine, as hotfpc does.
 
 ## The scenarios
 
