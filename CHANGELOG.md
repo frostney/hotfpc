@@ -9,7 +9,8 @@
   variable. COFF objects state no sizes, so hotfpc now also compiles a Windows program to
   assembler (`-s -Aas`, into `.hot/asm/`) when a changed unit has such a variable, and
   compares the sizes there. A save whose sizes it can't compare, because fpc didn't write
-  the assembler, needs a restart too.
+  the assembler or the assembler has no size for a variable the object file defines, needs
+  a restart too.
 
 ## 1.1.0
 

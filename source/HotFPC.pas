@@ -1739,7 +1739,10 @@ end;
   is name=bytes, under the label's name (TC_$U_$$_CALLS). The running program's sizes are
   those it started with, and those of the labels that swaps added, each as the program first
   had it: the agent keeps a variable at its first address, also when a save removed it and a
-  later one brings it back. }
+  later one brings it back. The object file names the data the assembler must give a size
+  for: a section of its own for each (.data.n_TC_$U_$$_CALLS). A datum it names that the
+  assembler has no size for has an unknown size (name=?), and a save that changes a unit
+  with one needs a restart: an unknown size is never taken as the same. }
 
 type
   TDataSizes = class
@@ -1747,14 +1750,20 @@ type
     { Whether an object file has a variable with an initial value or a typed constant: fpc
       names each one TC_$..., in COFF as a section's name or a symbol's. }
     class function HasInitialisedData(const AObjectPath: string): Boolean;
-    { name=bytes for every TC_$ label of fpc's assembler text whose data it can count; a label
-      followed by a directive it does not know is left out. The caller frees the list. }
+    { Adds to ANames the variables with an initial value and the typed constants a COFF
+      object defines, by fpc's TC_$ names: each section of one (.data.n_TC_$U_$$_CALLS) and
+      each symbol of one it defines. False when the file cannot be read or is no COFF object
+      that has them; ANames is then incomplete. }
+    class function ObjectNames(const AObjectPath: string; const ANames: TStrings): Boolean;
+    { name=bytes for every TC_$ label of fpc's assembler text, name=? (UnknownSize) for one
+      followed by a directive it does not know. The caller frees the list. }
     class function Read(const AAssembler: string): TStringList;
     { The bytes of the string of a .ascii line. }
     class function StringBytes(const ALine: string): Integer;
-    { What changed between two lists of sizes, as "variable U.CALLS changed size from 4 to 8
-      bytes", for each name both have; a name only one of them has is no change. The caller
-      frees the list. }
+    { The restart reasons between two lists of sizes: "variable U.CALLS changed size from 4
+      to 8 bytes" for each name both have, and one for each name of ANew whose size either
+      list has as unknown. A name only AOld has, or only ANew with a known size, is no change.
+      The caller frees the list. }
     class function Changes(const AOld, ANew: TStrings): TStringList;
     { Adds to ASizes the sizes in AAdded of the names ASizes doesn't have; a name it has keeps
       its size. }
@@ -1767,6 +1776,24 @@ type
 const
   AssemblerExtension = '.s';
   InitialisedDataPrefix = 'TC_$';
+  { a size the assembler does not give }
+  UnknownSize = '?';
+  UnknownSizes = 'the sizes of variables with initial values are unknown: ';
+  { fpc's section of a datum: its kind, this, and the datum's name (.data.n_TC_$U_$$_CALLS) }
+  DatumSectionInfix = '.n_';
+  { the parts of a COFF object (the PE/COFF specification) the names are read from }
+  COFFHeaderBytes = 20;
+  COFFSectionCountOffset = 2;
+  COFFSymbolTableOffset = 8;
+  COFFSymbolCountOffset = 12;
+  COFFOptionalHeaderOffset = 16;
+  COFFSectionBytes = 40;
+  COFFSymbolBytes = 18;
+  COFFShortNameBytes = 8;
+  COFFSymbolSectionOffset = 12;
+  COFFSymbolAuxiliaryOffset = 17;
+  { a section name longer than 8 bytes: / and its offset in the string table, in decimal }
+  COFFLongSectionName = '/';
   ProgramPrefix = 'P$';
   SectionDirective = '.section';
   GlobalDirective = '.globl';
@@ -1789,6 +1816,106 @@ var
   Contents: string;
 begin
   Result := ReadFileContents(AObjectPath, Contents) and (Pos(InitialisedDataPrefix, Contents) > 0);
+end;
+
+class function TDataSizes.ObjectNames(const AObjectPath: string; const ANames: TStrings): Boolean;
+var
+  Contents, Name: string;
+  Sections, OptionalBytes, SymbolTable, Symbols, Strings, Offset, Section, Auxiliary, StringOffset: Int64;
+  I: Integer;
+
+  { the little-endian number of ABytes bytes at AOffset; False past the end of the file }
+  function Field(const AOffset, ABytes: Int64; out AValue: Int64): Boolean;
+  var
+    K: Integer;
+  begin
+    AValue := 0;
+    Result := (AOffset >= 0) and (AOffset + ABytes <= Length(Contents));
+    if Result then
+      for K := ABytes - 1 downto 0 do
+        AValue := (AValue shl 8) or Ord(Contents[AOffset + 1 + K]);
+  end;
+
+  { the string at AOffset of the string table, up to its NUL }
+  function LongName(const AOffset: Int64; out AName: string): Boolean;
+  var
+    Last: Int64;
+  begin
+    AName := '';
+    Result := (Strings >= 0) and (AOffset >= 0) and (Strings + AOffset < Length(Contents));
+    if not Result then
+      Exit;
+    Last := Strings + AOffset;
+    while (Last < Length(Contents)) and (Contents[Last + 1] <> #0) do
+      Inc(Last);
+    Result := Last < Length(Contents);
+    AName := Copy(Contents, Strings + AOffset + 1, Last - Strings - AOffset);
+  end;
+
+  function ShortName(const AOffset: Int64): string;
+  begin
+    Result := Copy(Contents, AOffset + 1, COFFShortNameBytes);
+    if Pos(#0, Result) > 0 then
+      SetLength(Result, Pos(#0, Result) - 1);
+  end;
+
+  procedure Add(const AName: string);
+  begin
+    if ANames.IndexOf(AName) < 0 then
+      ANames.Add(AName);
+  end;
+
+begin
+  Result := False;
+  if not ReadFileContents(AObjectPath, Contents) then
+    Exit;
+  Result := True;
+  if Pos(InitialisedDataPrefix, Contents) = 0 then
+    Exit;
+  Result := False;
+  if not (Field(COFFSectionCountOffset, 2, Sections) and Field(COFFSymbolTableOffset, 4, SymbolTable)
+    and Field(COFFSymbolCountOffset, 4, Symbols) and Field(COFFOptionalHeaderOffset, 2, OptionalBytes)) then
+    Exit;
+  { the string table follows the symbols }
+  Strings := SymbolTable + Symbols * COFFSymbolBytes;
+  if (SymbolTable = 0) or (Strings + 4 > Length(Contents)) then
+    Strings := -1;
+  for I := 0 to Sections - 1 do
+  begin
+    Offset := COFFHeaderBytes + OptionalBytes + Int64(I) * COFFSectionBytes;
+    if Offset + COFFSectionBytes > Length(Contents) then
+      Exit;
+    Name := ShortName(Offset);
+    if (Copy(Name, 1, Length(COFFLongSectionName)) = COFFLongSectionName) then
+    begin
+      StringOffset := StrToInt64Def(Copy(Name, Length(COFFLongSectionName) + 1, MaxInt), -1);
+      if not LongName(StringOffset, Name) then
+        Exit;
+    end;
+    if Pos(DatumSectionInfix + InitialisedDataPrefix, Name) > 0 then
+      Add(Copy(Name, Pos(DatumSectionInfix + InitialisedDataPrefix, Name) + Length(DatumSectionInfix), MaxInt));
+  end;
+  I := 0;
+  while I < Symbols do
+  begin
+    Offset := SymbolTable + Int64(I) * COFFSymbolBytes;
+    if not (Field(Offset + COFFSymbolSectionOffset, 2, Section) and Field(Offset + COFFSymbolAuxiliaryOffset, 1, Auxiliary)) then
+      Exit;
+    { the first four bytes zero: the name is in the string table, at the next four }
+    if Field(Offset, 4, StringOffset) and (StringOffset = 0) then
+    begin
+      if not (Field(Offset + 4, 4, StringOffset) and LongName(StringOffset, Name)) then
+        Exit;
+    end
+    else
+      Name := ShortName(Offset);
+    { a section number of 1 or more (signed): defined here; 0 is an undefined reference to
+      another unit's }
+    if StartsWith(Name, InitialisedDataPrefix) and (Section > 0) and (Section < $8000) then
+      Add(Name);
+    Inc(I, 1 + Auxiliary);
+  end;
+  Result := True;
 end;
 
 class function TDataSizes.StringBytes(const ALine: string): Integer;
@@ -1831,8 +1958,10 @@ var
 
   procedure Finish;
   begin
-    if (Current <> '') and Known and (Size > 0) then
-      Sizes.Add(Current + '=' + IntToStr(Size));
+    if (Current <> '') and Known then
+      Sizes.Add(Current + '=' + IntToStr(Size))
+    else if Current <> '' then
+      Sizes.Add(Current + '=' + UnknownSize);
     Current := '';
   end;
 
@@ -1921,7 +2050,13 @@ begin
   for I := 0 to ANew.Count - 1 do
   begin
     Name := ANew.Names[I];
-    if (AOld.IndexOfName(Name) >= 0) and (AOld.Values[Name] <> ANew.ValueFromIndex[I]) then
+    if ANew.ValueFromIndex[I] = UnknownSize then
+      Result.Add(UnknownSizes + 'fpc''s assembler has no size for ' + Pretty(Name))
+    else if AOld.IndexOfName(Name) < 0 then
+      Continue
+    else if AOld.Values[Name] = UnknownSize then
+      Result.Add(UnknownSizes + 'the assembler the program started from had no size for ' + Pretty(Name))
+    else if AOld.Values[Name] <> ANew.ValueFromIndex[I] then
       Result.Add('variable ' + Pretty(Name) + ' changed size from ' + AOld.Values[Name] + ' to '
         + ANew.ValueFromIndex[I] + ' bytes');
   end;
@@ -2879,7 +3014,8 @@ type
     { This save compiled the program to assembler. }
     FAssemblyWritten: Boolean;
     { The sizes of the running program's initialised data (see "sizes of initialised data"),
-      name=bytes; nil while they are unknown, FSizesProblem then says why. }
+      name=bytes, or name=? for a datum the assembler had no size for; nil while they are
+      unknown, FSizesProblem then says why. }
     FSizes: TStringList;
     FSizesProblem: string;
     { The running program; nil while hotfpc waits for a save that builds to start it again. }
@@ -2909,7 +3045,7 @@ type
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
     function HasInitialisedData(const AObjects: TStrings): Boolean;
-    function ReadAssembly(const AObjects: TStrings): TStringList;
+    function ReadAssembly(const AObjects: TStrings; out AProblem: string): TStringList;
     function RefreshLiveAssembly(out AProblem: string): Boolean;
     procedure StartSizeCheck;
     function NotAssembled(const AProblem: string): string;
@@ -3183,34 +3319,56 @@ begin
   Result := False;
 end;
 
-{ The sizes in this save's assembler of the units (named by their object files); none for a
-  unit with no assembler there. The caller frees the list. }
-function TDriver.ReadAssembly(const AObjects: TStrings): TStringList;
+{ The sizes in this save's assembler of the initialised data of the units (named by their
+  object files), each datum the object file names: name=? (UnknownSize) for one the
+  assembler has no size for, as when fpc wrote no assembler for the unit or a directive it
+  does not know follows the label. nil when an object file cannot be read; AProblem then
+  says why. Otherwise the caller frees the list. }
+function TDriver.ReadAssembly(const AObjects: TStrings; out AProblem: string): TStringList;
 var
-  I: Integer;
+  I, K: Integer;
   Text: string;
-  Sizes: TStringList;
+  Names, Sizes: TStringList;
 begin
+  AProblem := '';
   Result := TStringList.Create;
-  if not FAssemblyWritten then
-    Exit;
-  for I := 0 to AObjects.Count - 1 do
-    if ReadFileContents(FWorkspace.AssemblyDirectory + ChangeFileExt(AObjects[I], AssemblerExtension), Text) then
+  Names := TStringList.Create;
+  try
+    for I := 0 to AObjects.Count - 1 do
     begin
-      Sizes := TDataSizes.Read(Text);
+      Names.Clear;
+      if not TDataSizes.ObjectNames(FWorkspace.UnitsDirectory + AObjects[I], Names) then
+      begin
+        AProblem := 'hotfpc could not read the object file ' + AObjects[I];
+        FreeAndNil(Result);
+        Exit;
+      end;
+      if Names.Count = 0 then
+        Continue;
+      Sizes := nil;
+      if FAssemblyWritten
+        and ReadFileContents(FWorkspace.AssemblyDirectory + ChangeFileExt(AObjects[I], AssemblerExtension), Text) then
+        Sizes := TDataSizes.Read(Text);
       try
-        Result.AddStrings(Sizes);
+        for K := 0 to Names.Count - 1 do
+          if (Sizes <> nil) and (Sizes.IndexOfName(Names[K]) >= 0) then
+            Result.Add(Names[K] + '=' + Sizes.Values[Names[K]])
+          else
+            Result.Add(Names[K] + '=' + UnknownSize);
       finally
         Sizes.Free;
       end;
     end;
+  finally
+    Names.Free;
+  end;
 end;
 
 { The sizes of the units the program was just started with become the running program's
   (FSizes), from fpc's assembler when one of them has initialised data. After a compile to
   assembler, every unit's file in the assembly directory is current: the units whose source
   changed since were made to recompile there too. False when fpc failed; the sizes are then
-  unknown (FSizesProblem). }
+  unknown (FSizesProblem), as they are when an object file cannot be read. }
 function TDriver.RefreshLiveAssembly(out AProblem: string): Boolean;
 var
   Objects: TStringList;
@@ -3229,7 +3387,7 @@ begin
         WriteLn('[hot debug] assembler of the running program in ', FormatMilliseconds(Seconds), ' ms');
     end;
     if Result then
-      FSizes := ReadAssembly(Objects)
+      FSizes := ReadAssembly(Objects, FSizesProblem)
     else
       FSizesProblem := NotAssembled(AProblem);
   finally
@@ -3261,15 +3419,16 @@ end;
 procedure TDriver.RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
 begin
   Inc(FRefused);
-  FReporter.Say('restart needed: the sizes of variables with initial values are unknown: ' + AReason
+  FReporter.Say('restart needed: ' + UnknownSizes + AReason
     + ' (not applied; compile ' + FormatMilliseconds(ACompileSeconds) + ' ms)');
 end;
 
 { Each changed unit's variables with initial values and typed constants, by the sizes in
   fpc's assembler: on Windows the object file does not show one that grows inside the
   padding of its section. Compiles to assembler only when a changed unit has such data. A
-  save whose sizes cannot be compared, because fpc did not write the assembler or the
-  running program's sizes are unknown, needs a restart too. }
+  save whose sizes cannot be compared, because fpc did not write the assembler, the running
+  program's sizes are unknown, or either has no size for a datum a changed object file
+  names, needs a restart too. }
 function TDriver.SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
   var AInterfaceSeconds: Double): Boolean;
 var
@@ -3295,7 +3454,12 @@ begin
     RefuseUncheckedSizes(NotAssembled(Problem), ACompileSeconds);
     Exit(False);
   end;
-  Compiled := ReadAssembly(AChanged);
+  Compiled := ReadAssembly(AChanged, Problem);
+  if Compiled = nil then
+  begin
+    RefuseUncheckedSizes(Problem, ACompileSeconds);
+    Exit(False);
+  end;
   Changes := TDataSizes.Changes(FSizes, Compiled);
   try
     if Changes.Count > 0 then
@@ -3320,12 +3484,14 @@ var
   I: Integer;
   RecordName: string;
   Added: TStringList;
+  Problem: string;
 begin
   if FCheckSizes and (FSizes <> nil) then
   begin
-    Added := ReadAssembly(AChanged);
+    Added := ReadAssembly(AChanged, Problem);
     try
-      TDataSizes.Keep(FSizes, Added);
+      if Added <> nil then
+        TDataSizes.Keep(FSizes, Added);
     finally
       Added.Free;
     end;
@@ -5139,8 +5305,15 @@ begin
     + 'U_$U_$$_C:' + LineEnding + #9'.long'#9'5' + LineEnding);
   try
     ExpectEqual(Sizes.Values['TC_$U_$$_A'], '24', 'zero bytes, up to the next label');
-    Expect(Sizes.IndexOfName('TC_$U_$$_B') < 0, 'data it cannot count leaves the label out');
+    ExpectEqual(Sizes.Values['TC_$U_$$_B'], UnknownSize, 'data it cannot count gives an unknown size');
     Expect(Sizes.IndexOfName('U_$U_$$_C') < 0, 'only initialised data counts');
+  finally
+    Sizes.Free;
+  end;
+  Sizes := TDataSizes.Read('.section .data.n_TC_$Z_$$_E,"d"' + LineEnding + 'TC_$Z_$$_E:' + LineEnding
+    + LineEnding + '.section .data.n_TC_$Z_$$_F,"d"' + LineEnding + 'TC_$Z_$$_F:' + LineEnding);
+  try
+    ExpectEqual(Sizes.CommaText, 'TC_$Z_$$_E=0,TC_$Z_$$_F=0', 'an empty record has a size too: none');
   finally
     Sizes.Free;
   end;
@@ -5186,6 +5359,20 @@ begin
     Changes := TDataSizes.Changes(Running, Compiled);
     try
       ExpectEqual(Changes.Count, 0, 'a variable added or removed is no change of size');
+    finally
+      Changes.Free;
+    end;
+    { a size the check needs and does not have is never taken as the same }
+    Compiled.Values['TC_$P$MAIN_$$_CALLS'] := UnknownSize;
+    Compiled.Values['TC_$P$MAIN_$$_ADDED'] := UnknownSize;
+    Running.Values['TC_$P$MAIN_$$_COUNT'] := UnknownSize;
+    Changes := TDataSizes.Changes(Running, Compiled);
+    try
+      ExpectEqual(Changes.Text,
+        UnknownSizes + 'the assembler the program started from had no size for MAIN.COUNT' + LineEnding
+        + UnknownSizes + 'fpc''s assembler has no size for MAIN.CALLS' + LineEnding
+        + UnknownSizes + 'fpc''s assembler has no size for MAIN.ADDED' + LineEnding,
+        'an unknown size of the running program or of the save, also of a new variable, needs a restart');
     finally
       Changes.Free;
     end;
@@ -5243,6 +5430,72 @@ begin
     'a procedure''s with a parameter');
   ExpectEqual(TDataSizes.Pretty('TC_$U$_$MOVE$LONGINT$SMALLINT_$$_STEPS'), 'U.MOVE(LONGINT,SMALLINT).STEPS',
     'a procedure''s with two parameters');
+end;
+
+{ A COFF object as fpc writes one, with the parts ObjectNames reads: the header, the section
+  table, the symbols and the string table. }
+function TestCOFFObject: string;
+
+  function Bytes(const AValue: Int64; const ACount: Integer): string;
+  var
+    K: Integer;
+  begin
+    Result := '';
+    for K := 0 to ACount - 1 do
+      Result := Result + Chr((AValue shr (8 * K)) and $FF);
+  end;
+
+  function Padded(const AText: string; const ACount: Integer): string;
+  begin
+    Result := AText + StringOfChar(#0, ACount - Length(AText));
+  end;
+
+  function Symbol(const AName: string; const ASection, AClass, AAuxiliary: Integer): string;
+  begin
+    Result := AName + Bytes(0, 4) + Bytes(ASection, 2) + Bytes(0, 2) + Bytes(AClass, 1) + Bytes(AAuxiliary, 1);
+  end;
+
+const
+  SectionA = '.data.n_TC_$U_$$_A';
+  SymbolB = 'TC_$U_$$_B';
+  SymbolC = 'TC_$V_$$_C';
+var
+  Strings: string;
+begin
+  Strings := SectionA + #0 + SymbolB + #0 + SymbolC + #0;
+  { two sections, four symbols (one of them an auxiliary record) from offset 100 }
+  Result := Bytes($8664, 2) + Bytes(2, 2) + Bytes(0, 4) + Bytes(100, 4) + Bytes(4, 4) + Bytes(0, 2) + Bytes(0, 2)
+    + Padded('/4', 8) + StringOfChar(#0, 32)
+    + Padded('.text', 8) + StringOfChar(#0, 32)
+    { TC_$U_$$_B, defined in section 1, with an auxiliary record that names nothing }
+    + Symbol(Bytes(0, 4) + Bytes(4 + Length(SectionA) + 1, 4), 1, 2, 1) + StringOfChar(#0, 18)
+    { TC_$V_$$_C, another unit's, used here: undefined }
+    + Symbol(Bytes(0, 4) + Bytes(4 + Length(SectionA) + 1 + Length(SymbolB) + 1, 4), 0, 2, 0)
+    + Symbol(Padded('.text', 8), 2, 3, 0)
+    + Bytes(4 + Length(Strings), 4) + Strings;
+end;
+
+procedure TestObjectNames;
+var
+  Root: string;
+  Names: TStringList;
+begin
+  Root := MakeTestDirectory('objectnames');
+  WriteTestFile(Root + 'u.o', TestCOFFObject);
+  WriteTestFile(Root + 'v.o', 'no COFF object, but TC_$U_$$_A');
+  WriteTestFile(Root + 'w.o', 'd'#0#0'.bss.n_u_$w_$$_x'#0);
+  Names := TStringList.Create;
+  try
+    Expect(TDataSizes.ObjectNames(Root + 'u.o', Names), 'a COFF object');
+    ExpectEqual(Names.CommaText, 'TC_$U_$$_A,TC_$U_$$_B',
+      'the datum of a section, and one of a symbol defined there, not one used from another unit');
+    Names.Clear;
+    Expect(not TDataSizes.ObjectNames(Root + 'v.o', Names), 'a file that names one but cannot be read as COFF');
+    Expect(TDataSizes.ObjectNames(Root + 'w.o', Names) and (Names.Count = 0), 'a file without initialised data');
+    Expect(not TDataSizes.ObjectNames(Root + 'x.o', Names), 'no file');
+  finally
+    Names.Free;
+  end;
 end;
 
 procedure TestHasInitialisedData;
@@ -6048,6 +6301,7 @@ begin
     TestKeepDataSizes;
     TestPrettyDataNames;
     TestHasInitialisedData;
+    TestObjectNames;
     TestEncodeCommand;
     TestTakeLine;
     TestReplyField;

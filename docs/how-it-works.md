@@ -91,8 +91,11 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    removed it: the agent keeps it at its first address, so bringing it back larger needs a
    restart. When fpc can't write the assembler at the start, the check is off for the run
    and hotfpc says so. When it can't for a save, or couldn't when the program started over,
-   that save needs a restart: a size it can't see may have grown. It costs about as much as
-   the first compile.
+   that save needs a restart: a size it can't see may have grown. The object file names the
+   data the assembler must give a size for, a section of its own for each: one it names
+   that the assembler has no size for, for this save or when the program started, needs a
+   restart too, and so does a save when an object file can't be read. It costs about as
+   much as the first compile.
 5. The agent reads the object files (Mach-O, ELF or COFF) and places their code and data
    next to the program. Like a linker, it works out which parts the program can reach.
    Type information that nothing uses is never read, because it may refer to things the
