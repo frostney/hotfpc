@@ -81,13 +81,16 @@ for name in names:
     # newest text either way
     merged = unchanged if name == "rapid" else 0
     ok = rc == 0 and (applied + merged in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == merged and restarts == RESTARTS.get(name, 0) and "!!! the edit does not apply" not in body
-    ticks = [int(x) for x in re.findall(r"tick (\d+):", body)]
+    # the program's tick records, each a line of its own after the script's timestamp: the
+    # same records count toward continuity and carry the counters
+    records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)
+    ticks = [int(tick) for tick, _ in records]
     seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
     ok = ok and seq
     missing = [text for text in PRINTS.get(name, []) if not re.search(r"tick \d+: " + re.escape(text) + "$", body, re.M)]
     ok = ok and not missing
     drift = []
-    for tick, text in re.findall(r"tick (\d+): (.*)", body) if name in COUNTERS else []:
+    for tick, text in records if name in COUNTERS else []:
         count = re.search(r"\b%s (\d+)" % COUNTERS[name], text)
         if not count or count.group(1) != tick:
             drift.append((tick, count and count.group(1)))
