@@ -39,9 +39,12 @@ runs. The script saves a step once hotfpc has reported its outcome for the step 
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
 how fast the machine compiles. A step marked `+` comes 0.12 s after the one before instead,
 while hotfpc is still busy with it. A step marked `WHILE_COMPILING` writes its second file
-once hotfpc has started to compile the first, and a step marked `AT_START` is saved while
+once hotfpc has started to compile the first. A step marked `EMPTIED_FIRST` empties its
+first file, writes the others 0.1 s later and the first 0.3 s after it emptied it, as an
+editor that empties a file before it writes it. A step marked `AT_START` is saved while
 hotfpc builds the program to start it, once fpc has written the program's object file: the
-program starts with it. An edit `(path, None, BLOCKED)` puts a directory where hotfpc
+program starts with it. Each further `AT_START` step waits for the object file of the build
+after it, which that save makes hotfpc do. An edit `(path, None, BLOCKED)` puts a directory where hotfpc
 writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
 `(path, None, None)` removes it again. After the last step the script tells the program to
 end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
@@ -49,7 +52,8 @@ end. The program prints a numbered tick every 0.3 s, with what the unit's code r
 `check.py` runs `scenario.py` and checks each case's run:
 
 - the closing summary: the number of reloads applied, refused and failed to compile, and of
-  restarts, against the case's expected numbers in `EXPECT` and `RESTARTS`;
+  restarts, against the case's expected numbers in `EXPECT` and `RESTARTS` (a tuple lists
+  the numbers a case may give, where two saves may be compiled together);
 - a clean exit (code 0), and no step whose text didn't apply to the file;
 - the ticks, each a line of the program's own: every number from 1 to the last is there,
   so the program's output has no gaps (a restart where none was expected shows in the
@@ -58,8 +62,9 @@ end. The program prints a numbered tick every 0.3 s, with what the unit's code r
   after the last swap print, so that the program runs the saved code (`SWAPPED`: the first
   of them may still print the old code's line, as it may have been running when the swap
   was written, and every one after it the saved code's), a counter in the implementation
-  section that every tick prints and that must keep pace with the ticks (`COUNTERS`), and
-  the most a load may take inside the program (`LOAD_LIMITS`).
+  section that every tick prints and that must keep pace with the ticks (`COUNTERS`),
+  `[hot]` lines hotfpc must print (`SAYS`), and the most a load may take inside the program
+  (`LOAD_LIMITS`).
 
 It prints one line per case, the run of each case that failed, and "N of M cases as
 expected", and ends with 1 when one failed. [Edits and what they do](../guides/edits.md)
