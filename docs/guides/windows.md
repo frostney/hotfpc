@@ -62,7 +62,8 @@ it too; otherwise the old program keeps running, and hotfpc says so:
   and compares the sizes there. That compile costs about as much as the first. If it
   fails at the start, hotfpc says so and the check is off for the run. If it fails for a
   save, or when the program started over, a save that needs the sizes needs a restart: a
-  variable it can't see may have grown.
+  variable it can't see may have grown. So does a save that changes a variable the object
+  file has and the assembler gives no size for.
 - **A restart waits for the file.** Windows keeps a program's file locked for a moment after
   the program ends. hotfpc links the new program into `.hot/next/` and moves it into place,
   trying for up to 5 s.

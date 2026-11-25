@@ -48,13 +48,15 @@ end. The program prints a numbered tick every 0.3 s, with what the unit's code r
 - the closing summary: the number of reloads applied, refused and failed to compile, and of
   restarts, against the case's expected numbers in `EXPECT` and `RESTARTS`;
 - a clean exit (code 0), and no step whose text didn't apply to the file;
-- the ticks: every number from 1 to the last is there, so the program's output has no gaps
-  (a restart where none was expected shows in the count of restarts);
-- for some cases, lines the program must print after a swap (`PRINTS`), what every tick
-  after the last swap prints, so that the program runs the saved code (`SWAPPED`), a
-  counter in the implementation section that every tick prints and that must keep pace
-  with the ticks (`COUNTERS`), and the most a load may take inside the program
-  (`LOAD_LIMITS`).
+- the ticks, each a line of the program's own: every number from 1 to the last is there,
+  so the program's output has no gaps (a restart where none was expected shows in the
+  count of restarts);
+- for some cases, lines the program must print after a swap (`PRINTS`), what the ticks
+  after the last swap print, so that the program runs the saved code (`SWAPPED`: the first
+  of them may still print the old code's line, as it may have been running when the swap
+  was written, and every one after it the saved code's), a counter in the implementation
+  section that every tick prints and that must keep pace with the ticks (`COUNTERS`), and
+  the most a load may take inside the program (`LOAD_LIMITS`).
 
 It prints one line per case, the run of each case that failed, and "N of M cases as
 expected", and ends with 1 when one failed. [Edits and what they do](../guides/edits.md)
