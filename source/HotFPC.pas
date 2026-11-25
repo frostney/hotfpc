@@ -2491,8 +2491,13 @@ type
     function AssemblerArguments: TStringList;
     { Compiles the program to assembler (see "sizes of initialised data"). False when fpc
       failed; AProblem is then its first error. Removes the scripts fpc writes next to the
-      program there, as it links nothing. }
-    function WriteAssembler(out AProblem: string; out ASeconds: Double): Boolean;
+      program there, as it links nothing. Every assembler file in the assembly directory
+      afterwards comes from this compile or from the one that wrote its unit's file there:
+      first the units of AChanged (object files, such as foo.o; may be nil) are made to
+      compile again, and the assembler of every unit without its unit file there, the
+      program's included, is removed. One that fpc does not write again is then missing,
+      and its sizes are unknown, not those of an earlier compile. }
+    function WriteAssembler(const AChanged: TStrings; out AProblem: string; out ASeconds: Double): Boolean;
     { The options the agent's compile shares with the program's: the ones that decide the
       target, how code is generated and where units are. }
     class function AgentOptions(const AOptions: TStrings): TStringList;
@@ -2814,14 +2819,27 @@ begin
   Result.Add(FWorkspace.Source);
 end;
 
-function TCompiler.WriteAssembler(out AProblem: string; out ASeconds: Double): Boolean;
+function TCompiler.WriteAssembler(const AChanged: TStrings; out AProblem: string; out ASeconds: Double): Boolean;
 var
   Arguments, Before, Errors: TStringList;
   Output: string;
   Start: Double;
+  I: Integer;
+  Search: TSearchRec;
 begin
   AProblem := '';
   ForceDirectories(FWorkspace.AssemblyDirectory);
+  if AChanged <> nil then
+    for I := 0 to AChanged.Count - 1 do
+      DeleteFile(FWorkspace.AssemblyDirectory + ChangeFileExt(AChanged[I], RecordExtension));
+  if FindFirst(FWorkspace.AssemblyDirectory + '*' + AssemblerExtension, faAnyFile, Search) = 0 then
+  begin
+    repeat
+      if not FileExists(FWorkspace.AssemblyDirectory + ChangeFileExt(Search.Name, RecordExtension)) then
+        DeleteFile(FWorkspace.AssemblyDirectory + Search.Name);
+    until FindNext(Search) <> 0;
+    FindClose(Search);
+  end;
   Before := FindLeftovers(FWorkspace.AssemblyDirectory);
   Arguments := AssemblerArguments;
   try
@@ -3381,7 +3399,7 @@ begin
   try
     if not FAssemblyWritten and HasInitialisedData(Objects) then
     begin
-      FAssemblyWritten := FCompiler.WriteAssembler(AProblem, Seconds);
+      FAssemblyWritten := FCompiler.WriteAssembler(nil, AProblem, Seconds);
       Result := FAssemblyWritten;
       if GetEnvironmentVariable(DebugVariable) <> '' then
         WriteLn('[hot debug] assembler of the running program in ', FormatMilliseconds(Seconds), ' ms');
@@ -3446,7 +3464,7 @@ begin
     Exit(False);
   end;
   Start := NowSeconds;
-  FAssemblyWritten := FCompiler.WriteAssembler(Problem, Seconds);
+  FAssemblyWritten := FCompiler.WriteAssembler(AChanged, Problem, Seconds);
   if GetEnvironmentVariable(DebugVariable) <> '' then
     WriteLn('[hot debug] assembler in ', FormatMilliseconds(Seconds), ' ms');
   if not FAssemblyWritten then
@@ -6080,7 +6098,8 @@ begin
   {$endif}
 end;
 
-function AssemblerResult(const ACompiler, ASource: string; out AProblem: string): Boolean;
+function AssemblerResult(const ACompiler, ASource: string; out AProblem: string;
+  const AChanged: TStrings = nil): Boolean;
 var
   Options: TOptions;
   Workspace: TWorkspace;
@@ -6091,7 +6110,7 @@ begin
   Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
   Compiler := TCompiler.Create(Options, Workspace);
   try
-    Result := Compiler.WriteAssembler(AProblem, Seconds);
+    Result := Compiler.WriteAssembler(AChanged, AProblem, Seconds);
   finally
     Compiler.Free;
     Workspace.Free;
@@ -6114,6 +6133,36 @@ begin
   Expect(not AssemblerResult(WriteFakeAssembler(Root, 'fails', Assembly, 'demo.pas(3,1) Error: Illegal expression', 1),
     Root + 'demo.pas', Problem), 'a compile that fails');
   ExpectEqual(Problem, 'demo.pas(3,1) Error: Illegal expression', 'says why');
+end;
+
+{ A compile to assembler that writes no file leaves no assembler of an earlier compile for
+  the program or a changed unit, only for a unit fpc had no reason to compile again. }
+procedure TestWriteAssemblerAnew;
+var
+  Root, Assembly, Problem: string;
+  Changed: TStringList;
+begin
+  Root := MakeTestDirectory('assembler-anew');
+  Assembly := Root + '.hot' + PathDelim + 'asm' + PathDelim;
+  WriteTestFile(Assembly + 'demo.s', 'the program''s earlier assembler');
+  WriteTestFile(Assembly + 'gone.s', 'a unit''s whose unit file fpc removed');
+  WriteTestFile(Assembly + 'changed.s', 'a changed unit''s');
+  WriteTestFile(Assembly + 'changed.ppu', 'record');
+  WriteTestFile(Assembly + 'kept.s', 'an unchanged unit''s');
+  WriteTestFile(Assembly + 'kept.ppu', 'record');
+  Changed := TStringList.Create;
+  try
+    Changed.Add('changed.o');
+    Expect(AssemblerResult(WriteFakeAssembler(Root, 'silent', Assembly, 'Compiling demo.pas', 0), Root + 'demo.pas',
+      Problem, Changed), 'a compile to assembler that writes nothing');
+  finally
+    Changed.Free;
+  end;
+  Expect(not FileExists(Assembly + 'demo.s'), 'leaves no assembler of the program from before');
+  Expect(not FileExists(Assembly + 'gone.s'), 'or of a unit that has no unit file there');
+  Expect(not FileExists(Assembly + 'changed.s') and not FileExists(Assembly + 'changed.ppu'),
+    'or of a changed unit, which compiles again');
+  Expect(FileExists(Assembly + 'kept.s') and FileExists(Assembly + 'kept.ppu'), 'but keeps an unchanged unit''s');
 end;
 
 procedure TestForgetAssemblyUnits;
@@ -6322,6 +6371,7 @@ begin
     TestForgetAssemblyUnits;
     TestAssemblerArguments;
     TestWriteAssembler;
+    TestWriteAssemblerAnew;
     TestVerifyVersion;
     Result := FinishTests;
   finally

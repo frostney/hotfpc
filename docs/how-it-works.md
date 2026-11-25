@@ -83,7 +83,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    compiler numbers types again on every compile.
 4. For a Windows program whose changed units have a variable with an initial value or a
    typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
-   `.hot/asm/`, which keeps units of its own. The driver counts each one's bytes there and
+   `.hot/asm/`, which keeps units of its own. The program and each changed unit compile
+   there again, and their assembler from before is removed first, so one that fpc doesn't
+   write has no size rather than an earlier one. The driver counts each one's bytes there and
    compares them with the running program's: a COFF object doesn't show one that grows (see
    [Per system](#per-system)). The running program's sizes come from the same compile when
    the program starts and when it starts over, and a swap adds those of the variables it
