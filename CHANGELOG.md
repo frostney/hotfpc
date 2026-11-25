@@ -14,6 +14,15 @@
   first 5 bytes, such as an assembler routine's `call rdi`. A thread waiting in the routine
   it called returned into the middle of the jump: in the `shortcall` scenario, it failed
   with an access violation. Such a save now needs a restart.
+- On x86-64, a swap no longer writes the jump at a routine's entry while a thread is to
+  resume within its first 5 bytes. A signal handler, or on Windows an exception handler,
+  keeps where the thread it interrupted resumes in its frame, and a thread whose handler
+  waited past the swap resumed in the middle of the jump: in the `sighandler` and
+  `sigmasked` scenarios, it failed with an access violation. The agent now reads each
+  stopped thread's stack for such an address, and on Linux the stack of a thread that
+  blocks signals and sleeps; it tries again while there is one, and when one stays the save
+  needs a restart. On Windows, a thread whose context can't be read now fails the stop
+  instead of going unchecked.
 - On macOS, a swap now also stops a thread that another thread started while the agent was
   stopping them, and a thread that can't be suspended makes the agent let the others run
   and try again. Such a thread used to run on while the agent rewrote code. The agent

@@ -28,13 +28,17 @@ EXPECT = {
     # x86-64: a routine whose first instruction is a call 2 bytes long, while a thread waits in
     # the routine it calls; the restarted program runs the new code
     "shortcall": (0, 1, 0),
+    # x86-64: a thread trapped in a routine's first bytes waits in its signal handler (or
+    # vectored exception handler); where it resumes is inside the jump, and the restarted
+    # program runs the new code. In sigmasked the handler blocks every signal
+    "sighandler": (0, 1, 0), "sigmasked": (0, 1, 0),
     # a variable with an initial value and a typed constant that grow inside the 16 bytes fpc
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
     "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
 }
 # case: restarts; every other case passes --no-restart and expects none
-RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1}
+RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1, "sighandler": 1, "sigmasked": 1}
 # case: lines the program must print, so that a swap shows its new values
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
@@ -44,6 +48,7 @@ PRINTS = {
     # a restarted program runs the new code and counts from the start
     "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
     "shortentry": ["small 3 next 7"], "shortcall": ["relay 2"],
+    "sighandler": ["entry 2, resumed"], "sigmasked": ["entry 2, resumed"],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code
@@ -79,10 +84,12 @@ if platform.machine().lower() not in ("x86_64", "amd64") or "-Twin" in os.enviro
     EXPECT["shortentry"] = (1, 0, 0)
     RESTARTS["shortentry"] = 0
 # On arm64 a call is as long as the redirect, so it returns after it; Windows has the same
-# x86-64 jump as macOS and Linux. On arm64 shortcall is swapped.
+# x86-64 jump as macOS and Linux. On arm64 shortcall is swapped, and so are sighandler and
+# sigmasked, where the trapped thread resumes after the branch.
 if platform.machine().lower() not in ("x86_64", "amd64"):
-    EXPECT["shortcall"] = (1, 0, 0)
-    RESTARTS["shortcall"] = 0
+    for name in ("shortcall", "sighandler", "sigmasked"):
+        EXPECT[name] = (1, 0, 0)
+        RESTARTS[name] = 0
 names = sys.argv[1:] or list(EXPECT)
 run = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True)
 out = run.stdout

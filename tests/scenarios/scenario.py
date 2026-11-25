@@ -1131,6 +1131,143 @@ end.
     ("Relay returns 2", [("u.pas", "  mov eax, 1\n", "  mov eax, 2\n"), ("u.pas", "  mov w0, #1\n", "  mov w0, #2\n")]),
 ], restart=True)
 
+# ---------------------------------------------------------------------------- a signal handler at the entry
+# A thread traps in Entry's first bytes, and its handler waits until the new code of a save
+# has run. The system keeps where the thread is to resume in the handler's frame: on x86-64
+# at Entry + 3, inside the 5 bytes of the jump a swap writes there, so the save needs a
+# restart. The thread itself is in the handler, and on Linux so it is when the signal that
+# stops it arrives. In sigmasked the handler blocks every signal, so on Linux the agent can't
+# stop the thread and finds it asleep. On arm64 the trap is the second instruction, after
+# the one-instruction branch, and the save is swapped: the thread resumes in the old code,
+# and its next call runs the new code. The handler is in a unit of its own, which no save
+# changes: on Windows new code can't call a routine of a library the program never called
+# from code of its own, as AddVectoredExceptionHandler is.
+SIG_TRAP_UNIT = r'''unit trap;
+{$mode objfpc}{$H+}
+interface
+var
+  Resume: LongInt = 0;
+procedure Install;
+implementation
+uses {$ifdef unix}BaseUnix,{$endif} SysUtils;
+procedure Await;
+begin
+  while InterLockedCompareExchange(Resume, 0, 0) = 0 do Sleep(10);
+end;
+{$ifdef windows}
+const
+  BreakpointCode = LongWord($80000003);
+  ContextRIPOffset = $f8;
+type
+  TExceptionPointers = record
+    ExceptionRecord: PLongWord;   // the exception code comes first
+    ContextRecord: PByte;
+  end;
+  PExceptionPointers = ^TExceptionPointers;
+function AddVectoredExceptionHandler(AFirst: LongWord; AHandler: Pointer): Pointer; stdcall; external 'kernel32' name 'AddVectoredExceptionHandler';
+// Windows reports a breakpoint at the int3: the thread resumes after it
+function Trapped(AInfo: PExceptionPointers): LongInt; stdcall;
+var
+  RIP: PQWord;
+begin
+  if AInfo^.ExceptionRecord^ <> BreakpointCode then Exit(0);   // EXCEPTION_CONTINUE_SEARCH
+  Await;
+  RIP := PQWord(AInfo^.ContextRecord + ContextRIPOffset);
+  if PByte(PtrUInt(RIP^))^ = $cc then Inc(RIP^);
+  Result := -1;   // EXCEPTION_CONTINUE_EXECUTION
+end;
+procedure Install;
+begin
+  AddVectoredExceptionHandler(1, @Trapped);
+end;
+{$else}
+// x86-64 resumes after the int3; on arm64 the handler moves the thread past the brk
+procedure Trapped(ASignal: cint; AInfo: PSigInfo; AContext: Pointer); cdecl;
+begin
+  Await;
+{$if defined(cpuaarch64) and defined(darwin)}
+  Inc(PQWord(PPointer(PByte(AContext) + 48)^ + 272)^, 4);   // uc_mcontext^.__ss.__pc
+{$elseif defined(cpuaarch64)}
+  Inc(PQWord(PByte(AContext) + 440)^, 4);   // uc_mcontext.pc
+{$endif}
+end;
+procedure Install;
+var
+  Action: SigActionRec;
+begin
+  FillChar(Action, SizeOf(Action), 0);
+  Action.sa_handler := SigActionHandler(@Trapped);
+  Action.sa_flags := SA_SIGINFO;
+  BLOCK_ALL
+  FpSigAction(SIGTRAP, @Action, nil);
+end;
+{$endif}
+end.
+'''
+SIG_HANDLER_UNIT = r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+function Entry: LongInt;
+implementation
+uses Classes, SysUtils, trap;
+type
+  TCaller = class(TThread)
+    procedure Execute; override;
+  end;
+var
+  Caller: TCaller;
+  Seen: LongInt;
+{$if defined(cpux86_64)}
+{$asmmode intel}
+function Entry: LongInt; assembler; nostackframe;
+asm
+  xor eax, eax
+  int3
+  mov eax, 1
+end;
+{$else}
+function Entry: LongInt; assembler; nostackframe;
+asm
+  mov w0, #0
+  brk #0
+  mov w0, #1
+end;
+{$endif}
+procedure TCaller.Execute;
+begin
+  while not Terminated do
+  begin
+    Seen := Entry;
+    Sleep(20);
+  end;
+end;
+function Tick(n: Integer): string;
+begin
+  Result := Format('entry %d', [Seen]);
+  if Caller.FatalException <> nil then Result := Result + ', the trapped thread failed: ' + Exception(Caller.FatalException).Message;
+end;
+initialization
+  Install;
+  Caller := TCaller.Create(False);
+finalization
+  InterLockedExchange(Resume, 1);
+  Caller.Terminate;
+  Caller.WaitFor;
+  Caller.Free;
+end.
+'''
+SIG_HANDLER_STEPS = [
+    ("the new Tick lets the handler return, and Entry returns 2",
+     [("u.pas", "  Result := Format('entry %d', [Seen]);", "  InterLockedExchange(Resume, 1);\n  Result := Format('entry %d, resumed', [Seen]);"),
+      ("u.pas", "  mov eax, 1\n", "  mov eax, 2\n"), ("u.pas", "  mov w0, #1\n", "  mov w0, #2\n")]),
+]
+SIG_HANDLER_MAIN = MAIN.replace("uses SysUtils, u;", "uses {$ifdef unix}cthreads,{$endif} SysUtils, u;")
+case("sighandler", {"main.pas": SIG_HANDLER_MAIN, "u.pas": SIG_HANDLER_UNIT,
+                    "trap.pas": SIG_TRAP_UNIT.replace("  BLOCK_ALL\n", "")}, SIG_HANDLER_STEPS, restart=True)
+case("sigmasked", {"main.pas": SIG_HANDLER_MAIN, "u.pas": SIG_HANDLER_UNIT,
+                   "trap.pas": SIG_TRAP_UNIT.replace("  BLOCK_ALL\n", "  FpSigFillSet(Action.sa_mask);\n")}, SIG_HANDLER_STEPS, restart=True)
+
 
 # The driver's line that ends its work on a save: the swap, the code that came out the same, a
 # compile or link that failed, or a restart done or given up. A refusal ends it too, unless the

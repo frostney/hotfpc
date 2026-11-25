@@ -31,7 +31,7 @@ works best from inside:
   code to the program's existing variables and functions.
 - **Stopping threads safely.** It stops the program's other threads only for the few
   microseconds of the writes, and checks that none of them is in the middle of an
-  instruction it rewrites.
+  instruction it rewrites, or will resume there.
 - **Exceptions.** On Windows it registers the new code's unwind tables with the system, so
   exceptions pass through the new code.
 
@@ -131,7 +131,14 @@ symbols and `-FU`/`-o` to build into `.hot/`.
      when an entry has less room, the save needs a restart. On x86-64 it must not replace
      a call either: a thread waiting in the routine it called would return into the middle
      of the jump, whether or not the agent can stop that thread and see where it is. Any
-     bytes there that could be such a call make the save need a restart.
+     bytes there that could be such a call make the save need a restart. Nor may a thread
+     be about to resume inside those bytes: a signal handler, or on Windows an exception
+     handler, keeps where the thread it interrupted resumes in its frame, on the thread's
+     stack. With the threads stopped, the agent reads each one's stack, from its stack
+     pointer to the end of the memory that holds it, for a word that is an address within
+     the bytes a jump replaces. While there is one, it lets the threads run and tries
+     again, as it does for a thread stopped inside them; when one stays, the save needs a
+     restart. A value that only looks like such an address counts too.
    - A virtual method table is updated in place when its shape is unchanged.
    - A literal, such as a floating point constant, is new with the new code. fpc numbers a
      unit's literals in the order it makes them (`_$U$_Ld1` with fpc 3.2, local `.Ld1` labels
@@ -186,11 +193,14 @@ after its agent connected, and the first program in every case, end hotfpc.
 - **macOS x86-64.** Code pages are rewritten the same way. The jump at an entry is 5 bytes,
   so a patch can reach into the next page, and the agent copies every page it touches.
   `thread_get_state` says where each stopped thread is, and the agent retries while one is
-  inside an entry it rewrites. New code goes into ordinary writable and executable memory;
-  `MAP_JIT` is for Apple silicon. fpc reaches variables through 32-bit offsets from the
-  instruction or through the GOT, so new code and data go within 2 GiB of the program. A
-  Mach-O x86-64 object keeps each addend in the instruction's bytes, counted from the end
-  of the instruction.
+  inside an entry it rewrites. Its stack pointer and `mach_vm_region` give the stack the
+  agent reads. A handler on an alternate signal stack keeps where it returns to there, and
+  a handler it interrupted is on the thread's own stack, which the agent then reads whole:
+  the memory that holds the thread's pthread data, or `argv` for the main thread. New code
+  goes into ordinary writable and executable memory; `MAP_JIT` is for Apple silicon. fpc
+  reaches variables through 32-bit offsets from the instruction or through the GOT, so new
+  code and data go within 2 GiB of the program. A Mach-O x86-64 object keeps each addend in
+  the instruction's bytes, counted from the end of the instruction.
 - **Linux.** The agent calls `mprotect` around the writes and stops other threads with a
   signal whose handler waits. Libraries start threads that block every signal (Mesa's
   software renderer starts one per core). The agent doesn't send those the signal, because
@@ -200,7 +210,11 @@ after its agent connected, and the first program in every case, end hotfpc.
   tries again. A sleeping thread can wake during the swap, so the agent then writes each
   entry's jump in one 8-byte store: such a thread runs either the old entry or the new
   jump. fpc aligns functions, so the jump fits; if one didn't, the swap would be refused. A
-  thread that doesn't stop within 2 s means the swap is refused. fpc's x86-64 code
+  thread that doesn't stop within 2 s means the swap is refused. On x86-64 the handler
+  notes each thread's stack pointer, and `/proc/self/maps` gives the memory it is in; when
+  the thread is on its alternate signal stack, the handler notes where that ends, and the
+  agent reads the thread's own stack whole too. A thread that blocks the signal and sleeps
+  is read from where `/proc/self/task/<thread>/syscall` says it sleeps. fpc's x86-64 code
   reaches variables through 32-bit absolute addresses, so new code and data go below
   2 GiB when the program is loaded there. On aarch64, gas refers to a variable of the
   implementation section through the symbol of its section plus an offset; the agent maps
@@ -210,8 +224,10 @@ after its agent connected, and the first program in every case, end hotfpc.
 - **Windows.** The executable keeps a COFF symbol table when it's linked with `-Xs-`, which
   hotfpc passes. `SuspendThread` stops the other threads. On x86-64 the agent also checks
   that no thread is stopped inside the five bytes of an entry it overwrites, and retries if
-  one is. New code's unwind tables are registered with `RtlAddFunctionTable`, so exceptions
-  pass through it.
+  one is; `GetThreadContext` gives its stack pointer, and `VirtualQuery` the committed
+  memory of the stack it reads. A thread whose context can't be read fails the stop. New
+  code's unwind tables are registered with `RtlAddFunctionTable`, so exceptions pass
+  through it.
   - fpc's COFF objects refer to everything in the same unit as a section plus an offset.
     The agent maps those references back to the symbols they mean, allowing for an
     immediate's length that fpc folds into the offset, so a unit's own variables keep

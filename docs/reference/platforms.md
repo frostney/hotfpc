@@ -58,8 +58,8 @@ arm64 (see the [changelog](../../CHANGELOG.md)). For macOS x86-64 it means all 2
 Rosetta 2 on an Apple silicon Mac hasn't been tried.
 On Windows, three scenarios expect a restart where the other systems swap
 ([Windows programs](../guides/windows.md)), and `shortentry` swaps there and on arm64, where
-x86-64 macOS and Linux restart ([limits](limits.md)). `shortcall` swaps on arm64 and
-restarts on every x86-64 system.
+x86-64 macOS and Linux restart ([limits](limits.md)). `shortcall`, `sighandler` and
+`sigmasked` swap on arm64 and restart on every x86-64 system.
 
 With fpc 3.2.2 and 3.3.1, a stress test also passed on all three systems (Windows under
 Wine): 20,000 reloads of one unit while two threads kept calling it, with no stale or wrong
@@ -73,12 +73,12 @@ macOS programs ([limits](limits.md)).
 ## What CI runs
 
 On pull requests and on pushes to main, CI builds hotfpc with fpc 3.2.2, runs the unit
-tests and runs all 29 scenarios on Linux x86-64, Linux arm64, macOS arm64 and macOS
+tests and runs all 31 scenarios on Linux x86-64, Linux arm64, macOS arm64 and macOS
 x86-64, and on
 Windows x86-64 with `hotfpc.exe` ([tooling](../internals/tooling.md#ci)). Release 1.1.0's
 commit passed on Linux x86-64, macOS arm64 and Windows x86-64 in
 [run 44368963617](https://github.com/frostney/hotfpc/actions/runs/44368963617)
-(2026-11-18). On 2026-11-25, all 29 scenarios passed on Linux x86-64 with fpc
+(2026-11-18). On 2026-11-25, all 31 scenarios passed on Linux x86-64 with fpc
 3.2.2 at this version of the repository.
 
 ## Timings

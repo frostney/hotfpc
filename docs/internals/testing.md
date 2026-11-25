@@ -7,14 +7,14 @@ scenarios that run real programs under hotfpc and save edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 29 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 31 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
 ## When a change is done
 
-A change is done when the unit tests pass and `check.py` prints "29 of 29 cases as
+A change is done when the unit tests pass and `check.py` prints "31 of 31 cases as
 expected" on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
 Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
 Windows). Changes to the agent or to the checks of layouts and sizes are tested with fpc
@@ -33,7 +33,7 @@ with 1 when a check failed. `./build.sh tests` compiles `source/HotFPC.pas` with
 
 ## The scenarios
 
-`tests/scenarios/scenario.py` holds 29 cases. Each is a small program, `main.pas` and its
+`tests/scenarios/scenario.py` holds 31 cases. Each is a small program, `main.pas` and its
 units, and a list of steps: the edits the script saves into the files while the program
 runs. The script saves a step once hotfpc has reported its outcome for the step before (a
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
@@ -68,7 +68,8 @@ routines the program never called; in `progvar`, fpc can't write the assembler t
 a save's sizes. The comments in `check.py` say which. `shortentry` is swapped on Windows
 and arm64, where the jump at a routine's entry fits, and restarted on x86-64 macOS and
 Linux. `shortcall` is swapped on arm64, where a call is as long as the jump, and restarted
-on every x86-64 system.
+on every x86-64 system; so are `sighandler` and `sigmasked`, whose trapped thread resumes
+after the branch on arm64 and inside the jump on x86-64.
 
 | Variable | Effect |
 | --- | --- |
@@ -77,8 +78,8 @@ on every x86-64 system.
 | `HOT_TRANSCRIPT` | A file to write the whole run to. |
 
 The programs are written to `tests/scenarios/work/<case>/`, which git ignores. Every case
-but `restart`, `linkfail`, `crash`, `shortentry` and `shortcall` passes `--no-restart`, so
-the program it checks keeps running after a refused edit.
+but `restart`, `linkfail`, `crash`, `shortentry`, `shortcall`, `sighandler` and `sigmasked`
+passes `--no-restart`, so the program it checks keeps running after a refused edit.
 
 ### Adding a scenario
 

@@ -18,6 +18,15 @@ the edits that need a restart; these are the limits around them.
   or memory. The agent can't tell where the instructions of an entry begin, so it also
   takes bytes that could be such a call for one: rarely, a routine that starts with another
   instruction restarts too ([Output](output.md#restart-needed)).
+- **On x86-64, a save restarts while a thread waits to resume within a routine's first 5
+  bytes.** A signal handler, or on Windows an exception handler, keeps where the thread it
+  interrupted resumes in its frame. When a handler that interrupted a routine there waits,
+  as one that sleeps does, the jump a swap writes is in the way: the agent tries again, up
+  to 200 times (about half a second in the scenarios on Linux x86-64), and then restarts
+  the program ([Output](output.md#restart-needed)). It looks for that address in every word of each
+  stopped thread's stack, so rarely a value that only looks like one restarts a save too.
+  A handler that moves where its thread resumes to within a routine's first bytes after
+  the swap isn't caught.
 - **The main program's block keeps its old code.** It is already running. Code you want to
   change belongs in routines and units; the main block can call them.
 - **In the program file, hotfpc checks sizes, not types.** It finds a type that changed

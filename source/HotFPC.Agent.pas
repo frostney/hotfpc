@@ -127,6 +127,7 @@ const
   ThreadListFailure = 'the threads of the program could not be listed';
   ThreadSuspendFailure = 'a thread of the program could not be suspended';
   ThreadStateFailure = 'the agent could not read where a thread of the program stopped';
+  StackUnknownFailure = 'the agent could not find the stack of a thread of the program';
   SplitEntryFailure = 'an entry to rewrite could not be written in one store while a thread that blocks signals sleeps';
   StoreSize = 8;
   ParkTimeoutMilliseconds = 2000;
@@ -148,6 +149,8 @@ const
   LoopbackAddress = $7f000001;
   UContextRegistersOffset = 40;     // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers
   UContextRIPIndex = 16;
+  UContextRSPIndex = 15;
+  SignalStackActive = 1;       // SS_ONSTACK: the thread runs on its alternate signal stack
   IndirectSuffix = '$indirect';
   IndirectSuffixLength = Length(IndirectSuffix);
   AnonymousDefinitionMarker = '_$$_def0';
@@ -290,6 +293,10 @@ const
   ContextAlignment = 16;
   ContextFlagsOffset = $30;
   ContextRIPOffset = $f8;
+  ContextRSPOffset = $98;
+  MEM_COMMIT_STATE = $1000;   // MEMORY_BASIC_INFORMATION.State of committed memory
+  PAGE_NOACCESS = $01;
+  PAGE_GUARD = $100;
   SuspendFailed = LongWord(-1);
   RuntimeFunctionSize = 12;
   RuntimeFunctionWords = 3;
@@ -298,6 +305,14 @@ const
 function VirtualAlloc(AAddress: Pointer; ASize: PtrUInt; AAllocationType, AProtection: LongWord): Pointer; stdcall; external 'kernel32' name 'VirtualAlloc';
 function VirtualProtect(AAddress: Pointer; ASize: PtrUInt; AProtection: LongWord; out AOldProtection: LongWord): LongBool; stdcall; external 'kernel32' name 'VirtualProtect';
 function FlushInstructionCache(AProcess: TWindowsHandle; AAddress: Pointer; ASize: PtrUInt): LongBool; stdcall; external 'kernel32' name 'FlushInstructionCache';
+type
+  TMemoryBasicInformation = record
+    BaseAddress, AllocationBase: QWord;
+    AllocationProtect, PartitionId: LongWord;   // PartitionId: a 16-bit field and padding
+    RegionSize: QWord;
+    State, Protect, MemoryType, Padding: LongWord;
+  end;
+function VirtualQuery(AAddress: Pointer; out ABuffer: TMemoryBasicInformation; ALength: PtrUInt): PtrUInt; stdcall; external 'kernel32' name 'VirtualQuery';
 function GetCurrentProcess: TWindowsHandle; stdcall; external 'kernel32' name 'GetCurrentProcess';
 function GetCurrentProcessId: LongWord; stdcall; external 'kernel32' name 'GetCurrentProcessId';
 function GetCurrentThreadId: LongWord; stdcall; external 'kernel32' name 'GetCurrentThreadId';
@@ -350,6 +365,8 @@ procedure SysICacheInvalidate(AStart: Pointer; ASize: PtrUInt); cdecl; external 
 procedure PThreadJITWriteProtectNP(AEnabled: LongInt); cdecl; external 'c' name 'pthread_jit_write_protect_np';
 {$else}
 function ThreadGetState(AThread: TMachPort; AFlavor: LongInt; AState: Pointer; var ACount: LongWord): TKernelReturn; cdecl; external 'c' name 'thread_get_state';
+function ThreadInfo(AThread: TMachPort; AFlavor: LongInt; AInfo: Pointer; var ACount: LongWord): TKernelReturn; cdecl; external 'c' name 'thread_info';
+function MachVMRegion(ATask: TMachPort; var AAddress, ASize: QWord; AFlavor: LongInt; AInfo: Pointer; var ACount: LongWord; var AObjectName: TMachPort): TKernelReturn; cdecl; external 'c' name 'mach_vm_region';
 {$endif}
 function DyldImageCount: LongWord; cdecl; external 'c' name '_dyld_image_count';
 function DyldGetImageHeader(AIndex: LongWord): Pointer; cdecl; external 'c' name '_dyld_get_image_header';
@@ -369,10 +386,24 @@ const
   X86ThreadState64 = 4;          // x86_THREAD_STATE64
   X86ThreadStateCount = 42;      // x86_THREAD_STATE64_COUNT: 21 registers of 8 bytes, in 4-byte words
   X86ThreadStateRIPIndex = 16;   // rax rbx rcx rdx rdi rsi rbp rsp r8..r15, then rip
+  X86ThreadStateRSPIndex = 7;
+  ThreadIdentifierInfo = 4;          // THREAD_IDENTIFIER_INFO
+  ThreadIdentifierInfoCount = 6;     // thread_id, thread_handle, dispatch_qaddr: 8 bytes each, in 4-byte words
+  ThreadHandleIndex = 1;             // thread_handle: the thread's pthread data, at the top of its stack but for the main thread's
+  VMRegionBasicInfo64 = 9;           // VM_REGION_BASIC_INFO_64
+  VMRegionBasicInfoCount64 = 9;      // vm_region_basic_info_data_64_t in 4-byte words; protection first
 {$endif}
 {$ifdef linux}
 function LibCGetTID: LongInt; cdecl; external 'c' name 'gettid';
 function LibCTGKill(AThreadGroupID, AThreadID, ASignal: LongInt): LongInt; cdecl; external 'c' name 'tgkill';
+type
+  TSignalStack = packed record
+    Base: Pointer;
+    Flags, Padding: LongInt;
+    Size: PtrUInt;
+  end;
+function LibCSigAltStack(ANew, AOld: Pointer): LongInt; cdecl; external 'c' name 'sigaltstack';
+function LibCPThreadSelf: PtrUInt; cdecl; external 'c' name 'pthread_self';
 const
   RTLD_DEFAULT = nil;
 {$endif}
@@ -3866,6 +3897,63 @@ var
   PatchError: AnsiString;   // set while other threads are stopped (a constant: no allocation), reported after
   StopFailure: AnsiString;  // set by WorldStop when not every other thread stopped (a constant), '' otherwise
   PatchKernelResult: LongInt;
+  ResumeHit: SizeInt;       // the patch a stopped thread is to resume inside (ResumesInsidePatch), -1 for none
+
+{$ifdef cpux86_64}
+// The patch whose bytes after the first hold AAddress, or -1. The patches are sorted by
+// address and don't overlap.
+function PatchHolding(AAddress: QWord): SizeInt;
+var
+  Low, High, Middle: SizeInt;
+begin
+  Result := -1;
+  Low := 0;
+  High := PatchCount - 1;
+  while Low <= High do
+  begin
+    Middle := (Low + High) div 2;
+    if Patches[Middle].Address < AAddress then
+    begin
+      Result := Middle;
+      Low := Middle + 1;
+    end
+    else High := Middle - 1;
+  end;
+  if (Result >= 0) and (AAddress >= Patches[Result].Address + QWord(Patches[Result].ByteCount)) then Result := -1;
+end;
+
+// Whether an aligned word in [ALow, AHigh), memory of a stopped thread's stack, is an
+// address inside a patch after its first byte. A signal or an exception saves where the
+// thread it interrupted is to resume in its handler's frame, and a call saves where it
+// returns to: a thread that resumes there after the patch runs the middle of the jump. Any
+// word counts, so a value that only looks like such an address refuses the patch too.
+// Sets ResumeHit.
+function HoldsResumeInsidePatch(ALow, AHigh: QWord): Boolean;
+var
+  Cell: PQWord;
+  First, Last: QWord;
+  Hit: SizeInt;
+begin
+  Result := False;
+  if PatchCount = 0 then Exit;
+  First := Patches[0].Address;
+  Last := Patches[PatchCount - 1].Address + QWord(Patches[PatchCount - 1].ByteCount);
+  Cell := PQWord(PtrUInt((ALow + (SizeOf(QWord) - 1)) and not QWord(SizeOf(QWord) - 1)));
+  while QWord(PtrUInt(Cell)) + SizeOf(QWord) <= AHigh do
+  begin
+    if (Cell^ > First) and (Cell^ < Last) then
+    begin
+      Hit := PatchHolding(Cell^);
+      if Hit >= 0 then
+      begin
+        ResumeHit := Hit;
+        Exit(True);
+      end;
+    end;
+    Inc(Cell);
+  end;
+end;
+{$endif}
 
 // Overwrite one instruction each at a set of addresses, with the other threads stopped
 // and without allocating.
@@ -3947,15 +4035,18 @@ end;
 // thread_suspend for every other thread of the task. A thread that runs until it is
 // suspended can start another after the list was taken, so the agent lists the threads
 // again until a list has none it hasn't suspended. On x86-64, thread_get_state then says
-// where each one stopped (StoppedInsidePatch); it waits until the thread has stopped. A
-// thread that can't be suspended or whose state can't be read fails the stop: the commit
-// lets the others run and tries again. Only the threads the agent suspended are resumed.
+// where each one stopped (StoppedInsidePatch) and where its stack is (ResumesInsidePatch);
+// it waits until the thread has stopped. A thread that can't be suspended or whose state
+// can't be read fails the stop: the commit lets the others run and tries again. Only the
+// threads the agent suspended are resumed.
 var
   SuspendedThreads: array[0..MaxThreads - 1] of TMachPort;   // with a send right each, until WorldStart
   SuspendedCount: LongInt;
 {$ifdef cpux86_64}
   ProgramCounters: array[0..MaxThreads - 1] of QWord;   // where SuspendedThreads[I] stopped
+  StackPointers: array[0..MaxThreads - 1] of QWord;     // and its stack pointer
   ThreadState: array[0..X86ThreadStateCount - 1] of LongWord;   // x86_thread_state64_t
+  MainThread: TMachPort;   // the thread that started the agent, the program's first
 {$endif}
 
 function IsSuspended(AThread: TMachPort): Boolean;
@@ -4001,7 +4092,11 @@ begin
     StopFailure := ThreadStateFailure;
     PatchKernelResult := KernelResult;
   end
-  else ProgramCounters[SuspendedCount - 1] := PQWord(@ThreadState[X86ThreadStateRIPIndex * 2])^;
+  else
+  begin
+    ProgramCounters[SuspendedCount - 1] := PQWord(@ThreadState[X86ThreadStateRIPIndex * 2])^;
+    StackPointers[SuspendedCount - 1] := PQWord(@ThreadState[X86ThreadStateRSPIndex * 2])^;
+  end;
 {$endif}
 end;
 
@@ -4072,6 +4167,67 @@ begin
   for K := 0 to SuspendedCount - 1 do
     for I := 0 to PatchCount - 1 do
       if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
+end;
+{$else}
+begin
+  Result := False;
+end;
+{$endif}
+
+{$ifdef cpux86_64}
+// The memory region that holds AAddress, when it is readable.
+function FindRegion(AAddress: QWord; out AStart, AEnd: QWord): Boolean;
+var
+  Address, Size: QWord;
+  Info: array[0..VMRegionBasicInfoCount64 - 1] of LongWord;
+  Count: LongWord;
+  ObjectName: TMachPort;
+begin
+  AStart := 0;
+  AEnd := 0;
+  Address := AAddress;
+  Size := 0;
+  Count := VMRegionBasicInfoCount64;
+  ObjectName := 0;
+  Result := (MachVMRegion(mach_task_self_, Address, Size, VMRegionBasicInfo64, @Info[0], Count, ObjectName) = 0)
+    and (Address <= AAddress) and ((Info[0] and VM_PROT_READ) <> 0);
+  if Result then
+  begin
+    AStart := Address;
+    AEnd := Address + Size;
+  end;
+end;
+{$endif}
+
+// Whether a stopped thread is to resume inside a patch after its first byte (HoldsResumeInsidePatch):
+// its stack from its stack pointer to the end of the region that holds it. A handler that
+// runs on an alternate signal stack keeps where it returns to there, and the frame of a
+// handler it interrupted is on the thread's own stack, which is then read whole: the region
+// with the thread's pthread data, or argv's for the main thread.
+function ResumesInsidePatch: Boolean;
+{$ifdef cpux86_64}
+var
+  K: LongInt;
+  Start, Finish, OwnStart, OwnFinish, Hint: QWord;
+  Info: array[0..ThreadIdentifierInfoCount - 1] of LongWord;
+  Count: LongWord;
+begin
+  Result := False;
+  for K := 0 to SuspendedCount - 1 do
+  begin
+    if not FindRegion(StackPointers[K], Start, Finish) then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    Hint := 0;
+    Count := ThreadIdentifierInfoCount;
+    if SuspendedThreads[K] = MainThread then Hint := QWord(PtrUInt(argv))
+    else if ThreadInfo(SuspendedThreads[K], ThreadIdentifierInfo, @Info[0], Count) = 0 then Hint := PQWord(@Info[ThreadHandleIndex * 2])^;
+    if (Hint <> 0) and FindRegion(Hint, OwnStart, OwnFinish) and ((StackPointers[K] < OwnStart) or (StackPointers[K] >= OwnFinish))
+      and HoldsResumeInsidePatch(OwnStart, OwnFinish) then Exit(True);
+    if HoldsResumeInsidePatch(StackPointers[K], Finish) then Exit(True);
+  end;
 end;
 {$else}
 begin
@@ -4161,15 +4317,39 @@ var
   BlockerIDs: array[0..MaxThreads - 1] of LongInt;   // threads that blocked the park signal
   BlockerCount: LongInt;
   ProgramCounters: array[0..MaxThreads - 1] of QWord;   // where each stopped thread was
+{$ifdef cpux86_64}
+  StackPointers: array[0..MaxThreads - 1] of QWord;     // and its stack pointer
+  AlternateEnds: array[0..MaxThreads - 1] of QWord;     // the end of the alternate signal stack it ran on, 0 if none
+  OwnStackHints: array[0..MaxThreads - 1] of QWord;     // then an address in its own stack
+  SleeperIDs: array[0..MaxThreads - 1] of LongInt;      // threads that block the park signal and sleep
+  SleeperStacks: array[0..MaxThreads - 1] of QWord;     // the stack pointer of each, 0 for one that ended
+  SleeperCount: LongInt;
+{$endif}
 
 procedure ParkHandler(ASignal: LongInt; AInfo: PSigInfo; AContext: PSigContext); cdecl;
 var
   ArrivalIndex: LongInt;
+{$ifdef cpux86_64}
+  Stack: TSignalStack;
+{$endif}
 begin
   ArrivalIndex := InterLockedIncrement(Arrived) - 1;
 {$ifdef cpux86_64}
-  // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers; rip is the 17th
-  if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ProgramCounters)) and (AContext <> nil) then ProgramCounters[ArrivalIndex] := PQWord(PByte(AContext) + UContextRegistersOffset + UContextRIPIndex * SizeOf(QWord))^;
+  // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers; rsp is the 16th, rip the 17th
+  if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ProgramCounters)) and (AContext <> nil) then
+  begin
+    ProgramCounters[ArrivalIndex] := PQWord(PByte(AContext) + UContextRegistersOffset + UContextRIPIndex * SizeOf(QWord))^;
+    StackPointers[ArrivalIndex] := PQWord(PByte(AContext) + UContextRegistersOffset + UContextRSPIndex * SizeOf(QWord))^;
+    AlternateEnds[ArrivalIndex] := 0;
+    // this handler runs on the stack the thread was on
+    if (LibCSigAltStack(nil, @Stack) = 0) and ((Stack.Flags and SignalStackActive) <> 0) then
+    begin
+      AlternateEnds[ArrivalIndex] := QWord(PtrUInt(Stack.Base)) + Stack.Size;
+      // glibc keeps a thread's own data at the top of its stack; the main thread's arguments are on its stack
+      if LibCGetTID = FpGetpid then OwnStackHints[ArrivalIndex] := QWord(PtrUInt(argv))
+      else OwnStackHints[ArrivalIndex] := QWord(LibCPThreadSelf);
+    end;
+  end;
 {$endif}
   InterLockedIncrement(Parked);
   while InterlockedCompareExchange(Hold, 0, 0) <> 0 do ;
@@ -4192,6 +4372,14 @@ begin
       if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
 {$endif}
 end;
+
+{$ifdef cpux86_64}
+const
+  MaxRegionQueries = 3 * MaxThreads;
+var
+  RegionQueries, RegionStarts, RegionEnds: array[0..MaxRegionQueries - 1] of QWord;
+  RegionQueryCount: LongInt;
+{$endif}
 
 procedure SetupWorldStop;
 var
@@ -4329,6 +4517,9 @@ var
 begin
   StopFailure := '';
   SleepingBlockers := False;
+{$ifdef cpux86_64}
+  SleeperCount := 0;
+{$endif}
   if not SuspendThreads then Exit;
   if not ListThreads then
   begin
@@ -4353,7 +4544,14 @@ begin
       begin
         if LibCTGKill(ProcessID, BlockerIDs[I], ParkSignal) = 0 then Inc(Sent);
       end
-      else if WaitsInKernel(BlockerIDs[I]) then SleepingBlockers := True
+      else if WaitsInKernel(BlockerIDs[I]) then
+      begin
+        SleepingBlockers := True;
+{$ifdef cpux86_64}
+        SleeperIDs[SleeperCount] := BlockerIDs[I];
+        Inc(SleeperCount);
+{$endif}
+      end
       else StopFailure := BlockerRunningFailure;
   while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
   if InterlockedCompareExchange(Parked, 0, 0) < Sent then StopFailure := ParkTimeoutFailure;
@@ -4368,6 +4566,211 @@ begin
   StartTime := NowMilliseconds;
   while (InterlockedCompareExchange(Parked, 0, 0) > 0) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
 end;
+
+{$ifdef cpux86_64}
+// The readable regions of /proc/self/maps that hold RegionQueries[0..RegionQueryCount - 1],
+// into RegionStarts and RegionEnds (0 for an address none holds). Read with nothing
+// allocated, as ReadTaskFile.
+procedure FindRegions;
+const
+  HexBase = 16;
+  HexLetterBase = 10;   // the value of 'a'
+  StateStart = 0;       // the start address, then the end, in hexadecimal
+  StateEnd = 1;
+  StateReadable = 2;    // the first letter of the permissions
+  StateRest = 3;        // up to the end of the line
+var
+  Buffer: TStatusBuffer;
+  FileDescriptor: cint;
+  Count, Index: TSsize;
+  State, K: LongInt;
+  Start, Finish, Digit: QWord;
+  Character: AnsiChar;
+begin
+  for K := 0 to RegionQueryCount - 1 do
+  begin
+    RegionStarts[K] := 0;
+    RegionEnds[K] := 0;
+  end;
+  FileDescriptor := FpOpen(PChar('/proc/self/maps'), O_RDONLY);
+  if FileDescriptor < 0 then Exit;
+  State := StateStart;
+  Start := 0;
+  Finish := 0;
+  repeat
+    Count := FpRead(FileDescriptor, Buffer[0], SizeOf(Buffer));
+    for Index := 0 to Count - 1 do
+    begin
+      Character := Buffer[Index];
+      case State of
+        StateStart, StateEnd:
+          if Character in ['0'..'9', 'a'..'f'] then
+          begin
+            if Character <= '9' then Digit := QWord(Ord(Character) - Ord('0')) else Digit := QWord(Ord(Character) - Ord('a') + HexLetterBase);
+            if State = StateStart then Start := Start * HexBase + Digit else Finish := Finish * HexBase + Digit;
+          end
+          else if State = StateStart then State := StateEnd   // the '-'
+          else State := StateReadable;                         // the space
+        StateReadable:
+          begin
+            if Character = 'r' then
+              for K := 0 to RegionQueryCount - 1 do
+                if (RegionQueries[K] >= Start) and (RegionQueries[K] < Finish) then
+                begin
+                  RegionStarts[K] := Start;
+                  RegionEnds[K] := Finish;
+                end;
+            State := StateRest;
+          end;
+        StateRest:
+          if Character = #10 then
+          begin
+            State := StateStart;
+            Start := 0;
+            Finish := 0;
+          end;
+      end;
+    end;
+  until Count <= 0;
+  FpClose(FileDescriptor);
+end;
+
+type
+  TSleeperState = (SleeperEnded, SleeperRunning, SleeperUnknown, SleeperAsleep);
+
+// Where a thread that sleeps in the kernel has its stack and will resume, from
+// /proc/self/task/<thread>/syscall: the number of the call, its six arguments, then the
+// stack pointer and the program counter; or -1 and the two when it waits outside a call.
+function ReadSleeper(AThreadID: LongInt; out AStackPointer, AProgramCounter: QWord): TSleeperState;
+const
+  HexBase = 16;
+  HexLetterBase = 10;
+  FieldsInCall = 9;
+  FieldsOutsideCall = 3;
+var
+  Buffer: TStatusBuffer;
+  Count, Index: TSsize;
+  Fields: LongInt;
+  Value, Previous: QWord;
+  Character: AnsiChar;
+begin
+  AStackPointer := 0;
+  AProgramCounter := 0;
+  Count := ReadTaskFile(AThreadID, 'syscall', Buffer);
+  if Count <= 0 then Exit(SleeperEnded);
+  if not (Buffer[0] in ['0'..'9', '-']) then Exit(SleeperRunning);   // "running"
+  Fields := 0;
+  Value := 0;
+  Previous := 0;
+  Index := 0;
+  while Index < Count do
+  begin
+    while (Index < Count) and (Buffer[Index] in [' ', #10]) do Inc(Index);
+    if Index >= Count then Break;
+    Previous := Value;
+    Value := 0;
+    if (Index + 1 < Count) and (Buffer[Index] = '0') and (Buffer[Index + 1] = 'x') then Inc(Index, 2);
+    while (Index < Count) and not (Buffer[Index] in [' ', #10]) do
+    begin
+      Character := Buffer[Index];
+      if Character in ['0'..'9'] then Value := Value * HexBase + QWord(Ord(Character) - Ord('0'))
+      else if Character in ['a'..'f'] then Value := Value * HexBase + QWord(Ord(Character) - Ord('a') + HexLetterBase);
+      Inc(Index);
+    end;
+    Inc(Fields);
+  end;
+  if (Fields <> FieldsInCall) and (Fields <> FieldsOutsideCall) then Exit(SleeperUnknown);
+  AStackPointer := Previous;
+  AProgramCounter := Value;
+  Result := SleeperAsleep;
+end;
+{$endif}
+
+// Whether a stopped thread is to resume inside a patch after its first byte (HoldsResumeInsidePatch):
+// its stack from its stack pointer to the end of the region that holds it. A thread that
+// blocks the park signal and sleeps is read the same way, from where it sleeps. A handler
+// that runs on an alternate signal stack keeps where it returns to there, and the frame of
+// a handler it interrupted is on the thread's own stack, which is then read whole.
+function ResumesInsidePatch: Boolean;
+{$ifdef cpux86_64}
+var
+  Count, K, Query: LongInt;
+  ProgramCounter: QWord;
+begin
+  Result := False;
+  Count := InterlockedCompareExchange(Arrived, 0, 0);
+  if Count > Length(StackPointers) then Count := Length(StackPointers);
+  RegionQueryCount := 0;
+  for K := 0 to Count - 1 do
+  begin
+    RegionQueries[RegionQueryCount] := StackPointers[K];
+    Inc(RegionQueryCount);
+    if AlternateEnds[K] <> 0 then
+    begin
+      RegionQueries[RegionQueryCount] := OwnStackHints[K];
+      Inc(RegionQueryCount);
+    end;
+  end;
+  for K := 0 to SleeperCount - 1 do
+    case ReadSleeper(SleeperIDs[K], SleeperStacks[K], ProgramCounter) of
+      SleeperEnded: ;
+      SleeperRunning:
+        begin
+          StopFailure := BlockerRunningFailure;
+          Exit(True);
+        end;
+      SleeperUnknown:
+        begin
+          StopFailure := StackUnknownFailure;
+          Exit(True);
+        end;
+      SleeperAsleep:
+        begin
+          if PatchHolding(ProgramCounter) >= 0 then
+          begin
+            ResumeHit := PatchHolding(ProgramCounter);
+            Exit(True);
+          end;
+          RegionQueries[RegionQueryCount] := SleeperStacks[K];
+          Inc(RegionQueryCount);
+        end;
+    end;
+  FindRegions;
+  Query := 0;
+  for K := 0 to Count - 1 do
+  begin
+    if AlternateEnds[K] <> 0 then
+    begin
+      if HoldsResumeInsidePatch(StackPointers[K], AlternateEnds[K]) then Exit(True);
+      if (RegionEnds[Query + 1] <> 0) and HoldsResumeInsidePatch(RegionStarts[Query + 1], RegionEnds[Query + 1]) then Exit(True);
+      Inc(Query, 2);
+      Continue;
+    end;
+    if RegionEnds[Query] = 0 then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    if HoldsResumeInsidePatch(StackPointers[K], RegionEnds[Query]) then Exit(True);
+    Inc(Query);
+  end;
+  for K := 0 to SleeperCount - 1 do
+  begin
+    if SleeperStacks[K] = 0 then Continue;
+    if RegionEnds[Query] = 0 then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    if HoldsResumeInsidePatch(SleeperStacks[K], RegionEnds[Query]) then Exit(True);
+    Inc(Query);
+  end;
+end;
+{$else}
+begin
+  Result := False;
+end;
+{$endif}
 {$else}
 // Windows: VirtualProtect around each write. The other threads are stopped, and none of
 // them is inside the bytes written (StoppedInsidePatch).
@@ -4407,12 +4810,14 @@ begin
 end;
 
 // SuspendThread for every other thread of the process; GetThreadContext waits until a
-// thread has really stopped and says where. The list and handles are made first, so that
-// nothing is allocated while a stopped thread may hold a lock.
+// thread has really stopped and says where, and where its stack is. A suspended thread
+// whose context can't be read fails the stop. The list and handles are made first, so
+// that nothing is allocated while a stopped thread may hold a lock.
 var
   ThreadHandles: array[0..MaxThreads - 1] of TWindowsHandle;
   ThreadHandleCount: LongInt;
   ProgramCounters: array[0..MaxThreads - 1] of QWord;
+  StackPointers: array[0..MaxThreads - 1] of QWord;
   ProgramCounterCount: LongInt;
   ContextBuffer: array[0..ContextSize + ContextSlack] of Byte;   // CONTEXT, aligned inside
 
@@ -4458,8 +4863,10 @@ begin
       if GetThreadContext(ThreadHandles[I], Context) and (ProgramCounterCount <= High(ProgramCounters)) then
       begin
         ProgramCounters[ProgramCounterCount] := PQWord(Context + ContextRIPOffset)^;
+        StackPointers[ProgramCounterCount] := PQWord(Context + ContextRSPOffset)^;
         Inc(ProgramCounterCount);
-      end;
+      end
+      else StopFailure := ThreadStateFailure;
     end;
 end;
 
@@ -4490,6 +4897,28 @@ begin
   for K := 0 to ProgramCounterCount - 1 do
     for I := 0 to PatchCount - 1 do
       if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
+end;
+
+// Whether a stopped thread is to resume inside a patch after its first byte (HoldsResumeInsidePatch):
+// its stack from its stack pointer to the end of the committed memory that holds it. An
+// exception handler runs on the stack of the thread it interrupted, below the context the
+// thread resumes from.
+function ResumesInsidePatch: Boolean;
+var
+  K: LongInt;
+  Info: TMemoryBasicInformation;
+begin
+  Result := False;
+  for K := 0 to ProgramCounterCount - 1 do
+  begin
+    if (VirtualQuery(Pointer(PtrUInt(StackPointers[K])), Info, SizeOf(Info)) = 0) or (Info.State <> MEM_COMMIT_STATE)
+      or ((Info.Protect and (PAGE_NOACCESS or PAGE_GUARD)) <> 0) then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    if HoldsResumeInsidePatch(StackPointers[K], Info.BaseAddress + Info.RegionSize) then Exit(True);
+  end;
 end;
 {$endif}
 
@@ -4752,10 +5181,14 @@ begin
     end;
     PatchedCount := 0;
     Cleared := False;
+    // A thread can be about to resume inside an entry without being there: a signal or an
+    // exception that interrupted it there saved where in its handler's frame. While the
+    // handler runs, the commit waits; one that keeps running makes the save a restart.
     for Attempt := 1 to StopAttempts do
     begin
       WorldStop;
-      if (StopFailure = '') and not StoppedInsidePatch then
+      ResumeHit := -1;
+      if (StopFailure = '') and not StoppedInsidePatch and not ResumesInsidePatch then
       begin
         Cleared := True;
         Break;
@@ -4767,7 +5200,7 @@ begin
     if not Cleared then
     begin
       if StopFailure <> '' then PatchError := StopFailure
-      else PatchError := 'a thread stayed inside the first bytes of a function being redirected';
+      else if ResumeHit < 0 then PatchError := 'a thread stayed inside the first bytes of a function being redirected';
       Applied := False;   // nothing written; the threads already run again
     end
     else Applied := ApplyPatches;
@@ -4777,7 +5210,13 @@ begin
       for I := 0 to DataCopyCount - 1 do Move(DataCopies[I].Source^, PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Size);
     end;
     WorldStart;
-    if not Applied then
+    if not Cleared and (StopFailure = '') and (ResumeHit >= 0) then
+    begin
+      Restart('a thread may resume within the first ' + SignedToString(RedirectSize) + ' bytes of ' + Pretty(PRegistrySymbol(Patches[ResumeHit].Owner)^.Name)
+        + ', in the middle of the jump to its new code, such as one a signal or an exception interrupted there');
+      Succeeded := False;
+    end
+    else if not Applied then
     begin
       Succeeded := False;
 {$ifdef darwin}
@@ -5057,6 +5496,9 @@ begin
   if Count > 0 then Move(Value[1], AgentToken[0], Count);
   AgentToken[Count] := #0;
   if TryGetEnvironmentVariable('HOT_NOSUSPEND', Value) then SuspendThreads := False;
+{$if defined(darwin) and defined(cpux86_64)}
+  MainThread := MachThreadSelf;   // a send right, kept: the name the thread lists have for it
+{$endif}
 {$ifdef unix}
   PageSize := PtrUInt(LibCGetPageSize);
 {$else}

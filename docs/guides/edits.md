@@ -4,7 +4,7 @@ Every kind of edit hotfpc has a test for, and what it does. Each row is a step o
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
 small program that runs while the test saves the edit into it, run by CI on pull requests
 and on pushes to main. The
-outcomes are from runs of all 29 scenarios on Linux x86-64 with fpc 3.2.2 on 2026-11-25, and they are what `check.py` expects on macOS and Linux. Where a Windows
+outcomes are from runs of all 31 scenarios on Linux x86-64 with fpc 3.2.2 on 2026-11-25, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.
 
 In a swap, the program keeps running with its state; in a restart, hotfpc starts it over
@@ -89,6 +89,8 @@ These scenarios let hotfpc start the program over; the others pass `--no-restart
 | The initialization no longer ends it | the next save starts the program again | `crash` |
 | An assembler routine of 3 bytes, packed right before the next with `{$codealign proc=1}`, returns another value | restart on x86-64 macOS and Linux: `U.SMALL:LONGINT is 3 bytes from the next routine, too close for the 5-byte jump to its new code`; swap on arm64 and Windows, where the jump fits | `shortentry` |
 | An assembler routine whose first instruction, 2 bytes long, calls a routine a thread waits in returns another value | restart on x86-64 macOS, Linux and Windows: `U.RELAY(POINTER,POINTER):LONGINT may call a routine within its first 5 bytes, and a thread could return from it into the middle of the jump to its new code`; swap on arm64, where the call returns after the jump | `shortcall` |
+| A thread traps in an assembler routine's first bytes and its signal handler, or on Windows its vectored exception handler, waits until new code runs; the routine returns another value | restart on x86-64 macOS, Linux and Windows: `a thread may resume within the first 5 bytes of U.ENTRY:LONGINT, in the middle of the jump to its new code, such as one a signal or an exception interrupted there`; swap on arm64, where the thread resumes after the branch | `sighandler` |
+| The same, with a signal handler that blocks every signal: on Linux the agent can't stop the thread, and reads its stack where it sleeps | the same | `sigmasked` |
 
 ## Saves in quick succession
 
