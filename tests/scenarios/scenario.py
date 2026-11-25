@@ -49,7 +49,9 @@ WHILE_COMPILING = "while compiling"
 EMPTIED_FIRST = "emptied first"
 # A step saved while the driver builds the program to start it: once fpc has written the
 # program's object file, .hot/units/main.o, so fpc has read main.pas and is linking. It comes
-# first, and has no outcome of its own: the program starts with it.
+# first, and has no outcome of its own: the program starts with it. A second such step waits
+# for the main.o of the next build, which the save before makes the driver do: one newer
+# than the program the build before linked.
 AT_START = "at the start"
 
 
@@ -924,6 +926,21 @@ case("startsave", {
     ("another text", [("main.pas", "' main two", "' main three")]),
 ])
 
+# ---------------------------------------------------------------------------- a start whose compile to assembler fails
+# progvar's program. A save lands during the first build while .hot/asm/main.s is a directory,
+# so fpc cannot write the program's assembler; the next save, during the build that follows,
+# lets it again. Only the build the program starts from decides: on Windows the check of
+# sizes stays on, and the variable that grows needs a restart
+case("startblock", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, while hotfpc builds the program to start it and fpc cannot write its assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "' main one", "' main two")], AT_START),
+    ("another text, while hotfpc builds the program again and fpc can write its assembler",
+     [(".hot/asm/main.s", None, None), ("main.pas", "' main two", "' main three")], AT_START),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
+])
+
 # ---------------------------------------------------------------------------- a new unit's typed constant
 # The program has no variable with an initial value of its own until u uses a new unit, w,
 # which has a typed constant: the restart that adds w must take its size, so that the save
@@ -1422,6 +1439,21 @@ def run(name):
                 return True
         return False
 
+    def write(path, text):
+        """Saves a file of a step: its text; None removes it, or the directory BLOCKED put there."""
+        if text is None:
+            if os.path.isdir(path):
+                os.rmdir(path)
+            elif os.path.exists(path):
+                os.remove(path)
+        elif text is BLOCKED:
+            if os.path.exists(path):
+                os.remove(path)
+            os.makedirs(path)
+        else:
+            with open(path, "w") as fh:
+                fh.write(text)
+
     def texts_of(edits):
         """The files the edits make, by path, in the order the edits name them."""
         texts = {}
@@ -1440,20 +1472,32 @@ def run(name):
 
     th = threading.Thread(target=pump)
     th.start()
-    # a step at the start is saved once fpc has written the program's object file
+    # a step at the start is saved once fpc has written the program's object file, of the
+    # first build, or of a build after the program was linked
+    def written(path):
+        try:
+            return os.stat(os.path.join(work, ".hot", path)).st_mtime_ns
+        except OSError:
+            return None
+
+    def built(again):
+        made = written(os.path.join("units", "main.o"))
+        linked = max(written("main") or 0, written("main.exe") or 0)
+        return made is not None and (not again or 0 < linked < made)
+    again = False
     while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
         desc, edits = steps[0][:2]
         steps = steps[1:]
-        built = os.path.join(work, ".hot", "units", "main.o")
         deadline = time.time() + OUTCOME_TIMEOUT
-        while not os.path.exists(built) and p.poll() is None and time.time() < deadline:
+        while not built(again) and p.poll() is None and time.time() < deadline \
+                and not any("] v1: built" in line for line in lines):
             time.sleep(0.001)
-        if not os.path.exists(built):
-            out("!!! the driver did not build main.pas within %d s" % OUTCOME_TIMEOUT)
+        if not built(again):
+            out("!!! the driver did not build main.pas %sbefore it started the program" % ("again " if again else ""))
+        again = True
         out("--- the script saves: " + desc)
         for path, text in texts_of(edits).items():
-            with open(path, "w") as fh:
-                fh.write(text)
+            write(path, text)
     # Wait until the driver watches the files and the program runs: the steps must not depend
     # on how long the build or the start took. (Waiting for the build's object file was not
     # enough: under load a new executable took up to 9 s to start, and early saves merged.)
@@ -1482,24 +1526,12 @@ def run(name):
                     time.sleep(0.001)
                 if os.path.exists(record):
                     out("!!! the driver did not start to compile %s within %d s" % (os.path.basename(first), OUTCOME_TIMEOUT))
-            if text is None:   # (file, None, None): the file, or the directory BLOCKED put there, goes away
-                if os.path.isdir(path):
-                    os.rmdir(path)
-                elif os.path.exists(path):
-                    os.remove(path)
-                continue
-            if text is BLOCKED:
-                if os.path.exists(path):
-                    os.remove(path)
-                os.makedirs(path)
-                continue
             if k == 0 and emptied_first:
                 open(path, "w").close()
                 emptied = time.time()
                 time.sleep(0.1)
                 continue
-            with open(path, "w") as fh:
-                fh.write(text)
+            write(path, text)
         if emptied_first:
             time.sleep(max(0.0, emptied + 0.3 - time.time()))
             with open(first, "w") as fh:

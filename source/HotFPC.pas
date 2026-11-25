@@ -3323,7 +3323,6 @@ type
     FFailed: Integer;
     FUnchanged: Integer;
     FRestarted: Integer;
-    function BuildProgram: Boolean;
     function BuildToStart: Boolean;
     procedure CopyObjectsToLive;
     procedure ProbeLayouts;
@@ -3419,54 +3418,39 @@ begin
   inherited Destroy;
 end;
 
-function TDriver.BuildProgram: Boolean;
-var
-  Errors: TStringList;
-  I: Integer;
-begin
-  Result := FCompiler.Compile(True, Errors, FBuildSeconds);
-  try
-    if not Result then
-      for I := 0 to Errors.Count - 1 do
-        WriteLn(Errors[I]);
-  finally
-    Errors.Free;
-  end;
-end;
-
 { Builds the program to start it, and for a Windows program compiles it to assembler for the
   sizes of its initialised data (FCheckSizes). The same check of the sources covers both: a
   save that fpc read only in part, or after it read the file, would start a program that is no
   state anybody saved, or one whose sizes come from other sources than its code. The program
   is then built again once the sources settle; after MaximumUnusedCompiles such builds in a
-  row, the next one is used as it is, and Watch compiles the sources as they are then. False
-  when the build failed. }
+  row, the next one is used as it is, and Watch compiles the sources as they are then. A
+  build or a compile to assembler that failed counts only once the check of the sources has
+  passed: it may have failed on a save fpc read in part. False when the build failed; fpc's
+  errors are then printed. }
 function TDriver.BuildToStart: Boolean;
 var
+  Errors: TStringList;
   Problem: string;
+  SizesKnown: Boolean;
+  I: Integer;
 begin
   FCheckSizes := FOptions.TargetWindows;
   FSettled := FWatcher.Stamps;
   FSettledAt := FWatcher.StampedAt;
   FWatcher.ReadDigests(FDigests);
   repeat
-    if not BuildProgram then
-      Exit(False);
+    Result := FCompiler.Compile(True, Errors, FBuildSeconds);
     RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.LiveDirectory));
     ForceDirectories(FWorkspace.LiveDirectory);
     CopyObjectsToLive;
     { before the check of the sources, which may remove the records ppudump is probed with }
-    if FReader = nil then
+    if Result and (FReader = nil) then
       ProbeLayouts;
     FAssemblyWritten := False;
-    if FCheckSizes and not WriteLiveAssembly(Problem) then
-    begin
-      FCheckSizes := False;
-      FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + Problem
-        + '): the check of sizes of variables with initial values is off');
-    end;
+    SizesKnown := not Result or not FCheckSizes or WriteLiveAssembly(Problem);
     if not SourcesChangedDuringCompile then
       Break;
+    FreeAndNil(Errors);
     FStale := False;
     FSettled := Settle(FWatcher.Stamps);
     FSettledAt := FWatcher.StampedAt;
@@ -3474,9 +3458,23 @@ begin
     FWatcher.ReadDigests(FDigests);
   until False;
   FUnusedCompiles := 0;
+  try
+    if not Result then
+      for I := 0 to Errors.Count - 1 do
+        WriteLn(Errors[I]);
+  finally
+    Errors.Free;
+  end;
+  if not Result then
+    Exit;
+  if not SizesKnown then
+  begin
+    FCheckSizes := False;
+    FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + Problem
+      + '): the check of sizes of variables with initial values is off');
+  end;
   if FCheckSizes then
     KeepLiveSizes(True, '');
-  Result := True;
 end;
 
 procedure TDriver.CopyObjectsToLive;

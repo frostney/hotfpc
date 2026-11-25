@@ -39,6 +39,9 @@ EXPECT = {
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
+    # a save during the first build while fpc cannot write the assembler, and one during the
+    # build after it: the program starts from the last, and its grown variable needs a restart
+    "startblock": (0, 1, 0),
     # a typed constant in a unit new to the program, which a restart adds, then grows: a
     # restart again
     "newconst": (0, 2, 0),
@@ -61,6 +64,7 @@ PRINTS = {
     # the program runs the save made during the start from its first tick
     "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
     "newconst": ["n 1 limit 7", "n 1 limit 8"],
+    "startblock": ["n 1 main three 1"],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code
