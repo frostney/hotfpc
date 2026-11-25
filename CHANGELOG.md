@@ -6,6 +6,14 @@
   of the program did not stop` after a 2 s wait when a thread ends after the agent sent it
   the signal that stops it but before the thread took it. The agent now leaves out a thread
   that has ended, as it already did when the thread ended before the signal.
+- On Windows with fpc 3.2, a swap now applies a changed initial value of a variable in a
+  unit's implementation section by the same rule as on the other systems
+  ([What a swap keeps](docs/guides/saves-and-restarts.md#what-a-swap-keeps)): while the
+  variable still holds the old one, and neither contains an address the linker fills in.
+  It prints `note: U.SPEED still had its initial value; set to the new one`. It kept the
+  running value and printed `note: U.SPEED changed; the running copy is kept`: fpc 3.2
+  names such a variable only by its section, and the agent recognised a variable with an
+  initial value only by the `TC_$` prefix of a symbol's name.
 - A swap no longer breaks a running routine that calls a routine nested in it. When a save
   moved the parent's locals, the frame that was still running called the new nested
   routine, which read that frame with the new layout: in the `nestedframe` scenario, the

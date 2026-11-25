@@ -2158,6 +2158,20 @@ begin
   end;
 end;
 
+// The name fpc gave what a section without symbols stands for (see ParseCOFF): the section's
+// name after .n_, in upper case as fpc writes such names (@sect:.data.n_tc_$u_$$_speed ->
+// TC_$U_$$_SPEED). Any other name is returned as it is.
+function MangledName(const AName: AnsiString): AnsiString;
+var
+  Index: SizeInt;
+begin
+  Result := AName;
+  if not StartsWith(Result, SectionSymbolPrefix) then Exit;
+  Index := Pos(SectionNameInfix, Result);
+  if Index > 0 then Delete(Result, 1, Index + Length(SectionNameInfix) - 1) else Delete(Result, 1, Length(SectionSymbolPrefix));
+  Result := UpCase(Result);
+end;
+
 // WORKER_$$_STEP$LONGINT$$ANSISTRING -> WORKER.STEP(LONGINT):ANSISTRING (good enough to read)
 function Pretty(const AName: AnsiString): AnsiString;
 const
@@ -2167,14 +2181,7 @@ var
   Index: LongInt;
   Seen: Boolean;
 begin
-  Text := AName;
-  if StartsWith(Text, SectionSymbolPrefix) then
-  begin
-    // @sect:.bss.n_u_$u_$$_hidden -> U_$U_$$_HIDDEN
-    Index := Pos('.n_', Text);
-    if Index > 0 then Delete(Text, 1, Index + 2) else Delete(Text, 1, Length(SectionSymbolPrefix));
-    Text := UpCase(Text);
-  end;
+  Text := MangledName(AName);
   for Index := 0 to High(Prefixes) do
     if StartsWith(Text, Prefixes[Index]) and (Length(Text) > Length(Prefixes[Index])) and (Text[Length(Prefixes[Index]) + 1] <> '$') then
     begin
@@ -3333,6 +3340,7 @@ var
   Removed: LongInt;
   HostSymbol: PHostSymbol;
   MainBlockNoted: Boolean;
+  DataName: AnsiString;
 {$ifdef windows}
   SectionName: AnsiString;
 {$endif}
@@ -3463,7 +3471,7 @@ begin
       Symbol^.CallAddress := NewAddress;
       Symbol^.Resolved := True;
       Inc(ACounts.NewData);
-      if not Anonymous and StartsWith(Symbol^.Name, PrefixThreadVarList) then Restart('unit ' + AObjectFile^.UnitName + ' gained its first thread variable');
+      if not Anonymous and StartsWith(MangledName(Symbol^.Name), PrefixThreadVarList) then Restart('unit ' + AObjectFile^.UnitName + ' gained its first thread variable');
       Continue;
     end;
     Symbol^.BoundToExisting := True;
@@ -3477,8 +3485,11 @@ begin
       Inc(ACounts.Notes);
       Continue;
     end;
+    // the kind of data by fpc's prefix (TC_$, U_$, ...), also for a variable fpc 3.2 names on
+    // Windows only by its section
     Name := Symbol^.Name;
-    if StartsWith(Name, PrefixVMT) and not Contains(Name, IndirectSuffix) then
+    DataName := MangledName(Name);
+    if StartsWith(DataName, PrefixVMT) and not Contains(Name, IndirectSuffix) then
     begin
       NewBytes := SymbolBytes(AObjectFile, Symbol);
       OldBytes := SymbolBytes(Previous, PreviousSymbol);
@@ -3510,26 +3521,26 @@ begin
     end;
     if SizeChanged(PreviousSymbol, Symbol) then
     begin
-      if StartsWith(Name, PrefixVariable) or StartsWith(Name, PrefixTypedConstant) then
+      if StartsWith(DataName, PrefixVariable) or StartsWith(DataName, PrefixTypedConstant) then
         Restart('variable ' + Pretty(Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol))
-      else if StartsWith(Name, PrefixThreadVarList) then Restart('the thread variables of unit ' + AObjectFile^.UnitName + ' changed')
+      else if StartsWith(DataName, PrefixThreadVarList) then Restart('the thread variables of unit ' + AObjectFile^.UnitName + ' changed')
       else Restart(Pretty(Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol));
       Continue;
     end;
     if Contains(Name, IndirectSuffix) then Continue;
     Same := SymbolDigest(AObjectFile, Symbol, 0) = SymbolDigest(Previous, PreviousSymbol, 0);
     if Same then Continue;
-    if StartsWith(Name, PrefixInitTable) or StartsWith(Name, PrefixRTTI) then
+    if StartsWith(DataName, PrefixInitTable) or StartsWith(DataName, PrefixRTTI) then
     begin
       Restart('type ' + Pretty(Name) + ': its layout or type information changed');
       Continue;
     end;
-    if StartsWith(Name, PrefixThreadVarList) then
+    if StartsWith(DataName, PrefixThreadVarList) then
     begin
       Restart('the thread variables of unit ' + AObjectFile^.UnitName + ' changed');
       Continue;
     end;
-    if StartsWith(Name, PrefixTypedConstant) then
+    if StartsWith(DataName, PrefixTypedConstant) then
     begin
       // An initialised variable or typed constant whose initial value was edited. If the
       // running value is still the old initial value, nothing has written it: take the new one.
@@ -3548,7 +3559,7 @@ begin
       Inc(ACounts.Notes);
       Continue;
     end;
-    if StartsWith(Name, PrefixResourceString) then
+    if StartsWith(DataName, PrefixResourceString) then
     begin
       Say('note resource string ' + Pretty(Name) + ' changed; the running text is kept');
       Inc(ACounts.Notes);
