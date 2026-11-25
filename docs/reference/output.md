@@ -178,6 +178,8 @@ Other errors hotfpc reports:
 
 | Error | What it means |
 | --- | --- |
+| `error: the compiler failed (nothing changed)` | fpc failed but printed no error that hotfpc recognises, for example when it crashed or was stopped. |
+| `error: the program did not link (nothing changed)` | The same for the link of a restart: fpc or the linker failed without an error hotfpc recognises. |
 | `error: the program did not answer (nothing changed)` | The agent didn't reply to the load. |
 | `error: cannot replace <program> (the program is not running; the next save that builds starts it again)` | A restart linked the new program but couldn't put it in place of the old one, which had already stopped. On Windows a program's file stays locked for a moment; hotfpc tries for 5 s. |
 

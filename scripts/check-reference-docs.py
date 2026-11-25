@@ -8,8 +8,9 @@ a new environment variable fails CI until it is documented. It checks that docs/
   - quotes the driver's usage text (UsageText in source/HotFPC.pas) exactly;
   - describes every option in it in a table row of its own (a line that starts with
     | `--option), and no option that the usage text doesn't have;
-  - has every [hot] line the driver prints (FReporter.Say, WriteLn('[hot] ...'), and the
-    compiler problems it prints that way), and every restart reason, note and error that
+  - has every [hot] line the driver prints (FReporter.Say, WriteLn('[hot] ...'), the line
+    SayErrors prints with its fallback when fpc names no error, and the compiler problems
+    it prints that way), and every restart reason, note and error that
     the agent sends back (source/HotFPC.Agent.pas), also one it sends from a variable,
     such as Say('error ' + PatchError), by the assignments and constants that set it;
   - describes every HOT_* environment variable in source/ in a table row of its own.
@@ -134,12 +135,34 @@ def show(parts):
     return "".join("…" if p is HOLE else p for p in parts).strip()
 
 
+def split_arguments(argument):
+    """The arguments of a call, split at the commas outside strings and brackets."""
+    arguments, start = [], 0
+    while True:
+        try:
+            value, comma = read_until(argument, start, ",")
+        except ValueError:
+            arguments.append(argument[start:])
+            return arguments
+        arguments.append(value)
+        start = comma + 1
+
+
 def driver_lines(text):
-    lines = [parts_of(a) for a in calls(text, r"\bFReporter\.Say\(")]
-    for argument in calls(text, r"\bWriteLn\((?='\[hot\] )"):
+    lines = [parts_of(a) for a in calls(text, r"\bFReporter\.Say\s*\(")]
+    for argument in calls(text, r"\bWriteLn\s*\(\s*(?='\[hot\] )"):
         parts = parts_of(argument)
         parts[0] = parts[0][len("[hot] "):]
         lines.append(parts)
+    # SayErrors(Errors, 'fallback'): the line its FReporter.Say prints when fpc names no
+    # error, with the fallback in place of the error
+    body = text[re.search(r"\bprocedure\s+TDriver\.SayErrors\b", text).end():]
+    body = body[:re.search(r"^end;", body, re.M).end()]
+    template = next(calls(body, r"\bFReporter\.Say\s*\("))
+    error = re.search(r"\bAErrors\s*\[\s*\w+\s*\]", template).group()
+    for argument in calls(text, r"(?<![.\w])(?<!procedure )SayErrors\s*\("):
+        fallback = split_arguments(argument)[1]
+        lines.append(parts_of(template.replace(error, fallback)))
     # what the compiler check reports, as a [hot] line of its own
     for match in re.finditer(r"\bAProblem\s*:=", text):
         expression, _ = read_until(text, match.end(), ";")
@@ -181,8 +204,8 @@ def values_of(text, name, seen=None):
 
 
 def agent_lines(text):
-    lines = [parts_of(a) for a in calls(text, r"(?<!procedure )\bRestart\(")]
-    for argument in calls(text, r"\bSay\("):
+    lines = [parts_of(a) for a in calls(text, r"(?<!procedure )\bRestart\s*\(")]
+    for argument in calls(text, r"\bSay\s*\("):
         parts = parts_of(argument)
         if parts and parts[0] is not HOLE and parts[0].startswith(AGENT_PREFIXES):
             rest = parts[0].split(" ", 1)[1]

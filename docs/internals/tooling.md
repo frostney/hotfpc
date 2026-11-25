@@ -39,8 +39,9 @@ python3 scripts/check-reference-docs.py
 - doesn't quote the usage text exactly as hotfpc prints it;
 - has no table row of its own for an option in the usage text, or names an option the
   usage text doesn't have;
-- misses a `[hot]` line the driver prints, or a restart reason, note or error the agent
-  sends back;
+- misses a `[hot]` line the driver prints, including the error it prints when a compile or
+  link fails without an error from fpc, or a restart reason, note or error the agent sends
+  back;
 - has no table row for a `HOT_*` environment variable named in `source/`.
 
 A line counts as documented when its fixed parts appear in order on one line of
