@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A swap no longer breaks a running routine that calls a routine nested in it. When a save
+  moved the parent's locals, the frame that was still running called the new nested
+  routine, which read that frame with the new layout: in the `nestedframe` scenario, the
+  ticks printed wrong numbers, or the program stopped printing. A nested routine's old
+  entry, and on Windows that of the helper fpc makes for each `finally`, now keeps its old
+  code for the running frame; new code calls the new version. It happened wherever fpc
+  names nested routines: on Linux, on macOS, and on Windows with fpc 3.3.1.
 - On Windows and Linux, a swap now also stops a thread that another thread started while
   the agent was stopping them, and a thread that can't be stopped, or on Windows can't be
   opened, makes the agent let the others run and try again. Such a thread used to run on

@@ -30,7 +30,10 @@ A swap changes code, not state:
   section alike. New code reads and writes the same variables the old code did.
 - **Routines keep their addresses.** The old entry of each changed routine jumps to the new
   code, so procedure variables, method pointers, `@Proc` values and virtual method tables
-  taken before the swap call the new code.
+  taken before the swap call the new code. A routine nested in another is the exception:
+  it works in its parent's frame, so its old entry keeps the old code for the frames of
+  its parent that were running at the swap, and a nested procedure variable made in such
+  a frame calls the old code. The new nested routine runs once its parent runs new code.
 - **Objects stay valid.** An object that old code made works with new code: its class and
   virtual method table are the same ones, updated in place.
 - **Constants and literals are new.** The new code uses its own, so a changed `const`
@@ -46,9 +49,11 @@ A swap changes code, not state:
   microseconds the writes take.
 
 The main program's block is already running, so it keeps its old code (hotfpc notes it),
-and so does a routine that is running at the moment of the swap until it returns: the new
-code runs from the next call on. A unit's initialization section isn't run again. Put the
-code you want to change in routines in units, and call them from the main block.
+and so does a routine that is running at the moment of the swap until it returns, with the
+routines nested in it that it calls: the new code runs from the next call on, and a nested
+routine's new code once its parent runs new code. A unit's initialization section isn't
+run again. Put the code you want to change in routines in units, and call them from the
+main block.
 
 ## What needs a restart
 
