@@ -3332,7 +3332,8 @@ type
     function AwaitAgent(const AProgram: TProcess; out AExitCode: Integer): Boolean;
     procedure Watch;
     function ProgramHasEnded: Boolean;
-    function Settle(const AStamps: TFileStamps): TFileStamps;
+    function SettleWait: Double;
+    function Settle(const AStamps: TFileStamps; const ADeadline: Double = 0): TFileStamps;
     function SettleSave(const AKnown: TFileStamps): TFileStamps;
     procedure SayErrors(const AErrors: TStringList; const AFallback: string);
     function SourcesChangedDuringCompile: Boolean;
@@ -3369,6 +3370,10 @@ type
       left: one poll interval at most, and 0, no sleep, once the wait is over. ARemaining
       comes from one reading of the clock, which may already be past the wait's end. }
     class function SettlePause(const ARemaining: Double): Integer;
+    { When SettleSave, started at AStart with settle waits of AWait, ends at the latest: after
+      the longest settle (SettleWaitEnd), one wait for a file a save emptied
+      (DigestIntervalSeconds) and one more settle wait. }
+    class function SettleSaveDeadline(const AStart, AWait: Double): Double;
   public
     constructor Create(const AOptions: TOptions);
     destructor Destroy; override;
@@ -4184,21 +4189,29 @@ end;
   one --settle wait when that is longer (SettleWaitEnd). Stops as soon as the program has
   ended, also during a long wait (Watch then ends with it). The files as they are then. With
   the check of sizes, each wait is longer than a tick of the clock behind file times. }
-function TDriver.Settle(const AStamps: TFileStamps): TFileStamps;
+{ How long the files must stay unchanged: --settle and a slack, and with the check of sizes
+  longer than a tick of the clock behind file times, so that a write after the files settled
+  gives them another time (TSourceWatcher.TimesShowWrites). }
+function TDriver.SettleWait: Double;
+begin
+  Result := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  if FCheckSizes and (Result < StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond) then
+    Result := StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+end;
+
+function TDriver.Settle(const AStamps: TFileStamps; const ADeadline: Double): TFileStamps;
 var
   Again: TFileStamps;
   Start, Wait, WaitEnd: Double;
   Pause: Integer;
 begin
   Result := AStamps;
-  Wait := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
-  { a write after the files settled then gives them another time: the check of sizes needs
-    that (TSourceWatcher.TimesShowWrites) }
-  if FCheckSizes and (Wait < StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond) then
-    Wait := StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  Wait := SettleWait;
   Start := NowSeconds;
   repeat
     WaitEnd := SettleWaitEnd(Start, NowSeconds, Wait);
+    if (ADeadline > 0) and (WaitEnd > ADeadline) then
+      WaitEnd := ADeadline;
     { in steps, to see the program end }
     repeat
       if (FProgram <> nil) and not FProgram.Running then
@@ -4211,36 +4224,47 @@ begin
     if TSourceWatcher.SameStamps(Again, Result) then
       Break;
     Result := Again;
-  until (SettleWaitEnd(Start, NowSeconds, Wait) <= NowSeconds) or ((FProgram <> nil) and not FProgram.Running);
+  until (SettleWaitEnd(Start, NowSeconds, Wait) <= NowSeconds) or ((ADeadline > 0) and (NowSeconds >= ADeadline))
+    or ((FProgram <> nil) and not FProgram.Running);
 end;
 
 { Waits for a save as Watch does before it compiles one: for the files to settle, and while
   one that the save emptied since the sources had AKnown is still empty, until half a second
   after that was first seen (TSourceWatcher.AwaitEmptied): some editors empty a file before
-  they write it. The files as they are then. }
+  they write it. All of it ends by SettleSaveDeadline, also while saves keep emptying files,
+  so the start reaches its next build. The files as they are then. }
 function TDriver.SettleSave(const AKnown: TFileStamps): TFileStamps;
 var
   Known, Current: TFileStamps;
   Emptied: TStringList;
-  Deadline: Double;
+  Deadline, WaitEnd: Double;
 begin
   Emptied := TStringList.Create;
   try
     Known := AKnown;
-    Result := Settle(FWatcher.Stamps);
-    while TSourceWatcher.AwaitEmptied(Known, Result, NowSeconds, DigestIntervalSeconds, Emptied) do
+    Deadline := SettleSaveDeadline(NowSeconds, SettleWait);
+    Result := Settle(FWatcher.Stamps, Deadline);
+    while (NowSeconds < Deadline)
+      and TSourceWatcher.AwaitEmptied(Known, Result, NowSeconds, DigestIntervalSeconds, Emptied) do
     begin
       Known := Result;
-      Deadline := TSourceWatcher.EmptiedDeadline(Emptied, NowSeconds, DigestIntervalSeconds);
+      WaitEnd := TSourceWatcher.EmptiedDeadline(Emptied, NowSeconds, DigestIntervalSeconds);
+      if WaitEnd > Deadline then
+        WaitEnd := Deadline;
       repeat
         Sleep(PollIntervalMilliseconds);
         Current := FWatcher.Stamps;
-      until (NowSeconds >= Deadline) or not TSourceWatcher.SameStamps(Current, Result);
-      Result := Settle(Current);
+      until (NowSeconds >= WaitEnd) or not TSourceWatcher.SameStamps(Current, Result);
+      Result := Settle(Current, Deadline);
     end;
   finally
     Emptied.Free;
   end;
+end;
+
+class function TDriver.SettleSaveDeadline(const AStart, AWait: Double): Double;
+begin
+  Result := SettleWaitEnd(AStart, AStart + MaximumSettleSeconds, AWait) + DigestIntervalSeconds + AWait;
 end;
 
 class function TDriver.SettleWaitEnd(const AStart, ANow, AWait: Double): Double;
@@ -4708,6 +4732,9 @@ begin
   Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.9995, 0.002) - 11.0) < 1E-9, 'nor a few milliseconds later');
   Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.0, 5.0) - 15.0) < 1E-9, 'a --settle longer than a second waits once');
   Expect(TDriver.SettleWaitEnd(10.0, 15.0, 5.0) <= 15.0, 'and no more after it');
+  Expect(Abs(TDriver.SettleSaveDeadline(10.0, 0.004) - 11.504) < 1E-9,
+    'the wait for a save at the start ends after the longest settle, the wait for an emptied file and a settle');
+  Expect(Abs(TDriver.SettleSaveDeadline(10.0, 5.0) - 20.5) < 1E-9, 'with a --settle longer than a second, after one of those');
 end;
 
 { Each pause of a settle wait is a poll interval at most and ends with the wait, also when
@@ -7298,6 +7325,95 @@ begin
   end;
 end;
 
+type
+  { Empties one of two include files and writes the other again, every 100 ms for ASeconds
+    or until it is terminated, the two out of phase, as two saves of editors that empty a
+    file before they write it. }
+  TOutOfPhaseSaves = class(TThread)
+  private
+    FRoot: string;
+    FSeconds: Double;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ARoot: string; const ASeconds: Double);
+  end;
+
+constructor TOutOfPhaseSaves.Create(const ARoot: string; const ASeconds: Double);
+begin
+  FRoot := ARoot;
+  FSeconds := ASeconds;
+  inherited Create(False);
+end;
+
+procedure TOutOfPhaseSaves.Execute;
+var
+  Ends: Double;
+  Turn: Integer;
+begin
+  Ends := NowSeconds + FSeconds;
+  Turn := 0;
+  while (NowSeconds < Ends) and not Terminated do
+  begin
+    if Turn mod 2 = 0 then
+    begin
+      WriteTestFile(FRoot + 'a.inc', '');
+      WriteTestFile(FRoot + 'b.inc', '{ b ' + IntToStr(Turn) + ' }');
+    end
+    else
+    begin
+      WriteTestFile(FRoot + 'b.inc', '');
+      WriteTestFile(FRoot + 'a.inc', '{ a ' + IntToStr(Turn) + ' }');
+    end;
+    Inc(Turn);
+    Sleep(100);
+  end;
+end;
+
+{ The wait for a save before the program is built again at the start ends within a second
+  and a half, the settle and one wait for a file a save emptied, however long saves keep
+  emptying files; a file emptied once still gets its half second. }
+procedure TestSettleSaveEnds;
+var
+  Root: string;
+  Options: TOptions;
+  Driver: TDriver;
+  Saves: TOutOfPhaseSaves;
+  Known: TFileStamps;
+  Start, Took: Double;
+begin
+  Root := MakeTestDirectory('settle-save');
+  WriteTestFile(Root + 'demo.pas', 'program Demo;');
+  WriteTestFile(Root + 'a.inc', '{ a }');
+  WriteTestFile(Root + 'b.inc', '{ b }');
+  Options := ParseOptions([Root + 'demo.pas'], False);
+  Driver := TDriver.Create(Options);
+  try
+    Known := Driver.FWatcher.Stamps;
+    Saves := TOutOfPhaseSaves.Create(Root, 3.0);
+    try
+      Sleep(50);
+      Start := NowSeconds;
+      Driver.SettleSave(Known);
+      Took := NowSeconds - Start;
+      Expect(Took < 2.0, Format('saves that keep emptying files hold the start back %.2f s, less than 2 s', [Took]));
+    finally
+      Saves.Terminate;
+      Saves.WaitFor;
+      Saves.Free;
+    end;
+    Known := Driver.FWatcher.Stamps;
+    WriteTestFile(Root + 'a.inc', '');
+    Start := NowSeconds;
+    Driver.SettleSave(Known);
+    Took := NowSeconds - Start;
+    Expect((Took >= 0.45) and (Took < 1.0), Format('a file emptied once is waited for half a second: %.2f s', [Took]));
+  finally
+    Driver.Free;
+    Options.Free;
+  end;
+end;
+
 procedure TestEndedBeforeConnecting;
 begin
   ExpectEqual(ExitCodeBeforeConnecting('ended', 'exit 3'), 3, 'a program that ends before its agent connects gives its exit code');
@@ -7388,6 +7504,7 @@ begin
     TestWriteAssemblerAnew;
     TestVerifyVersion;
     TestLiveSizesProblem;
+    TestSettleSaveEnds;
     TestEndedBeforeConnecting;
     Result := FinishTests;
   finally
