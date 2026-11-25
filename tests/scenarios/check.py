@@ -17,7 +17,7 @@ EXPECT = {
     "slowsave": (1, 0, 0), "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
-    "include": (2, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
+    "include": (3, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
     "signals": (1, 0, 0),
     # the program starts over: a link that fails counts as a failed compile, and a restarted
     # program that fails is started again by the next save
@@ -45,6 +45,8 @@ PRINTS = {
     "signals": ["text two"],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
     "rapid": [re.compile(r"text five \d+")],
+    # the save whose v.pas was emptied first runs with both of its files
+    "include": [re.compile(r"two HITS \d+ scaled two:\d+0")],
     # a restarted program runs the new code and counts from the start
     "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
     "shortentry": ["small 3 next 7"], "shortcall": ["relay 2"],

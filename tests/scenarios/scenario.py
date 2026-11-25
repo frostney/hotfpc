@@ -43,10 +43,14 @@ BLOCKED = object()
 # A step's files after the first are written once the driver has started to compile the first:
 # it then removes the compiler's record of that unit, .hot/units/<unit>.ppu
 WHILE_COMPILING = "while compiling"
+# A step whose first file is emptied first, as by an editor that empties a file before it
+# writes it: the step's other files are written 0.1 s later, and the first file's text 0.3 s
+# after it was emptied
+EMPTIED_FIRST = "emptied first"
 
 
 def case(name, files, steps, opts=(), restart=False):
-    """steps: (description, edits) or (description, edits, WHILE_COMPILING). restart: the driver
+    """steps: (description, edits) or (description, edits, WHILE_COMPILING or EMPTIED_FIRST). restart: the driver
     starts the program over when an edit needs a restart; the other cases pass --no-restart, so
     that the program they check keeps running."""
     CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
@@ -726,6 +730,10 @@ end.
      [("shared.inc", "Result := n * 2;", "Result := n * 10;")]),
     ("shared.inc: the constant Prefix",
      [("shared.inc", "Prefix = 'one';", "Prefix = 'two';")]),
+    # u.pas is saved while v.pas is still empty: the save waits for v.pas, and is compiled
+    # once, with both
+    ("v.pas and u.pas: other texts, v.pas emptied first and written 0.3 s later",
+     [("v.pas", "Prefix + '/'", "Prefix + ':'"), ("u.pas", "hits %d", "HITS %d")], EMPTIED_FIRST),
 ])
 
 # ---------------------------------------------------------------------------- a unit renamed
@@ -1361,6 +1369,7 @@ def run(name):
     for i, step in enumerate(steps):
         desc, edits = step[:2]
         while_compiling = len(step) > 2 and step[2] == WHILE_COMPILING
+        emptied_first = len(step) > 2 and step[2] == EMPTIED_FIRST
         # a "+" marks a step that follows the one before it after 0.12 s, while the driver is
         # still busy with that one; every other step waits for the driver's outcome of the
         # one before, as someone who saves, looks at the result and edits again
@@ -1401,8 +1410,17 @@ def run(name):
                     os.remove(path)
                 os.makedirs(path)
                 continue
+            if k == 0 and emptied_first:
+                open(path, "w").close()
+                emptied = time.time()
+                time.sleep(0.1)
+                continue
             with open(path, "w") as fh:
                 fh.write(text)
+        if emptied_first:
+            time.sleep(max(0.0, emptied + 0.3 - time.time()))
+            with open(first, "w") as fh:
+                fh.write(texts[first])
         if quick_next:
             time.sleep(0.12)
             continue

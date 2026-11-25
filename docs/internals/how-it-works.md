@@ -77,10 +77,11 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    check catches an edit of the same size that the time doesn't show, such as one within
    the same second where the file system keeps whole seconds, which the compiler's own
    check misses. A save that leaves a file empty waits for the next look at the contents,
-   half a second later, and is compiled then if the file is still empty: some editors
-   empty a file before they write it. The driver then deletes the compiler's record of the
-   changed units so they're recompiled. A changed include file causes every unit to be
-   recompiled; units whose object file comes out the same are left alone.
+   half a second after the driver saw the file emptied, and is compiled then if the file is
+   still empty: some editors empty a file before they write it. A file saved meanwhile
+   waits with it. The driver then deletes the compiler's record of the changed units so
+   they're recompiled. A changed include file causes every unit to be recompiled; units
+   whose object file comes out the same are left alone.
 2. fpc compiles without linking (`-Cn`). fpc reads the files one after the other, so a
    source that changes during the compile, such as the second file of a save written a
    moment after the first, or the next save, may be read before or after its change. When
