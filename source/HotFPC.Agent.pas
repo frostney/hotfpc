@@ -2046,7 +2046,6 @@ begin
   end;
 end;
 
-// WORKER_$$_STEP$LONGINT$$ANSISTRING -> WORKER.STEP(LONGINT):ANSISTRING (good enough to read)
 // The name fpc gave a datum, also one the agent named after its section:
 // @sect:.bss.n_u_$u_$$_hidden is U_$U_$$_HIDDEN.
 function DatumName(const AName: AnsiString): AnsiString;
@@ -2069,6 +2068,7 @@ begin
   Result := StartsWith(Name, PrefixVariable) or StartsWith(Name, PrefixTypedConstant);
 end;
 
+// WORKER_$$_STEP$LONGINT$$ANSISTRING -> WORKER.STEP(LONGINT):ANSISTRING (good enough to read)
 function Pretty(const AName: AnsiString): AnsiString;
 const
   Prefixes: array[0..6] of AnsiString = (PrefixVMT, PrefixRTTI, PrefixInitTable, PrefixVariable, PrefixTypedConstant, PrefixResourceString, PrefixThreadVarList);
@@ -3265,7 +3265,9 @@ begin
       // keeps its offset, and a new one cannot be given room.
       HostSymbol := MapGet(HostSymbols, Symbol^.Name);
       // one a save removed has the size it had then
-      if PreviousSymbol = nil then PreviousSymbol := MapGet(GoneData, Symbol^.Name);
+      GoneSymbol := nil;
+      if PreviousSymbol = nil then GoneSymbol := MapGet(GoneData, Symbol^.Name);
+      if GoneSymbol <> nil then PreviousSymbol := GoneSymbol;
       if (HostSymbol = nil) or not HostSymbol^.IsTLS then Restart('unit ' + AObjectFile^.UnitName + ' gained the thread variable ' + Pretty(Symbol^.Name))
       else if (PreviousSymbol <> nil) and SizeChanged(PreviousSymbol, Symbol) then Restart('the thread variable ' + Pretty(Symbol^.Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol))
       else
@@ -3276,6 +3278,11 @@ begin
         Symbol^.Resolved := True;
         Symbol^.BoundToExisting := True;
         Inc(ACounts.Kept);
+        if GoneSymbol <> nil then
+        begin
+          Say('note ' + Pretty(Symbol^.Name) + ' is back after a save removed it; it keeps its running value');
+          Inc(ACounts.Notes);
+        end;
       end;
       Continue;
     end;

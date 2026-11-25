@@ -80,7 +80,7 @@ A swap can be followed by notes:
 | `note: <name> is gone from the source; its old code stays for callers that were not recompiled` | A function was removed or its signature changed. Code that still calls it keeps calling the old one. At most four are named. |
 | `note: ... and <n> more functions gone from the source` | Follows the fourth. |
 | `note: <name> is back after a save removed it; it keeps its running value` | A variable that an earlier save removed is back, at the size it had. The program kept it at its address: the new code uses it with the value stored there, not its initial value. |
-| `note: <name> exists in the program but not in the version of <unit> the agent knows; kept without a check` | The new code uses a variable of the program that the agent couldn't compare with an earlier version. It is bound to the program's and keeps its value. |
+| `note: <name> exists in the program but not in the version of <unit> the agent knows; kept without a check` | The new code uses a variable or a table of the program that the agent couldn't compare with an earlier version: one no version it was given had, or a table, such as a virtual method table, that an earlier save removed, of which it kept only the size. It is bound to the program's and keeps its value. |
 
 Names of symbols in notes and in the agent's reasons below are the compiler's: upper case,
 with the unit and the parameters, such as `U.SPEED` or `U.AREA(LONGINT):LONGINT`. Units are

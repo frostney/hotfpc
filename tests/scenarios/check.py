@@ -84,6 +84,8 @@ PRINTS = {
     "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
     "newconst": ["n 1 limit 7", "n 1 limit 8"],
     "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"], "startnoasm": ["n 1 main four 1"],
+    # the version that removed the variable ran
+    "readdvar": [re.compile(r"n \d+ main two")], "readdtype": ["two"],
     "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
