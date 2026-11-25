@@ -2047,6 +2047,28 @@ begin
 end;
 
 // WORKER_$$_STEP$LONGINT$$ANSISTRING -> WORKER.STEP(LONGINT):ANSISTRING (good enough to read)
+// The name fpc gave a datum, also one the agent named after its section:
+// @sect:.bss.n_u_$u_$$_hidden is U_$U_$$_HIDDEN.
+function DatumName(const AName: AnsiString): AnsiString;
+var
+  Index: LongInt;
+begin
+  Result := AName;
+  if not StartsWith(Result, SectionSymbolPrefix) then Exit;
+  Index := Pos('.n_', Result);
+  if Index > 0 then Delete(Result, 1, Index + 2) else Delete(Result, 1, Length(SectionSymbolPrefix));
+  Result := UpCase(Result);
+end;
+
+// A variable, with or without an initial value, or a typed constant.
+function IsVariable(const AName: AnsiString): Boolean;
+var
+  Name: AnsiString;
+begin
+  Name := DatumName(AName);
+  Result := StartsWith(Name, PrefixVariable) or StartsWith(Name, PrefixTypedConstant);
+end;
+
 function Pretty(const AName: AnsiString): AnsiString;
 const
   Prefixes: array[0..6] of AnsiString = (PrefixVMT, PrefixRTTI, PrefixInitTable, PrefixVariable, PrefixTypedConstant, PrefixResourceString, PrefixThreadVarList);
@@ -2055,14 +2077,7 @@ var
   Index: LongInt;
   Seen: Boolean;
 begin
-  Text := AName;
-  if StartsWith(Text, SectionSymbolPrefix) then
-  begin
-    // @sect:.bss.n_u_$u_$$_hidden -> U_$U_$$_HIDDEN
-    Index := Pos('.n_', Text);
-    if Index > 0 then Delete(Text, 1, Index + 2) else Delete(Text, 1, Length(SectionSymbolPrefix));
-    Text := UpCase(Text);
-  end;
+  Text := DatumName(AName);
   for Index := 0 to High(Prefixes) do
     if StartsWith(Text, Prefixes[Index]) and (Length(Text) > Length(Prefixes[Index])) and (Text[Length(Prefixes[Index]) + 1] <> '$') then
     begin
@@ -3346,7 +3361,7 @@ begin
       end;
       // Of a variable that comes back, its size is all there is to compare; a table, such as
       // a virtual method table, would need its contents compared, which the agent didn't keep.
-      if (GoneSymbol <> nil) and (StartsWith(Symbol^.Name, PrefixVariable) or StartsWith(Symbol^.Name, PrefixTypedConstant)) then
+      if (GoneSymbol <> nil) and IsVariable(Symbol^.Name) then
         Say('note ' + Pretty(Symbol^.Name) + ' is back after a save removed it; it keeps its running value')
       else
         Say('note ' + Pretty(Symbol^.Name) + ' exists in the program but not in the version of ' + AObjectFile^.UnitName + ' the agent knows; kept without a check');
