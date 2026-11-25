@@ -47,10 +47,18 @@ WHILE_COMPILING = "while compiling"
 # writes it: the step's other files are written 0.1 s later, and the first file's text 0.3 s
 # after it was emptied
 EMPTIED_FIRST = "emptied first"
+# A step saved while the driver builds the program to start it: once fpc has written the
+# program's object file, .hot/units/main.o, so fpc has read main.pas and is linking. It comes
+# first, and has no outcome of its own: the program starts with it. A second such step waits
+# for the main.o of the next build, which the save before makes the driver do: one newer
+# than the program the build before linked after the main.o it waited for. Such a step may
+# also be EMPTIED_FIRST: (description, edits, AT_START, EMPTIED_FIRST).
+AT_START = "at the start"
 
 
 def case(name, files, steps, opts=(), restart=False):
-    """steps: (description, edits) or (description, edits, WHILE_COMPILING or EMPTIED_FIRST). restart: the driver
+    """steps: (description, edits) or (description, edits, WHILE_COMPILING, EMPTIED_FIRST or AT_START), or
+    (description, edits, AT_START, EMPTIED_FIRST). restart: the driver
     starts the program over when an edit needs a restart; the other cases pass --no-restart, so
     that the program they check keeps running."""
     CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
@@ -863,8 +871,7 @@ end.
 # like initvar, but in the program file, for which fpc writes no unit file. The second save
 # lands while fpc cannot write the program's assembler: on Windows its sizes are then unknown,
 # so it needs a restart, and the running program's sizes stay what they were for the third
-case("progvar", {
-    "main.pas": r'''program main;
+PROGVAR_MAIN = r'''program main;
 {$mode objfpc}{$H+}
 uses SysUtils, u;
 var
@@ -884,8 +891,9 @@ begin
     Sleep(300);
   end;
 end.
-''',
-    "u.pas": r'''unit u;
+'''
+
+PROGVAR_U = r'''unit u;
 {$mode objfpc}{$H+}
 interface
 function Tick(n: Integer): string;
@@ -896,13 +904,167 @@ begin
   Result := Format('n %d', [n]);
 end;
 end.
-'''}, [
+'''
+
+case("progvar", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
     ("another text", [("main.pas", "' main one", "' main two")]),
     ("another text, while fpc cannot write the program's assembler",
      [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "' main two", "' main three")]),
     ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0",
      [(".hot/asm/main.s", None, None), ("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
 ])
+
+# ---------------------------------------------------------------------------- a save during the start
+# progvar's program; the first save lands while the driver builds the program to start it, after
+# fpc has read main.pas. The program must start from what was saved, and on Windows its sizes
+# must come from the same sources, so that the save after it swaps
+case("startsave", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0, and another text, while hotfpc builds the program to start it",
+     [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;"), ("main.pas", "' main one", "' main two")], AT_START),
+    ("another text", [("main.pas", "' main two", "' main three")]),
+])
+
+# ---------------------------------------------------------------------------- a start whose compile to assembler fails
+# progvar's program. A save lands during the first build while .hot/asm/main.s is a directory,
+# so fpc cannot write the program's assembler; the next save, during the build that follows,
+# lets it again. Only the build the program starts from decides: on Windows the check of
+# sizes stays on, and the variable that grows needs a restart
+case("startblock", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, while hotfpc builds the program to start it and fpc cannot write its assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "' main one", "' main two")], AT_START),
+    ("another text, while hotfpc builds the program again and fpc can write its assembler",
+     [(".hot/asm/main.s", None, None), ("main.pas", "' main two", "' main three")], AT_START),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
+])
+
+# ---------------------------------------------------------------------------- saves during four builds at the start
+# progvar's program. A save lands during each of the first four builds, so the fourth is used
+# as it is: the program runs the third save, while the fourth, which grows Calls, may be what
+# its compile to assembler read. On Windows the program's sizes are then unknown, and every
+# save that needs them, such as the fourth once the program runs, needs a restart
+case("startcap", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, while hotfpc builds the program to start it",
+     [("main.pas", "' main one", "' main two")], AT_START),
+    ("another text, while hotfpc builds it again", [("main.pas", "' main two", "' main three")], AT_START),
+    ("another text, while hotfpc builds it a third time", [("main.pas", "' main three", "' main four")], AT_START),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0, while hotfpc builds it a fourth time and uses that build",
+     [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")], AT_START),
+    ("another text", [("main.pas", "' main four", "' main five")]),
+])
+
+# ---------------------------------------------------------------------------- the build the program starts from without assembler
+# startcap's saves, but fpc cannot write the program's assembler for the fourth build, the one
+# the program starts from, used as it is. On Windows the program's sizes are then unknown, and
+# the check stays on: every save that needs them, such as the fourth once the program runs,
+# needs a restart
+case("startnoasm", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, while hotfpc builds the program to start it",
+     [("main.pas", "' main one", "' main two")], AT_START),
+    ("another text, while hotfpc builds it again", [("main.pas", "' main two", "' main three")], AT_START),
+    ("another text, while hotfpc builds it a third time", [("main.pas", "' main three", "' main four")], AT_START),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0, while hotfpc builds it a fourth time, uses that build and fpc cannot write its assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")], AT_START),
+    ("another text, while fpc can write the program's assembler again",
+     [(".hot/asm/main.s", None, None), ("main.pas", "' main four", "' main five")]),
+])
+
+# ---------------------------------------------------------------------------- a file emptied during the start
+# progvar's program; a save during the first build empties main.pas and writes it 0.3 s later,
+# as an editor that empties a file before it writes it. The build after it waits for the file
+# as a save does once the program runs, and the program starts with the saved text
+case("startempty", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, emptied first, while hotfpc builds the program to start it",
+     [("main.pas", "' main one", "' main two")], AT_START, EMPTIED_FIRST),
+    ("another text", [("main.pas", "' main two", "' main three")]),
+])
+
+# ---------------------------------------------------------------------------- a unit left out during the start
+# progvar's program, which also uses w, a unit with an initialization section. A save during
+# the first build leaves w out, so the program starts without it: when main uses it again, w
+# is a unit the running program does not have, and its initialization has never run
+W_STARTED = r'''unit w;
+{$mode objfpc}{$H+}
+interface
+var
+  Started: Integer;
+function WText: string;
+implementation
+uses SysUtils;
+function WText: string;
+begin
+  Result := Format(' w started %d', [Started]);
+end;
+initialization
+  Started := 42;
+end.
+'''
+
+case("startunit", {
+    "main.pas": PROGVAR_MAIN.replace("uses SysUtils, u;", "uses SysUtils, u, w;"),
+    "u.pas": PROGVAR_U,
+    "w.pas": W_STARTED}, [
+    ("main no longer uses w, while hotfpc builds the program to start it",
+     [("main.pas", "uses SysUtils, u, w;", "uses SysUtils, u;")], AT_START),
+    ("main uses w again and prints what w's initialization set",
+     [("main.pas", "uses SysUtils, u;", "uses SysUtils, u, w;"),
+      ("main.pas", "Format(' main one %d', [Calls])", "Format(' main one %d', [Calls]) + WText")]),
+])
+
+# ---------------------------------------------------------------------------- a new unit's typed constant
+# The program has no variable with an initial value of its own until u uses a new unit, w,
+# which has a typed constant: the restart that adds w must take its size, so that the save
+# that grows it starts the program over again
+NEWCONST_MAIN = r'''program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+var
+  Count: Integer;
+begin
+  Count := 0;
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Tick(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+'''
+
+W_LIMIT = r'''unit w;
+{$mode objfpc}{$H+}
+interface
+function WText: string;
+implementation
+uses SysUtils;
+const
+  Limit: Integer = 7;
+function WText: string;
+begin
+  Result := Format(' limit %d', [Limit]);
+end;
+end.
+'''
+
+case("newconst", {"main.pas": NEWCONST_MAIN, "u.pas": PROGVAR_U}, [
+    ("u uses a new unit, w, with the typed constant Limit: Integer = 7: the program starts over",
+     [("w.pas", None, W_LIMIT), ("u.pas", "uses SysUtils;", "uses SysUtils, w;"),
+      ("u.pas", "Format('n %d', [n])", "Format('n %d', [n]) + WText")]),
+    ("Limit: Integer = 7 becomes Limit: Int64 = 8: the program starts over again",
+     [("w.pas", "Limit: Integer = 7;", "Limit: Int64 = 8;")]),
+], restart=True)
 
 # ---------------------------------------------------------------------------- a routine's typed constant
 # like typedconst, but declared in a routine, which no unit file has with any fpc
@@ -1358,8 +1520,85 @@ def run(name):
                 return True
         return False
 
+    def write(path, text):
+        """Saves a file of a step: its text; None removes it, or the directory BLOCKED put there."""
+        if text is None:
+            if os.path.isdir(path):
+                os.rmdir(path)
+            elif os.path.exists(path):
+                os.remove(path)
+        elif text is BLOCKED:
+            if os.path.exists(path):
+                os.remove(path)
+            os.makedirs(path)
+        else:
+            with open(path, "w") as fh:
+                fh.write(text)
+
+    def write_emptied_first(texts):
+        """Saves a step's files as an editor that empties the first before it writes it: the
+        others 0.1 s after it emptied it, and its text 0.3 s after."""
+        first = next(iter(texts))
+        open(first, "w").close()
+        emptied = time.time()
+        time.sleep(0.1)
+        for path, text in list(texts.items())[1:]:
+            write(path, text)
+        time.sleep(max(0.0, emptied + 0.3 - time.time()))
+        with open(first, "w") as fh:
+            fh.write(texts[first])
+
+    def texts_of(edits):
+        """The files the edits make, by path, in the order the edits name them."""
+        texts = {}
+        for f, old, new in edits:
+            path = os.path.join(work, f)
+            if old is None:
+                texts[path] = new
+                continue
+            if path not in texts:
+                with open(path) as fh:
+                    texts[path] = fh.read()
+            if old not in texts[path]:
+                out("!!! the edit does not apply: %r" % old)
+            texts[path] = texts[path].replace(old, new)
+        return texts
+
     th = threading.Thread(target=pump)
     th.start()
+    # a step at the start is saved once fpc has written the program's object file, of the
+    # first build, or of a build after the program was linked
+    def written(path):
+        try:
+            return os.stat(os.path.join(work, ".hot", path)).st_mtime_ns
+        except OSError:
+            return None
+
+    def built(before):
+        made = written(os.path.join("units", "main.o"))
+        linked = max(written("main") or 0, written("main.exe") or 0)
+        # fpc may still be writing the main.o the step before saw: only a link after it ends
+        # that build
+        return made is not None and (before is None or before < linked < made)
+    before = None
+    while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
+        desc, edits = steps[0][:2]
+        emptied_first = EMPTIED_FIRST in steps[0][3:]
+        steps = steps[1:]
+        deadline = time.time() + OUTCOME_TIMEOUT
+        while not built(before) and p.poll() is None and time.time() < deadline \
+                and not any("] v1: built" in line for line in lines):
+            time.sleep(0.001)
+        if not built(before):
+            out("!!! the driver did not build main.pas %sbefore it started the program" % ("again " if before else ""))
+        before = written(os.path.join("units", "main.o"))
+        out("--- the script saves: " + desc)
+        texts = texts_of(edits)
+        if emptied_first:
+            write_emptied_first(texts)
+        else:
+            for path, text in texts.items():
+                write(path, text)
     # Wait until the driver watches the files and the program runs: the steps must not depend
     # on how long the build or the start took. (Waiting for the build's object file was not
     # enough: under load a new executable took up to 9 s to start, and early saves merged.)
@@ -1375,52 +1614,23 @@ def run(name):
         # one before, as someone who saves, looks at the result and edits again
         quick_next = i + 1 < len(steps) and steps[i + 1][0].startswith("+")
         out("--- the script saves: " + desc.lstrip("+"))
-        texts = {}
-        for f, old, new in edits:
-            path = os.path.join(work, f)
-            if old is None:
-                texts[path] = new
-                continue
-            if path not in texts:
-                with open(path) as fh:
-                    texts[path] = fh.read()
-            if old not in texts[path]:
-                out("!!! the edit does not apply: %r" % old)
-            texts[path] = texts[path].replace(old, new)
+        texts = texts_of(edits)
         with lock:
             since = len(lines)
         saved = time.time()
         first = next(iter(texts))
-        for k, (path, text) in enumerate(texts.items()):
-            if k == 1 and while_compiling:
-                record = os.path.join(work, ".hot", "units", os.path.splitext(os.path.basename(first))[0] + ".ppu")
-                deadline = time.time() + OUTCOME_TIMEOUT
-                while os.path.exists(record) and time.time() < deadline:
-                    time.sleep(0.001)
-                if os.path.exists(record):
-                    out("!!! the driver did not start to compile %s within %d s" % (os.path.basename(first), OUTCOME_TIMEOUT))
-            if text is None:   # (file, None, None): the file, or the directory BLOCKED put there, goes away
-                if os.path.isdir(path):
-                    os.rmdir(path)
-                elif os.path.exists(path):
-                    os.remove(path)
-                continue
-            if text is BLOCKED:
-                if os.path.exists(path):
-                    os.remove(path)
-                os.makedirs(path)
-                continue
-            if k == 0 and emptied_first:
-                open(path, "w").close()
-                emptied = time.time()
-                time.sleep(0.1)
-                continue
-            with open(path, "w") as fh:
-                fh.write(text)
         if emptied_first:
-            time.sleep(max(0.0, emptied + 0.3 - time.time()))
-            with open(first, "w") as fh:
-                fh.write(texts[first])
+            write_emptied_first(texts)
+        else:
+            for k, (path, text) in enumerate(texts.items()):
+                if k == 1 and while_compiling:
+                    record = os.path.join(work, ".hot", "units", os.path.splitext(os.path.basename(first))[0] + ".ppu")
+                    deadline = time.time() + OUTCOME_TIMEOUT
+                    while os.path.exists(record) and time.time() < deadline:
+                        time.sleep(0.001)
+                    if os.path.exists(record):
+                        out("!!! the driver did not start to compile %s within %d s" % (os.path.basename(first), OUTCOME_TIMEOUT))
+                write(path, text)
         if quick_next:
             time.sleep(0.12)
             continue

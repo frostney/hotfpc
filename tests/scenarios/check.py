@@ -10,7 +10,8 @@ $HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
 import os, platform, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# case: (reloads applied, refused, failed to compile); rapid may merge two quick saves into one reload
+# case: (reloads applied, refused, failed to compile); a tuple lists the numbers a case may give, as
+# when two saves may make one reload (rapid)
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
@@ -36,9 +37,32 @@ EXPECT = {
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
     "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
+    # a save while hotfpc builds the program to start it: the program starts with it, and the
+    # save after it swaps
+    "startsave": (1, 0, 0),
+    # a save during the first build while fpc cannot write the assembler, and one during the
+    # build after it: the program starts from the last, and its grown variable needs a restart
+    "startblock": (0, 1, 0),
+    # saves during four builds at the start, the last of which grows Calls: the program runs
+    # the third, and the grown variable needs a restart, once or twice as hotfpc compiles it
+    # alone or with the save after it
+    "startcap": (0, (1, 2), 0),
+    # startcap's saves, with no assembler for the fourth build: the check stays on, and the
+    # grown variable needs a restart, once or twice
+    "startnoasm": (0, (1, 2), 0),
+    # a save that empties the program file during the first build: the build after it waits
+    # for the file, and the program starts with the saved text
+    "startempty": (1, 0, 0),
+    # a unit the program no longer uses after a save during the first build, then uses again:
+    # a restart, for a unit the running program does not have
+    "startunit": (0, 1, 0),
+    # a typed constant in a unit new to the program, which a restart adds, then grows: a
+    # restart again
+    "newconst": (0, 2, 0),
 }
 # case: restarts; every other case passes --no-restart and expects none
-RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1, "sighandler": 1, "sigmasked": 1}
+RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1,
+            "sighandler": 1, "sigmasked": 1, "newconst": 2}
 # case: lines the program must print, so that a swap shows its new values
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
@@ -51,6 +75,11 @@ PRINTS = {
     "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
     "shortentry": ["small 3 next 7"], "shortcall": ["relay 2"],
     "sighandler": ["entry 2, resumed"], "sigmasked": ["entry 2, resumed"],
+    # the program runs the save made during the start from its first tick
+    "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
+    "newconst": ["n 1 limit 7", "n 1 limit 8"],
+    "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"], "startnoasm": ["n 1 main four 1"],
+    "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code
@@ -60,6 +89,12 @@ SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n
 # once after the swap's line, as its Tick ran the old code or had its result already
 UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
              for name in ("signature", "slowsave")}
+# case: lines hotfpc must print (patterns, after "[hot] ")
+SAYS = {
+    # the program starts with the units of the build it runs, without one a save left out
+    "startunit": [r"v1: built in [\d.]+ ms, started in [\d.]+ ms, 2 units of its own",
+                  r"restart needed: unit w is not part of the running program"],
+}
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
 # so every tick prints it and the two numbers stay equal
@@ -79,6 +114,17 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # a save whose sizes hotfpc cannot check, because fpc did not write the assembler,
     # needs a restart (progvar, second step)
     EXPECT["progvar"] = (1, 2, 0)
+    # the reason a Windows program gives, so that the sizes it is checked against are the
+    # ones the case is about: the sizes of the build the program started from (startblock),
+    # of the unit a restart added (newconst; with fpc 3.3 the unit file has the constant's
+    # type, and the check of layouts finds it first), unknown after the sources kept changing
+    # during the builds at the start (startcap), and unknown when fpc wrote no assembler for
+    # the build the program started from, with the check still on (startnoasm)
+    SAYS["startblock"] = [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes"]
+    SAYS["newconst"] = [r"restart needed: (variable W\.LIMIT changed size from 4 to 8 bytes|w\.Limit: the declaration changed its layout or type)"]
+    SAYS["startcap"] = [r"restart needed: the sizes of variables with initial values are unknown: the sources changed while fpc compiled them"]
+    SAYS["startnoasm"] = [r".* did not compile the program to assembler \(.*\): until the program starts over, a save that needs the sizes of variables with initial values needs a restart",
+                          r"restart needed: the sizes of variables with initial values are unknown: .* did not compile the program to assembler"]
 # On arm64 a redirect is one 4-byte instruction, which every routine has room for. A COFF
 # object pads the section of each of fpc's routines to 16 bytes, so on Windows the jump
 # fits too. There, shortentry is swapped.
@@ -118,7 +164,7 @@ for name in names:
     # during it, so none finds the same code ("not swapped")
     # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
     # gave no outcome for
-    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! " not in body
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! " not in body
     # the program's tick records, each a line of its own after the script's timestamp: the
     # same records count toward continuity and carry the counters
     records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)
@@ -128,6 +174,8 @@ for name in names:
     missing = [text for text in PRINTS.get(name, [])
                if not re.search(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", body, re.M)]
     ok = ok and not missing
+    unsaid = [pattern for pattern in SAYS.get(name, []) if not re.search(r"\[hot\] " + pattern, body)]
+    ok = ok and not unsaid
     drift = []
     for tick, text in records if name in COUNTERS else []:
         count = re.search(r"\b%s (\d+)" % COUNTERS[name], text)
@@ -150,6 +198,7 @@ for name in names:
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
           + "".join("; never printed %r" % getattr(text, "pattern", text) for text in missing)
+          + "".join("; hotfpc never said %r" % pattern for pattern in unsaid)
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow)

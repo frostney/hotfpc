@@ -60,9 +60,9 @@ it too; otherwise the old program keeps running, and hotfpc says so:
   and fpc pads a variable with an initial value, and a typed constant, to 16 bytes. So when
   a changed unit has one, hotfpc also compiles the program to assembler, into `.hot/asm/`,
   and compares the sizes there. That compile costs about as much as the first. If it
-  fails at the start, hotfpc says so and the check is off for the run. If it fails for a
-  save, or when the program started over, a save that needs the sizes needs a restart: a
-  variable it can't see may have grown. So does a save that changes a variable the object
+  fails for a save, at the start or when the program started over, a save that needs the
+  sizes needs a restart: a variable it can't see may have grown. At the start hotfpc says
+  so, and the check stays on until a restart gives it the sizes. So does a save that changes a variable the object
   file has and the assembler gives no size for, and one whose files' times can't show
   whether another save came and was put back during its compiles, as on a file system that
   keeps whole seconds.

@@ -3250,6 +3250,8 @@ const
   { The longest hotfpc waits for the files to stop changing. A file that changes all the time
     is then compiled as it is, and that compile sees the change: the limit above applies. }
   MaximumSettleSeconds = 1.0;
+  { why the sizes of initialised data are unknown after MaximumUnusedCompiles }
+  UnsettledSources = 'the sources changed while fpc compiled them';
   { macOS checks a newly linked executable on its first start (seconds, more under load); Wine
     starts its server the first time. }
   ConnectTimeoutSeconds = 60;
@@ -3323,14 +3325,16 @@ type
     FFailed: Integer;
     FUnchanged: Integer;
     FRestarted: Integer;
-    function BuildProgram: Boolean;
+    function BuildToStart: Boolean;
     procedure CopyObjectsToLive;
     procedure ProbeLayouts;
     function StartProgram: TProcess;
     function AwaitAgent(const AProgram: TProcess; out AExitCode: Integer): Boolean;
     procedure Watch;
     function ProgramHasEnded: Boolean;
-    function Settle(const AStamps: TFileStamps): TFileStamps;
+    function SettleWait: Double;
+    function Settle(const AStamps: TFileStamps; const ADeadline: Double = 0): TFileStamps;
+    function SettleSave(const AKnown: TFileStamps): TFileStamps;
     procedure SayErrors(const AErrors: TStringList; const AFallback: string);
     function SourcesChangedDuringCompile: Boolean;
     procedure ForgetNewUnits;
@@ -3340,8 +3344,9 @@ type
       out AInterfaceSeconds: Double): Boolean;
     function HasInitialisedData(const AObjects: TStrings): Boolean;
     function ReadAssembly(const AObjects: TStrings; out AProblem: string): TStringList;
-    function RefreshLiveAssembly(out AProblem: string): Boolean;
-    procedure StartSizeCheck;
+    function WriteLiveAssembly(out AProblem: string): Boolean;
+    procedure KeepLiveSizes(const ASizesKnown: Boolean; const AProblem: string);
+    function LiveSizesProblem(const ASizesKnown: Boolean; const AProblem: string): string;
     function NotAssembled(const AProblem: string): string;
     procedure RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
     function SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
@@ -3365,6 +3370,10 @@ type
       left: one poll interval at most, and 0, no sleep, once the wait is over. ARemaining
       comes from one reading of the clock, which may already be past the wait's end. }
     class function SettlePause(const ARemaining: Double): Integer;
+    { When SettleSave, started at AStart with settle waits of AWait, ends at the latest: after
+      the longest settle (SettleWaitEnd), one wait for a file a save emptied
+      (DigestIntervalSeconds) and one more settle wait. }
+    class function SettleSaveDeadline(const AStart, AWait: Double): Double;
   public
     constructor Create(const AOptions: TOptions);
     destructor Destroy; override;
@@ -3418,12 +3427,43 @@ begin
   inherited Destroy;
 end;
 
-function TDriver.BuildProgram: Boolean;
+{ Builds the program to start it, and for a Windows program compiles it to assembler for the
+  sizes of its initialised data (FCheckSizes). The same check of the sources covers both: a
+  save that fpc read only in part, or after it read the file, would start a program that is no
+  state anybody saved, or one whose sizes come from other sources than its code. The program
+  is then built again once the sources settle; after MaximumUnusedCompiles such builds in a
+  row, the next one is used as it is, and Watch compiles the sources as they are then. A
+  build or a compile to assembler that failed counts only once the check of the sources has
+  passed: it may have failed on a save fpc read in part. False when the build failed; fpc's
+  errors are then printed. }
+function TDriver.BuildToStart: Boolean;
 var
   Errors: TStringList;
+  Problem: string;
+  SizesKnown: Boolean;
   I: Integer;
 begin
-  Result := FCompiler.Compile(True, Errors, FBuildSeconds);
+  FCheckSizes := FOptions.TargetWindows;
+  FSettled := FWatcher.Stamps;
+  FSettledAt := FWatcher.StampedAt;
+  FWatcher.ReadDigests(FDigests);
+  repeat
+    Result := FCompiler.Compile(True, Errors, FBuildSeconds);
+    { before the check of the sources, which may remove the records ppudump is probed with }
+    if Result and (FReader = nil) then
+      ProbeLayouts;
+    FAssemblyWritten := False;
+    SizesKnown := not Result or not FCheckSizes or WriteLiveAssembly(Problem);
+    if not SourcesChangedDuringCompile then
+      Break;
+    FreeAndNil(Errors);
+    FStale := False;
+    FSettled := SettleSave(FSettled);
+    FSettledAt := FWatcher.StampedAt;
+    FreeAndNil(FDigests);
+    FWatcher.ReadDigests(FDigests);
+  until False;
+  FUnusedCompiles := 0;
   try
     if not Result then
       for I := 0 to Errors.Count - 1 do
@@ -3431,6 +3471,19 @@ begin
   finally
     Errors.Free;
   end;
+  if not Result then
+    Exit;
+  { the units of this build only: while the program is not running, the check of the sources
+    (ForgetNewUnits) removed every object file of a build that was set aside, such as one of
+    a unit the program no longer uses }
+  CopyObjectsToLive;
+  { the check stays on: with the sizes unknown, every save that needs them needs a restart,
+    until one establishes them }
+  if not SizesKnown then
+    FReporter.Say(NotAssembled(Problem) + ': until the program starts over, a save that needs the sizes of '
+      + 'variables with initial values needs a restart');
+  if FCheckSizes then
+    KeepLiveSizes(SizesKnown, Problem);
 end;
 
 procedure TDriver.CopyObjectsToLive;
@@ -3560,7 +3613,8 @@ begin
 end;
 
 { Removes the object files and records of units the running program does not have, so that
-  a compile that leaves such a unit out doesn't find them. }
+  a compile that leaves such a unit out doesn't find them: before the program first starts,
+  every unit's. }
 procedure TDriver.ForgetNewUnits;
 var
   Objects: TStringList;
@@ -3722,49 +3776,68 @@ begin
   end;
 end;
 
-{ The sizes of the units the program was just started with become the running program's
-  (FSizes), from fpc's assembler when one of them has initialised data. After a compile to
-  assembler, every unit's file in the assembly directory is current: the units whose source
-  changed since were made to recompile there too. False when fpc failed; the sizes are then
-  unknown (FSizesProblem), as they are when an object file cannot be read. }
-function TDriver.RefreshLiveAssembly(out AProblem: string): Boolean;
+{ Compiles the program to assembler for the sizes of the program that is about to start, from
+  the sources it is built or linked from, unless this save already did or no unit has
+  initialised data. After the build or link, which may add the object file of a unit new to
+  the program, and before the check of the sources that covers both
+  (SourcesChangedDuringCompile). False when fpc failed; AProblem then says why. }
+function TDriver.WriteLiveAssembly(out AProblem: string): Boolean;
 var
   Objects: TStringList;
   Seconds: Double;
 begin
   AProblem := '';
   Result := True;
-  FreeAndNil(FSizes);
+  if FAssemblyWritten then
+    Exit;
   Objects := FWorkspace.UnitObjects;
   try
-    if not FAssemblyWritten and HasInitialisedData(Objects) then
+    if HasInitialisedData(Objects) then
     begin
       FAssemblyWritten := FCompiler.WriteAssembler(nil, AProblem, Seconds);
       Result := FAssemblyWritten;
       if GetEnvironmentVariable(DebugVariable) <> '' then
         WriteLn('[hot debug] assembler of the running program in ', FormatMilliseconds(Seconds), ' ms');
     end;
-    if Result then
-      FSizes := ReadAssembly(Objects, FSizesProblem)
-    else
-      FSizesProblem := NotAssembled(AProblem);
   finally
     Objects.Free;
   end;
 end;
 
-{ A Windows program's sizes of initialised data are checked from fpc's assembler, unless fpc
-  cannot write it. }
-procedure TDriver.StartSizeCheck;
-var
-  Problem: string;
+{ Why the sizes of the program about to start are unknown, or '': fpc did not write its
+  assembler (ASizesKnown, AProblem), or the sources kept changing during its build or link
+  and its compile to assembler (FUnsettled), or their times could not show a save that came
+  and was put back meanwhile (TSourceWatcher.TimesShowWrites), so these may come from
+  different sources. }
+function TDriver.LiveSizesProblem(const ASizesKnown: Boolean; const AProblem: string): string;
 begin
-  FCheckSizes := FOptions.TargetWindows;
-  if FCheckSizes and not RefreshLiveAssembly(Problem) then
-  begin
-    FCheckSizes := False;
-    FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + Problem
-      + '): the check of sizes of variables with initial values is off');
+  Result := '';
+  if not ASizesKnown then
+    Result := NotAssembled(AProblem)
+  else if FUnsettled then
+    Result := UnsettledSources
+  else if not TSourceWatcher.TimesShowWrites(FSettled, FSettledAt) then
+    Result := UnseenSaves;
+end;
+
+{ The sizes of the units the program starts with become the running program's (FSizes), from
+  the assembler WriteLiveAssembly wrote, or are unknown (FSizesProblem, LiveSizesProblem), as
+  they are when an object file cannot be read. After a compile to assembler, every unit's
+  file in the assembly directory is current: the units whose source changed since were made
+  to recompile there too. }
+procedure TDriver.KeepLiveSizes(const ASizesKnown: Boolean; const AProblem: string);
+var
+  Objects: TStringList;
+begin
+  FreeAndNil(FSizes);
+  FSizesProblem := LiveSizesProblem(ASizesKnown, AProblem);
+  if FSizesProblem <> '' then
+    Exit;
+  Objects := FWorkspace.UnitObjects;
+  try
+    FSizes := ReadAssembly(Objects, FSizesProblem);
+  finally
+    Objects.Free;
   end;
 end;
 
@@ -3821,7 +3894,7 @@ begin
     files have may not be the one counted }
   if FUnsettled then
   begin
-    RefuseUncheckedSizes('the sources changed while fpc compiled them', ACompileSeconds);
+    RefuseUncheckedSizes(UnsettledSources, ACompileSeconds);
     Exit(False);
   end;
   { nor can the stamps show that no save came and was put back during the compiles (Settle
@@ -4044,15 +4117,17 @@ procedure TDriver.Restart(const ASeen: Double);
 var
   Errors: TStringList;
   Problem: string;
-  Linked: Boolean;
+  Linked, SizesKnown: Boolean;
   ProgramExitCode: Integer;
   LinkSeconds, StopStart, StopSeconds: Double;
 begin
   RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.NextDirectory));
   ForceDirectories(FWorkspace.NextDirectory);
   Linked := FCompiler.Compile(True, Errors, LinkSeconds, FWorkspace.NextExecutable);
+  SizesKnown := not Linked or not FCheckSizes or WriteLiveAssembly(Problem);
   try
-    { the program keeps running; the next compile decides again }
+    { the program keeps running; the next compile decides again. This covers the compile to
+      assembler too. }
     if SourcesChangedDuringCompile then
       Exit;
     if not Linked then
@@ -4087,6 +4162,8 @@ begin
   RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.LiveDirectory));
   ForceDirectories(FWorkspace.LiveDirectory);
   CopyObjectsToLive;
+  if FCheckSizes then
+    KeepLiveSizes(SizesKnown, Problem);
   FBased.Clear;
   if FLayouts <> nil then
   begin
@@ -4106,31 +4183,35 @@ begin
   FReporter.Say(Format('v%d restarted: the program starts over; %s ms after the save was seen (link %s, stop %s, start %s)',
     [FVersion, FormatMilliseconds(NowSeconds - ASeen), FormatMilliseconds(LinkSeconds), FormatMilliseconds(StopSeconds),
      FormatMilliseconds(NowSeconds - FStartedAt)]));
-  { the sizes the next save is checked against, once the program runs; when fpc fails, a save
-    that needs them is refused until the program starts over again }
-  if FCheckSizes then
-    RefreshLiveAssembly(Problem);
 end;
 
 { Waits for the save to stop changing the files, for MaximumSettleSeconds at most, or for
   one --settle wait when that is longer (SettleWaitEnd). Stops as soon as the program has
   ended, also during a long wait (Watch then ends with it). The files as they are then. With
   the check of sizes, each wait is longer than a tick of the clock behind file times. }
-function TDriver.Settle(const AStamps: TFileStamps): TFileStamps;
+{ How long the files must stay unchanged: --settle and a slack, and with the check of sizes
+  longer than a tick of the clock behind file times, so that a write after the files settled
+  gives them another time (TSourceWatcher.TimesShowWrites). }
+function TDriver.SettleWait: Double;
+begin
+  Result := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  if FCheckSizes and (Result < StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond) then
+    Result := StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+end;
+
+function TDriver.Settle(const AStamps: TFileStamps; const ADeadline: Double): TFileStamps;
 var
   Again: TFileStamps;
   Start, Wait, WaitEnd: Double;
   Pause: Integer;
 begin
   Result := AStamps;
-  Wait := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
-  { a write after the files settled then gives them another time: the check of sizes needs
-    that (TSourceWatcher.TimesShowWrites) }
-  if FCheckSizes and (Wait < StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond) then
-    Wait := StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  Wait := SettleWait;
   Start := NowSeconds;
   repeat
     WaitEnd := SettleWaitEnd(Start, NowSeconds, Wait);
+    if (ADeadline > 0) and (WaitEnd > ADeadline) then
+      WaitEnd := ADeadline;
     { in steps, to see the program end }
     repeat
       if (FProgram <> nil) and not FProgram.Running then
@@ -4143,7 +4224,47 @@ begin
     if TSourceWatcher.SameStamps(Again, Result) then
       Break;
     Result := Again;
-  until (SettleWaitEnd(Start, NowSeconds, Wait) <= NowSeconds) or ((FProgram <> nil) and not FProgram.Running);
+  until (SettleWaitEnd(Start, NowSeconds, Wait) <= NowSeconds) or ((ADeadline > 0) and (NowSeconds >= ADeadline))
+    or ((FProgram <> nil) and not FProgram.Running);
+end;
+
+{ Waits for a save as Watch does before it compiles one: for the files to settle, and while
+  one that the save emptied since the sources had AKnown is still empty, until half a second
+  after that was first seen (TSourceWatcher.AwaitEmptied): some editors empty a file before
+  they write it. All of it ends by SettleSaveDeadline, also while saves keep emptying files,
+  so the start reaches its next build. The files as they are then. }
+function TDriver.SettleSave(const AKnown: TFileStamps): TFileStamps;
+var
+  Known, Current: TFileStamps;
+  Emptied: TStringList;
+  Deadline, WaitEnd: Double;
+begin
+  Emptied := TStringList.Create;
+  try
+    Known := AKnown;
+    Deadline := SettleSaveDeadline(NowSeconds, SettleWait);
+    Result := Settle(FWatcher.Stamps, Deadline);
+    while (NowSeconds < Deadline)
+      and TSourceWatcher.AwaitEmptied(Known, Result, NowSeconds, DigestIntervalSeconds, Emptied) do
+    begin
+      Known := Result;
+      WaitEnd := TSourceWatcher.EmptiedDeadline(Emptied, NowSeconds, DigestIntervalSeconds);
+      if WaitEnd > Deadline then
+        WaitEnd := Deadline;
+      repeat
+        Sleep(PollIntervalMilliseconds);
+        Current := FWatcher.Stamps;
+      until (NowSeconds >= WaitEnd) or not TSourceWatcher.SameStamps(Current, Result);
+      Result := Settle(Current, Deadline);
+    end;
+  finally
+    Emptied.Free;
+  end;
+end;
+
+class function TDriver.SettleSaveDeadline(const AStart, AWait: Double): Double;
+begin
+  Result := SettleWaitEnd(AStart, AStart + MaximumSettleSeconds, AWait) + DigestIntervalSeconds + AWait;
 end;
 
 class function TDriver.SettleWaitEnd(const AStart, ANow, AWait: Double): Double;
@@ -4208,9 +4329,6 @@ begin
   Known := Seen;
   Emptied := TStringList.Create;
   try
-    { the sources changed during the first build }
-    if FStale then
-      Seen := nil;
     LastDigest := NowSeconds;
     while True do
     begin
@@ -4324,17 +4442,8 @@ begin
     WriteLn(Output);
     Exit(1);
   end;
-  { the state the build starts from: a save fpc reads only in part, or after it read the file,
-    is compiled as soon as Watch starts }
-  FSettled := FWatcher.Stamps;
-  FSettledAt := FWatcher.StampedAt;
-  FWatcher.ReadDigests(FDigests);
-  if not BuildProgram then
+  if not BuildToStart then
     Exit(1);
-  CopyObjectsToLive;
-  { before the check of the sources, which may remove the records ppudump is probed with }
-  ProbeLayouts;
-  SourcesChangedDuringCompile;
   if not FLink.Listen then
   begin
     WriteLn('[hot] cannot listen on 127.0.0.1');
@@ -4344,7 +4453,6 @@ begin
   if not AwaitAgent(FProgram, Result) then
     Exit;
   SayStart;
-  StartSizeCheck;
   Watch;
   FProgram.WaitOnExit;
   Result := ExitCodeOf(FProgram);
@@ -4624,6 +4732,9 @@ begin
   Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.9995, 0.002) - 11.0) < 1E-9, 'nor a few milliseconds later');
   Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.0, 5.0) - 15.0) < 1E-9, 'a --settle longer than a second waits once');
   Expect(TDriver.SettleWaitEnd(10.0, 15.0, 5.0) <= 15.0, 'and no more after it');
+  Expect(Abs(TDriver.SettleSaveDeadline(10.0, 0.004) - 11.504) < 1E-9,
+    'the wait for a save at the start ends after the longest settle, the wait for an emptied file and a settle');
+  Expect(Abs(TDriver.SettleSaveDeadline(10.0, 5.0) - 20.5) < 1E-9, 'with a --settle longer than a second, after one of those');
 end;
 
 { Each pause of a settle wait is a poll interval at most and ends with the wait, also when
@@ -7187,6 +7298,122 @@ begin
   end;
 end;
 
+{ The sizes a Windows program starts with are unknown when the times of its sources could
+  not show a save that came and was put back during the builds: a file written in the same
+  whole second as the build started, as file systems that keep whole seconds give it. }
+procedure TestLiveSizesProblem;
+var
+  Options: TOptions;
+  Driver: TDriver;
+begin
+  Options := ParseOptions(['-Twin64', MakeTestDirectory('live-sizes') + 'demo.pas'], False);
+  Driver := TDriver.Create(Options);
+  try
+    Driver.FSettledAt := 1000 * Int64(StampUnitsPerSecond);
+    SetLength(Driver.FSettled, 1);
+    Driver.FSettled[0] := Stamp('/src/u.pas', 10, 990 * Int64(StampUnitsPerSecond));
+    ExpectEqual(Driver.LiveSizesProblem(True, ''), '', 'sources written well before the build');
+    ExpectEqual(Driver.LiveSizesProblem(False, 'no space'), Driver.NotAssembled('no space'),
+      'fpc did not write the assembler');
+    Driver.FSettled[0] := Stamp('/src/u.pas', 10, 1000 * Int64(StampUnitsPerSecond));
+    ExpectEqual(Driver.LiveSizesProblem(True, ''), UnseenSaves, 'a time in whole seconds of the second the build started');
+    Driver.FUnsettled := True;
+    ExpectEqual(Driver.LiveSizesProblem(True, ''), UnsettledSources, 'sources that kept changing');
+  finally
+    Driver.Free;
+    Options.Free;
+  end;
+end;
+
+type
+  { Empties one of two include files and writes the other again, every 100 ms for ASeconds
+    or until it is terminated, the two out of phase, as two saves of editors that empty a
+    file before they write it. }
+  TOutOfPhaseSaves = class(TThread)
+  private
+    FRoot: string;
+    FSeconds: Double;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ARoot: string; const ASeconds: Double);
+  end;
+
+constructor TOutOfPhaseSaves.Create(const ARoot: string; const ASeconds: Double);
+begin
+  FRoot := ARoot;
+  FSeconds := ASeconds;
+  inherited Create(False);
+end;
+
+procedure TOutOfPhaseSaves.Execute;
+var
+  Ends: Double;
+  Turn: Integer;
+begin
+  Ends := NowSeconds + FSeconds;
+  Turn := 0;
+  while (NowSeconds < Ends) and not Terminated do
+  begin
+    if Turn mod 2 = 0 then
+    begin
+      WriteTestFile(FRoot + 'a.inc', '');
+      WriteTestFile(FRoot + 'b.inc', '{ b ' + IntToStr(Turn) + ' }');
+    end
+    else
+    begin
+      WriteTestFile(FRoot + 'b.inc', '');
+      WriteTestFile(FRoot + 'a.inc', '{ a ' + IntToStr(Turn) + ' }');
+    end;
+    Inc(Turn);
+    Sleep(100);
+  end;
+end;
+
+{ The wait for a save before the program is built again at the start ends within a second
+  and a half, the settle and one wait for a file a save emptied, however long saves keep
+  emptying files; a file emptied once still gets its half second. }
+procedure TestSettleSaveEnds;
+var
+  Root: string;
+  Options: TOptions;
+  Driver: TDriver;
+  Saves: TOutOfPhaseSaves;
+  Known: TFileStamps;
+  Start, Took: Double;
+begin
+  Root := MakeTestDirectory('settle-save');
+  WriteTestFile(Root + 'demo.pas', 'program Demo;');
+  WriteTestFile(Root + 'a.inc', '{ a }');
+  WriteTestFile(Root + 'b.inc', '{ b }');
+  Options := ParseOptions([Root + 'demo.pas'], False);
+  Driver := TDriver.Create(Options);
+  try
+    Known := Driver.FWatcher.Stamps;
+    Saves := TOutOfPhaseSaves.Create(Root, 3.0);
+    try
+      Sleep(50);
+      Start := NowSeconds;
+      Driver.SettleSave(Known);
+      Took := NowSeconds - Start;
+      Expect(Took < 2.0, Format('saves that keep emptying files hold the start back %.2f s, less than 2 s', [Took]));
+    finally
+      Saves.Terminate;
+      Saves.WaitFor;
+      Saves.Free;
+    end;
+    Known := Driver.FWatcher.Stamps;
+    WriteTestFile(Root + 'a.inc', '');
+    Start := NowSeconds;
+    Driver.SettleSave(Known);
+    Took := NowSeconds - Start;
+    Expect((Took >= 0.45) and (Took < 1.0), Format('a file emptied once is waited for half a second: %.2f s', [Took]));
+  finally
+    Driver.Free;
+    Options.Free;
+  end;
+end;
+
 procedure TestEndedBeforeConnecting;
 begin
   ExpectEqual(ExitCodeBeforeConnecting('ended', 'exit 3'), 3, 'a program that ends before its agent connects gives its exit code');
@@ -7276,6 +7503,8 @@ begin
     TestWriteAssembler;
     TestWriteAssemblerAnew;
     TestVerifyVersion;
+    TestLiveSizesProblem;
+    TestSettleSaveEnds;
     TestEndedBeforeConnecting;
     Result := FinishTests;
   finally

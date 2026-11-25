@@ -73,13 +73,14 @@ macOS programs ([limits](limits.md)).
 ## What CI runs
 
 On pull requests and on pushes to main, CI builds hotfpc with fpc 3.2.2, runs the unit
-tests and runs all 31 scenarios on Linux x86-64, Linux arm64, macOS arm64 and macOS
+tests and runs all scenarios on Linux x86-64, Linux arm64, macOS arm64 and macOS
 x86-64, and on
 Windows x86-64 with `hotfpc.exe` ([tooling](../internals/tooling.md#ci)). Release 1.1.0's
 commit passed on Linux x86-64, macOS arm64 and Windows x86-64 in
 [run 44368963617](https://github.com/frostney/hotfpc/actions/runs/44368963617)
-(2026-11-18). On 2026-11-25, all 31 scenarios passed on Linux x86-64 with fpc
-3.2.2 at this version of the repository.
+(2026-11-18). On 2026-11-25, all 38 scenarios passed at this version of the repository on
+Linux x86-64 with fpc 3.2.2, and for Windows x86-64 under Wine 9.0 with fpc 3.2.2 for
+win64.
 
 ## Timings
 
