@@ -288,6 +288,8 @@ const
   ProcessEntryThreadsOffset = $100;
   ThreadEntrySize = $50;
   ThreadEntryThreadIDOffset = $30;
+  ThreadEntryStateOffset = $44;      // ThreadState, a KTHREAD_STATE
+  ThreadStateTerminated = 4;
   CensusInitialSize = 256 * 1024;
   CensusSlack = 64 * 1024;
   CensusAttempts = 4;
@@ -4992,6 +4994,7 @@ var
   EndedIDs: array[0..MaxThreads - 1] of LongWord;   // threads a pass found ended
   EndedCount: LongInt;
   CensusIDs: array[0..MaxThreads - 1] of LongWord;   // the process's threads, from NtQuerySystemInformation
+  CensusStates: array[0..MaxThreads - 1] of LongWord;   // and the state of each
   CensusCount: LongInt;
   Census: PByte;   // NtQuerySystemInformation's buffer, from VirtualAlloc
   CensusSize: LongWord;
@@ -5088,7 +5091,10 @@ begin
         Exit;
       end;
       for I := 0 to Count - 1 do
+      begin
         CensusIDs[I] := LongWord(PQWord(Entry + ProcessEntryThreadsOffset + I * ThreadEntrySize + ThreadEntryThreadIDOffset)^);
+        CensusStates[I] := PLongWord(Entry + ProcessEntryThreadsOffset + I * ThreadEntrySize + ThreadEntryStateOffset)^;
+      end;
       CensusCount := Count;
       Exit(True);
     end;
@@ -5230,22 +5236,20 @@ begin
   until (StopFailure <> '') or (Met = 0);
 end;
 
-// After the passes, with the other threads stopped: every thread of the census that runs was
-// suspended. One NtGetNextThread couldn't open is still running.
+// After the passes, with the other threads stopped: every thread of the census that hasn't
+// terminated was met by a pass. One the passes never met ran after them, such as one
+// NtGetNextThread couldn't open, even if it has ended since: it may have started another.
 procedure CheckCensus;
 var
   I: LongInt;
-  Handle: TWindowsHandle;
 begin
   for I := 0 to CensusCount - 1 do
-  begin
-    if StopFailure <> '' then Exit;
-    if (CensusIDs[I] = GetCurrentThreadId) or IsSuspended(CensusIDs[I]) or IsEnded(CensusIDs[I]) then Continue;
-    Handle := OpenListedThread(CensusIDs[I], SYNCHRONIZE);
-    if Handle = 0 then Continue;
-    if not HasEnded(Handle) then StopFailure := ThreadSuspendFailure;
-    CloseHandle(Handle);
-  end;
+    if (CensusIDs[I] <> GetCurrentThreadId) and not IsSuspended(CensusIDs[I]) and not IsEnded(CensusIDs[I])
+      and (CensusStates[I] <> ThreadStateTerminated) then
+    begin
+      StopFailure := ThreadSuspendFailure;
+      Exit;
+    end;
 end;
 
 procedure WorldStop;

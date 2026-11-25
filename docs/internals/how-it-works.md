@@ -249,8 +249,8 @@ after its agent connected, and the first program in every case, end hotfpc.
   and goes through them again until a pass meets none it hasn't met before, as on macOS; new
   threads that keep coming for 2 s refuse the swap. On Windows `NtGetNextThread` leaves out a
   thread it can't open, so after the passes the agent lists the IDs of the process's threads
-  with `NtQuerySystemInformation`, which runs in the kernel there, and one of those that
-  still runs fails the stop. Wine's `NtGetNextThread` fails on such a thread instead, and
+  with `NtQuerySystemInformation`, which runs in the kernel there; one that the passes never
+  met and that hasn't terminated ran after them, and fails the stop. Wine's `NtGetNextThread` fails on such a thread instead, and
   Wine allocates for that list, so under Wine the agent doesn't make it. A thread that ended
   is left out.
   When a list can't be made, or a thread can't be suspended for another reason or its
