@@ -35,6 +35,9 @@ the notes from the section named after the tag and fails without one.
    `hotfpc --version` prints `hotfpc <tag>`, packs each binary with `README.md` and
    `LICENSE` into `hotfpc-<version>-<system>.tar.gz` (`.zip` for Windows), writes
    `hotfpc-<version>-checksums.txt` with their SHA-256 sums, and creates the GitHub release.
+4. Once the release is published, set its version in the download commands of the
+   [quick start](../guides/quick-start.md#install-hotfpc) with a pull request: the archive
+   names and the source download carry it.
 
 ## Homebrew
 

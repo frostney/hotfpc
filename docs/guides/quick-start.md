@@ -25,26 +25,34 @@ hotfpc needs Free Pascal 3.2.2 or later. It also uses the `ppudump` that comes w
 brew install fpc frostney/tap/hotfpc
 ```
 
-**From a release.** Download the archive for your system from the
-[releases](https://github.com/frostney/hotfpc/releases), check it against the release's
-checksum file, and put `hotfpc` on your `PATH`:
+**From a release.** The [releases](https://github.com/frostney/hotfpc/releases) have an
+archive for each system and a checksum file. On Linux x86-64, download both, check the
+archive, and copy `hotfpc` into a directory on your `PATH`, here `~/.local/bin`:
 
 ```sh
+curl -LO https://github.com/frostney/hotfpc/releases/download/1.1.0/hotfpc-1.1.0-linux-x64.tar.gz
+curl -LO https://github.com/frostney/hotfpc/releases/download/1.1.0/hotfpc-1.1.0-checksums.txt
 grep linux-x64 hotfpc-1.1.0-checksums.txt | sha256sum -c    # hotfpc-1.1.0-linux-x64.tar.gz: OK
 tar -xzf hotfpc-1.1.0-linux-x64.tar.gz
+mkdir -p ~/.local/bin
 cp hotfpc-1.1.0-linux-x64/hotfpc ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"    # this shell only; add it to your shell's profile
 ```
 
-On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. On Windows, unpack the
-`.zip` and put `hotfpc.exe` on your `PATH`. [Platforms](../reference/platforms.md) lists
-which archive each system has.
+On macOS, take `macos-arm64` instead of `linux-x64`, and `shasum -a 256 -c` instead of
+`sha256sum -c`. On Windows, download `hotfpc-1.1.0-windows-x64.zip`, compare the hash that
+PowerShell's `Get-FileHash hotfpc-1.1.0-windows-x64.zip` prints with the archive's line in
+the checksum file, unpack it, and put the folder with `hotfpc.exe` on your `PATH`.
+[Platforms](../reference/platforms.md) lists which archive each system has.
 
-**From source.** hotfpc is plain Pascal and needs nothing beyond what ships with fpc:
+**From source.** hotfpc is plain Pascal and needs nothing beyond what ships with fpc. Build
+it in a clone and put `build/` on your `PATH`:
 
 ```sh
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
 ./build.sh hotfpc     # build/hotfpc
+export PATH="$PWD/build:$PATH"
 ```
 
 On Windows, `build.bat hotfpc` builds `build\hotfpc.exe`. To build it in your own tree
@@ -55,10 +63,17 @@ without the scripts, see [Building hotfpc](../internals/build-system.md).
 ## Run the demo
 
 [`examples/demo`](../../examples/demo) is a program that draws a score every 0.15 s. The
-score and the way it's drawn live in `scene.pas`:
+score and the way it's drawn live in `scene.pas`. In your clone, `cd examples/demo`. With
+Homebrew or a release, download the source of the same release and go to its demo:
 
 ```sh
-cd examples/demo
+curl -L https://github.com/frostney/hotfpc/archive/refs/tags/1.1.0.tar.gz | tar -xz
+cd hotfpc-1.1.0/examples/demo
+```
+
+On Windows, the release's "Source code (zip)" has the same files. Then start it:
+
+```sh
 hotfpc demo.pas
 ```
 
