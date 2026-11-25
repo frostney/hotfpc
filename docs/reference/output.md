@@ -227,7 +227,7 @@ say that hotfpc can't load it; please report them with the unit that causes them
 | Error | Where |
 | --- | --- |
 | `<file> is not an <arm64 or x86-64> Mach-O object` | macOS |
-| `<file> is not an aarch64 ELF object` | Linux arm64 |
+| `<file> is not an <aarch64 or x86-64> ELF object` | Linux |
 | `<file> is not an x86-64 COFF object` | Windows |
 | `<file> has no symbol table` | any |
 | `cannot read <file>` | any |

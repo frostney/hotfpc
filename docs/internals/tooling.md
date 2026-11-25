@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Free Pascal | 3.2.2 (the pinned compiler); also tested with fpc-toolchain's 3.2.4-rc and 3.3.1 | building hotfpc; the scenarios use it to build the test programs |
 | fpcres | ships with fpc | turns the agent's source into a resource of hotfpc ([build system](build-system.md#the-embedded-agent)) |
-| Python | 3.9 or later | the scenario tests in `tests/scenarios/` and the reference check |
+| Python | 3.9 or later | the scenario tests in `tests/scenarios/`, the check of the agent in `tests/agent/` and the reference check |
 | Lefthook | 1.5 or later | the pre-commit hook in [`lefthook.yml`](../../lefthook.yml) (`lefthook install` once per clone) |
 | Node.js | 22 or later, with `npx`: `markdownlint-cli2` 0.24.0 and its `markdownlint` 0.42.0 require it | the Markdown lint (`markdownlint-cli2` 0.24.0, which `npx` fetches) |
 | Node.js, for the website | 22.12 or later, which the site's `mermaid` 12.2.0 requires; CI builds it with Node.js 24 | the website (`website/`) |
@@ -65,8 +65,9 @@ out.
 `.github/workflows/ci.yml` runs on pull requests and on pushes to main. On Linux x86-64,
 Linux arm64 (GitHub's `ubuntu-24.04-arm` runner), macOS arm64 and macOS x86-64 (GitHub's
 `macos-15-intel` runner) with fpc 3.2.2 it builds
-hotfpc, runs the unit tests and runs the scenarios. On Windows it builds `hotfpc.exe` with `build.bat`,
-runs the unit tests and runs the scenarios with `hotfpc.exe`. The `docs` job runs the
+hotfpc, runs the unit tests, the scenarios and the check of the agent on its own. On Windows
+it builds `hotfpc.exe` with `build.bat`, runs the unit tests, and runs the scenarios and the
+check of the agent with `hotfpc.exe`. The `docs` job runs the
 reference check and the Markdown lint.
 
 `.github/workflows/release.yml` builds the release binaries for a version tag

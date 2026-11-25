@@ -1267,8 +1267,10 @@ const
   EM_X86_64 = 62;
 {$ifdef cpuaarch64}
   HostMachine = EM_AARCH64;
+  ELFHostName = 'aarch64';
 {$else}
   HostMachine = EM_X86_64;
+  ELFHostName = 'x86-64';
 {$endif}
   SHT_SYMTAB = 2;
   SHT_RELA = 4;
@@ -1431,7 +1433,7 @@ begin
   Result := False;
   if not IsValidELF(AObjectFile, ET_REL) then
   begin
-    Say('error ' + AObjectFile^.Path + ' is not an aarch64 ELF object');
+    Say('error ' + AObjectFile^.Path + ' is not an ' + ELFHostName + ' ELF object');
     Exit;
   end;
   Header := PELFHeader(AObjectFile^.Buffer);
