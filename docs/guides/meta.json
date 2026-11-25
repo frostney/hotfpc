@@ -1,0 +1,15 @@
+{
+  "title": "Guides",
+  "defaultOpen": true,
+  "pages": [
+    "introduction",
+    "quick-start",
+    "saves-and-restarts",
+    "your-program",
+    "edits",
+    "lwpt",
+    "raylib",
+    "windows",
+    "troubleshooting"
+  ]
+}

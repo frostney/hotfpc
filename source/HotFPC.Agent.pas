@@ -45,9 +45,9 @@ unit HotFPC.Agent;
 { Addresses are added to typed pointers (PByte + offset) throughout. }
 {$pointermath on}
 { fpc 3.3.1 from fpc-toolchain before release 3.3.1+4 gave a loop counter and a temporary
-  string the same register on x86-64 at -O1 and above (docs/how-it-works.md, "A compiler
-  bug"). fpc -iV cannot tell those builds from fixed ones, so every 3.3.1 compiles the agent
-  without optimisation. It does not need the speed. }
+  string the same register on x86-64 at -O1 and above (docs/internals/how-it-works.md, "A
+  compiler bug"). fpc -iV cannot tell those builds from fixed ones, so every 3.3.1 compiles
+  the agent without optimisation. It does not need the speed. }
 {$IF FPC_FULLVERSION >= 30301}
   {$optimization off}
 {$ENDIF}

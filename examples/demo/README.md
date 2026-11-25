@@ -8,6 +8,9 @@ cd examples/demo
 hotfpc demo.pas
 ```
 
+On Windows, with the official installer's fpc, ask for a 64-bit program:
+`hotfpc -Twin64 -Px86_64 demo.pas`.
+
 While it runs, edit `scene.pas` and save. For example:
 
 - set `Glyph` to `'*'`;
@@ -20,4 +23,5 @@ program's variable can't change its size, and hotfpc starts the program over: `v
 restarted`, with the score back at zero.
 
 [`scripts/record-demo.py`](../../scripts/record-demo.py) makes the same edits in vim inside
-tmux, which is what the recording shows.
+tmux, which is what the recording shows. The [quick start](../../docs/guides/quick-start.md)
+walks through them with the lines hotfpc prints.

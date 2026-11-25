@@ -1,5 +1,5 @@
 # Builds the release binaries for a version tag (1.0.0) and publishes the release with
-# them and a checksum file (docs/build-system.md).
+# them and a checksum file (docs/internals/releasing.md).
 name: Release
 
 on:

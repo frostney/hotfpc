@@ -1,11 +1,13 @@
 # Code style
 
+> **Audience: contributors.** How hotfpc's own source is written.
+
 hotfpc follows the native-nostalgia-stack code style. In short:
 
-- **Delphi mode:** the program and the agent unit start with `{$mode delphi}{$H+}`. Checks and
-  optimisation come from the command line (docs/build-system.md), so other directives
-  appear only where a file needs them, with the reason. The agent sets its own, because the
-  user's compiler builds it with the user's options.
+- **Delphi mode:** the program and the agent unit start with `{$mode delphi}{$H+}`. Checks
+  and optimisation come from the command line ([build system](build-system.md#modes)), so
+  other directives appear only where a file needs them, with the reason. The agent sets its
+  own, because the user's compiler builds it with the user's options.
 - **Files:** few, so a copy is easy to take. `source/HotFPC.pas` is the driver, with its unit
   tests at the end inside `{$ifdef HOTFPC_TESTS}`, `source/HotFPC.Agent.pas` is the agent,
   and `source/HotFPC.rc` makes the agent's source a resource of the driver. A new part of the

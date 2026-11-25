@@ -1,0 +1,4 @@
+{
+  "title": "Contributing",
+  "pages": ["how-it-works", "build-system", "code-style", "tooling", "testing", "releasing", "demos"]
+}

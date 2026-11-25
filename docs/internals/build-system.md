@@ -1,5 +1,8 @@
 # Build system
 
+> **Audience: contributors.** How hotfpc itself is built. To install it, see the
+> [quick start](../guides/quick-start.md#install-hotfpc).
+
 hotfpc has no build-tool dependency. Anyone can copy `source/` and build it with fpc 3.2.2
 or later and fpcres, which ships with fpc:
 
@@ -8,8 +11,10 @@ fpcres -of res -o source/HotFPC.res source/HotFPC.rc
 fpc source/HotFPC.pas
 ```
 
-For working on hotfpc itself, [`build.sh`](../build.sh) is the entry point, and
-[`build.bat`](../build.bat) is the same for Windows:
+On Windows, add `-Twin64 -Px86_64` to the fpc line for the 64-bit hotfpc.
+
+For working on hotfpc itself, [`build.sh`](../../build.sh) is the entry point, and
+[`build.bat`](../../build.bat) is the same for Windows:
 
 ```sh
 ./build.sh                       # hotfpc and the unit tests
@@ -23,6 +28,8 @@ FPCRES=/path/to/fpcres ./build.sh   # another fpcres (default: fpcres on PATH)
 ```
 
 On Windows, `build.bat` takes the same arguments and variables and builds `build\hotfpc.exe`.
+The fpc from the official installer builds 32-bit programs by default, so build the x86-64
+hotfpc with `build.bat hotfpc -- -Twin64 -Px86_64`, as CI and the release workflow do.
 
 ## Targets
 
@@ -52,7 +59,7 @@ checks and optimisation come from the command line. The agent is the exception: 
 compiler builds it with the user's options, so it sets its own directives at the top of
 `HotFPC.Agent.pas`. It turns overflow and range checks off, because it works with raw
 addresses inside the user's program, and it turns optimisation off for fpc 3.3.1
-(docs/how-it-works.md, "A compiler bug").
+([how it works](how-it-works.md#a-compiler-bug)).
 
 ## The unit tests
 
@@ -63,9 +70,9 @@ into hotfpc instead of hotfpc's own main block. A normal build leaves them out.
 ## The embedded agent
 
 hotfpc carries the source of the agent, `source/HotFPC.Agent.pas`, as a resource
-(docs/how-it-works.md, "Why the agent's source is embedded"). `source/HotFPC.rc` names the
-file, fpcres compiles that into `source/HotFPC.res`, and `{$R HotFPC.res}` in `HotFPC.pas`
-links it in. At run time the driver reads it back with `TResourceStream`.
+([how it works](how-it-works.md#why-the-agents-source-is-embedded)). `source/HotFPC.rc`
+names the file, fpcres compiles that into `source/HotFPC.res`, and `{$R HotFPC.res}` in
+`HotFPC.pas` links it in. At run time the driver reads it back with `TResourceStream`.
 
 fpc would compile the `.rc` file itself, but fpc 3.2.2 does that with `windres`, which it
 doesn't ship on macOS or Linux. So the build scripts run fpcres first, on every system. fpc
@@ -75,6 +82,7 @@ Every build writes it again, so the binary always carries the agent it was built
 ## Release binaries
 
 `.github/workflows/release.yml` builds `hotfpc` for macOS arm64, Linux x86-64, Linux arm64
-and Windows x86-64 with fpc 3.2.2 (`./build.sh clean hotfpc --production`, and `build.bat`
-on Windows) when a version tag is pushed. It attaches the archives and a checksum file to
-the GitHub release.
+and Windows x86-64 with fpc 3.2.2 (`./build.sh clean hotfpc --production`, and
+`build.bat clean hotfpc --production -- -Twin64 -Px86_64` on Windows) when a version tag is
+pushed. It attaches the archives and a checksum file to
+the GitHub release. [Releasing](releasing.md) has the steps.

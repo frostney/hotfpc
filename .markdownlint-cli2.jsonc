@@ -1,0 +1,31 @@
+// markdownlint-cli2 configuration for hotfpc's Markdown (docs/internals/tooling.md).
+//
+// CI's docs job runs `npx --yes markdownlint-cli2@0.24.0`, which lints the globs below;
+// run the same locally. The rules turned off suit long-form prose and tables.
+{
+  "config": {
+    "MD013": false, // line length: prose is wrapped by hand, tables and templates are long
+    "MD024": false, // duplicate headings: pages repeat section names
+    "MD033": false, // inline HTML
+    "MD034": false, // bare URLs
+    "MD041": false, // the first line is the H1 already; some files start with a comment
+    "MD060": false, // table column style: the compact `| --- |` separator
+
+    "MD003": { "style": "atx" }, // headings with #
+    "MD007": { "indent": 2 }, // list indent
+    "MD040": true, // fenced code blocks name their language
+    "MD046": { "style": "fenced" } // code blocks are fenced
+  },
+  "globs": ["**/*.md"],
+  "ignores": [
+    "build/",
+    "**/node_modules/**",
+    "**/.hot/**",
+    "tests/scenarios/work/",
+    "examples/lwpt/.lwpt/",
+    "CHANGELOG.md",
+    "website/out/",
+    "website/.next/",
+    "website/.source/"
+  ]
+}

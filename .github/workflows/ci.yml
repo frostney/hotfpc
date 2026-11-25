@@ -1,4 +1,5 @@
-# Builds hotfpc, runs its unit tests and runs the scenarios (docs/tooling.md).
+# Builds hotfpc, runs its unit tests and runs the scenarios, and checks the documentation
+# (docs/internals/tooling.md).
 name: CI
 
 on:
@@ -110,3 +111,22 @@ jobs:
           HOT_DRIVER: build/hotfpc.exe
           HOT_DRIVER_OPTS: -Twin64 -Px86_64
         run: python tests/scenarios/check.py
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # docs/reference/ against the options, [hot] lines and HOT_* variables of source/
+      - name: Reference check
+        run: python3 scripts/check-reference-docs.py
+
+      - name: Markdown lint
+        run: npx --yes markdownlint-cli2@0.24.0

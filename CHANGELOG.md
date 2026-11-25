@@ -45,6 +45,10 @@
   lost and the program could crash: gas refers to such a variable through the symbol of
   its section, and the agent placed that section again. The scenarios now check that such
   a counter keeps counting across swaps.
+- The documentation is a tree under `docs/`: guides from an introduction to
+  troubleshooting, a reference for the command line, every `[hot]` line, the environment
+  variables, the platforms and the limits, and pages for contributors. The README shows the
+  Homebrew install and a recording of `examples/raylib`, and CONTRIBUTING.md is new.
 
 ## 1.1.0
 

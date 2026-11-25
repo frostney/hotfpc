@@ -1,12 +1,15 @@
 # How hotfpc works
 
+> **Audience: contributors.** How hotfpc does what the [guides](../guides/introduction.md)
+> describe. Using hotfpc needs none of it.
+
 ## Two parts
 
-- **The driver** ([`source/HotFPC.pas`](../source/HotFPC.pas)) is the `hotfpc` program you
+- **The driver** ([`source/HotFPC.pas`](../../source/HotFPC.pas)) is the `hotfpc` program you
   run. It builds and starts your program, watches its sources, compiles them, checks
   interfaces, and talks to the agent over TCP on 127.0.0.1. TCP works the same on every
   system, including between a program under Wine and a driver outside it.
-- **The agent** ([`source/HotFPC.Agent.pas`](../source/HotFPC.Agent.pas)) is a unit that
+- **The agent** ([`source/HotFPC.Agent.pas`](../../source/HotFPC.Agent.pas)) is a unit that
   hotfpc compiles into your program. It does the actual swap, from inside the program.
 
 ## Why an agent inside the program
@@ -49,7 +52,7 @@ program it goes into:
 
 Shipping precompiled agents would mean one for every fpc version, target and option set.
 Instead, hotfpc carries the agent's source inside its own binary, as a resource made from
-[`source/HotFPC.rc`](../source/HotFPC.rc). On start it writes
+[`source/HotFPC.rc`](../../source/HotFPC.rc). On start it writes
 the source out and compiles it with your fpc and your target options into `.hot/agent/`.
 One hotfpc binary therefore works with every fpc from 3.2.2 on, including cross targets,
 and stays a single file you can copy anywhere. It also can't be paired with an agent of
@@ -98,7 +101,8 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    moved, or a field or variable that changed its type without changing a size, is
    invisible in the object file, so this check catches it. The check compares each record
    and class and the type of each variable with the running unit's, by name, because the
-   compiler numbers types again on every compile.
+   compiler numbers types again on every compile. The program file has no `.ppu`, so its
+   declarations get only the checks of sizes.
 4. For a Windows program whose changed units have a variable with an initial value or a
    typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
    `.hot/asm/`, which keeps units of its own. The program and each changed unit compile
@@ -133,14 +137,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
 
 ### When a restart is needed
 
-An edit needs a restart when the running state depends on what it changes:
-
-- a variable's size or type;
-- a class's instance size or virtual method table shape;
-- a record's or class's layout;
-- a new unit or a new thread variable;
-- a routine of the runtime that the program was linked without.
-
+An edit needs a restart when the running state depends on what it changes. The driver
+finds most cases in steps 3 and 4, and the agent the rest in step 5;
+[What a save does](../guides/saves-and-restarts.md#what-needs-a-restart) lists them, and
+[Output](../reference/output.md#restart-needed) gives every reason as hotfpc prints it.
 hotfpc names the declaration and starts the program over, the way webpack reloads a page
 when a module can't be updated in place. With `--no-restart`, the program keeps running
 its old code instead.
@@ -162,8 +162,9 @@ its old code instead.
 
 A restarted program that ends before its agent connects, or ends later with a non-zero exit
 code or by a signal, doesn't end hotfpc: a runtime error in an initialization section is
-fixed in the next save, so the next save that builds starts the program again. A restarted
-program that ends with 0, and the first program in every case, end hotfpc as before.
+fixed in the next save, so the next save that builds starts the program again. That holds
+for exit code 0 too while its agent hasn't connected. A restarted program that ends with 0
+after its agent connected, and the first program in every case, end hotfpc.
 
 ## Per system
 
