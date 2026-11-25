@@ -221,7 +221,9 @@ after its agent connected, and the first program in every case, end hotfpc.
   as on macOS; a thread that has ended may have started another before it did. A list read
   while a thread ends can leave out another, so the agent reads the list again while the
   `Threads:` line of the status file counts more threads than the list holds. A thread
-  that ended before its signal is left out. When the list can't be read, or the signal
+  that ended before its signal is left out, and so is one that ended after it but before
+  its handler ran: while it waits, the agent looks every millisecond for threads it sent
+  the signal that haven't stopped and have ended. When the list can't be read, or the signal
   can't be sent for another reason, the agent lets everything run and tries again; when
   new threads keep coming for 2 s, the swap is refused. Libraries start threads that block
   every signal (Mesa's software renderer starts one per core), and so the signal the agent

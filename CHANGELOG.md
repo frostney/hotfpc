@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- On Linux, a save into a program whose threads come and go no longer fails with `a thread
+  of the program did not stop` after a 2 s wait when a thread ends after the agent sent it
+  the signal that stops it but before the thread took it. The agent now leaves out a thread
+  that has ended, as it already did when the thread ended before the signal.
 - On Windows and Linux, a swap now also stops a thread that another thread started while
   the agent was stopping them, and a thread that can't be stopped, or on Windows can't be
   opened, makes the agent let the others run and try again. Such a thread used to run on

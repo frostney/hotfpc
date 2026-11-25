@@ -131,6 +131,7 @@ const
   SplitEntryFailure = 'an entry to rewrite could not be written in one store while a thread that blocks signals sleeps';
   StoreSize = 8;
   ParkTimeoutMilliseconds = 2000;
+  EndedCheckMilliseconds = 1;   // how often a stop that waits for threads to park looks for ones that ended
   IdleTimeoutMilliseconds = 2000;
   IdleNapMilliseconds = 3600000;
   MillisecondsPerSecond = 1000;
@@ -4442,6 +4443,9 @@ var
   ListedCount: LongInt;
   HandledIDs: array[0..MaxThreads - 1] of LongInt;   // the threads sent the park signal, and those found asleep blocking it
   HandledCount: LongInt;
+  SignalledIDs: array[0..MaxThreads - 1] of LongInt;   // the threads sent the park signal
+  SignalledCount: LongInt;
+  ArrivedIDs: array[0..MaxThreads - 1] of LongInt;     // the threads that parked, in the order they did
   BlockerIDs: array[0..MaxThreads - 1] of LongInt;   // threads of the last list that blocked the park signal
   BlockerCount: LongInt;
   DirectoryBuffer: array[0..DirectoryBufferSize div SizeOf(QWord) - 1] of QWord;   // aligned for the records
@@ -4463,6 +4467,7 @@ var
 {$endif}
 begin
   ArrivalIndex := InterLockedIncrement(Arrived) - 1;
+  if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ArrivedIDs)) then ArrivedIDs[ArrivalIndex] := LibCGetTID;
 {$ifdef cpux86_64}
   // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers; rsp is the 16th, rip the 17th
   if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ProgramCounters)) and (AContext <> nil) then
@@ -4740,23 +4745,73 @@ begin
     Exit;
   end;
   MarkHandled(AThreadID);
+  SignalledIDs[SignalledCount] := AThreadID;
+  Inc(SignalledCount);
   Inc(ASent);
+end;
+
+// Whether a thread has ended: gone from /proc/self/task, or a zombie (state Z or X in its
+// stat file, after the name in parentheses).
+function HasEnded(const AThreadID: LongInt): Boolean;
+var
+  Buffer: TStatusBuffer;
+  Count, Index: TSsize;
+begin
+  Count := ReadTaskFile(AThreadID, 'stat', Buffer);
+  if Count <= 0 then Exit(True);
+  Index := Count - 1;
+  while (Index >= 0) and (Buffer[Index] <> ')') do Dec(Index);
+  Result := (Index >= 0) and (Index + 2 < Count) and (Buffer[Index + 2] in ['Z', 'X']);
+end;
+
+// How many threads sent the park signal haven't parked and have ended. A thread that ends
+// after the signal was sent but before its handler runs never parks: it runs no more code.
+function EndedUnparked: LongInt;
+var
+  I, K, Count: LongInt;
+  Seen: Boolean;
+begin
+  Result := 0;
+  Count := InterlockedCompareExchange(Arrived, 0, 0);
+  if Count > Length(ArrivedIDs) then Count := Length(ArrivedIDs);
+  for I := 0 to SignalledCount - 1 do
+  begin
+    Seen := False;
+    for K := 0 to Count - 1 do
+      if ArrivedIDs[K] = SignalledIDs[I] then
+      begin
+        Seen := True;
+        Break;
+      end;
+    if not Seen and HasEnded(SignalledIDs[I]) then Inc(Result);
+  end;
 end;
 
 procedure WorldStop;
 var
-  CurrentThread, ProcessID, I, Sent, Met, Count: LongInt;
+  CurrentThread, ProcessID, I, Sent, Met, Count, Ended: LongInt;
   StartTime: Double;
 
+  // Until every thread sent the signal has parked or ended, or the time is up.
   procedure AwaitParked;
+  var
+    LastCheck: Double;
   begin
-    while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
+    LastCheck := NowMilliseconds;
+    while (InterlockedCompareExchange(Parked, 0, 0) < Sent - Ended) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do
+      if NowMilliseconds - LastCheck >= EndedCheckMilliseconds then
+      begin
+        Ended := EndedUnparked;
+        LastCheck := NowMilliseconds;
+      end;
+    if InterlockedCompareExchange(Parked, 0, 0) < Sent - Ended then Ended := EndedUnparked;
   end;
 
 begin
   StopFailure := '';
   SleepingBlockers := False;
   HandledCount := 0;
+  SignalledCount := 0;
 {$ifdef cpux86_64}
   SleeperCount := 0;
 {$endif}
@@ -4766,6 +4821,7 @@ begin
   InterLockedExchange(Hold, 1);
   InterLockedExchange(Arrived, 0);
   Sent := 0;
+  Ended := 0;
   StartTime := NowMilliseconds;
   repeat
     Met := 0;
@@ -4803,7 +4859,7 @@ begin
       else StopFailure := BlockerRunningFailure;
     end;
     AwaitParked;
-    if InterlockedCompareExchange(Parked, 0, 0) < Sent then StopFailure := ParkTimeoutFailure;
+    if InterlockedCompareExchange(Parked, 0, 0) < Sent - Ended then StopFailure := ParkTimeoutFailure;
     if (StopFailure = '') and (Met = 0) then
     begin
       Count := ThreadCount(CurrentThread);
