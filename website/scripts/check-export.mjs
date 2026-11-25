@@ -3,12 +3,14 @@
 //
 // - Every search result's #anchor is an id on the page it names, so a result lands on its
 //   heading.
-// - The Markdown copies (out/llms.mdx/) and llms-full.txt are plain GitHub Markdown: no
-//   heading ends with fumadocs' `[#id]` suffix, which only fumadocs' own parser reads.
+// - In the Markdown copies (out/llms.mdx/) and llms-full.txt, no heading ends with fumadocs'
+//   `[#id]` suffix, which only fumadocs' own parser reads. The files are parsed as Markdown,
+//   so a heading inside a quote counts and a line in a code block doesn't.
 //
 // It exits 1 and lists each problem when one fails.
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 import { fileURLToPath } from 'node:url';
 
 const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'out');
@@ -51,15 +53,26 @@ function markdownFiles(dir) {
   });
 }
 
+// the text of a node and everything in it, as a reader sees it
+function text(node) {
+  if ('value' in node && typeof node.value === 'string') return node.value;
+  return (node.children ?? []).map(text).join('');
+}
+
+function headings(node, found = []) {
+  if (node.type === 'heading') found.push(node);
+  for (const child of node.children ?? []) headings(child, found);
+  return found;
+}
+
 const copies = [...markdownFiles(join(out, 'llms.mdx')), join(out, 'llms-full.txt')];
 for (const file of copies) {
-  let fence = false;
-  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
-    if (!fence && /^#{1,6}\s.*\[#[^\]]*\]\s*$/.test(line)) {
-      problems.push(`${file.slice(out.length + 1)}:${i + 1}: heading ends with an [#id] suffix: ${line}`);
+  for (const heading of headings(fromMarkdown(readFileSync(file, 'utf8')))) {
+    const title = text(heading);
+    if (/\[#[^\]]*\]\s*$/.test(title)) {
+      problems.push(`${file.slice(out.length + 1)}:${heading.position.start.line}: heading ends with an [#id] suffix: ${title}`);
     }
-  });
+  }
 }
 
 if (problems.length > 0) {

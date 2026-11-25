@@ -1,13 +1,11 @@
 import { pageDescription, pageTitle, source } from '@/lib/source';
 import { createFromSource } from 'fumadocs-core/search/server';
-import { structure } from 'fumadocs-core/mdx-plugins';
 
 export const revalidate = false;
 
-// The docs are plain markdown rendered straight from the repository's
-// docs/ tree, so the search structure is derived from the processed
-// markdown here instead of a compile-time export. The title and the
-// description are the ones the page's metadata and llms.txt give.
+// The search structure is the one fumadocs' MDX preset exports for each page, made from the
+// same headings the page renders, so a result's #anchor is the id of the heading it names.
+// The title and the description are the ones the page's metadata and llms.txt give.
 export const { staticGET: GET } = createFromSource(source, {
   // https://docs.orama.com/docs/orama-js/supported-languages
   language: 'english',
@@ -16,6 +14,6 @@ export const { staticGET: GET } = createFromSource(source, {
     description: await pageDescription(page),
     url: page.url,
     id: page.url,
-    structuredData: structure(await page.data.getText('processed')),
+    structuredData: page.data.structuredData,
   }),
 });

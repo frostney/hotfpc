@@ -15,8 +15,8 @@ const docs = defineDocs({
   docs: {
     // docs/ is plain GitHub Markdown: a page's title is its H1, and the body keeps it.
     schema: pageSchema.extend({ title: z.string().optional() }),
-    // the Markdown of each page, for llms.txt, the Markdown copies and the search index:
-    // plain GitHub Markdown, so without the `[#id]` fumadocs puts after each heading by default
+    // the Markdown of each page, for llms.txt, llms-full.txt and the Markdown copies: headings
+    // as GitHub Markdown writes them, without the `[#id]` fumadocs puts after each by default
     postprocess: {
       includeProcessedMarkdown: { headingIds: false },
     },
