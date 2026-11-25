@@ -168,18 +168,23 @@ after its agent connected, and the first program in every case, end hotfpc.
 
 ## Per system
 
+- **macOS.** The agent stops the other threads with `thread_suspend`. A thread that runs
+  until it's suspended can start another after the agent listed them, so the agent lists
+  the threads again until a list has none it hasn't suspended. When a thread can't be
+  suspended, or on x86-64 its state can't be read, the agent lets the others run and
+  tries again, and it resumes only the threads it suspended.
 - **macOS arm64.** The program's code pages are signed, so the agent copies a page, writes
   the copy, and maps it back (`VM_PROT_COPY`). New code goes into `MAP_JIT` memory. macOS
   checks a newly linked executable on its first start, which can take seconds, so the
   driver waits up to 60 s. A restart links a new executable, so it waits for that check too.
-- **macOS x86-64.** Code pages are rewritten the same way, and the agent stops the other
-  threads with `thread_suspend`. The jump at an entry is 5 bytes, so a patch can reach into
-  the next page, and the agent copies every page it touches. `thread_get_state` says where
-  each stopped thread is, and the agent retries while one is inside an entry it rewrites.
-  New code goes into ordinary writable and executable memory; `MAP_JIT` is for Apple
-  silicon. fpc reaches variables through 32-bit offsets from the instruction or through the
-  GOT, so new code and data go within 2 GiB of the program. A Mach-O x86-64 object keeps
-  each addend in the instruction's bytes, counted from the end of the instruction.
+- **macOS x86-64.** Code pages are rewritten the same way. The jump at an entry is 5 bytes,
+  so a patch can reach into the next page, and the agent copies every page it touches.
+  `thread_get_state` says where each stopped thread is, and the agent retries while one is
+  inside an entry it rewrites. New code goes into ordinary writable and executable memory;
+  `MAP_JIT` is for Apple silicon. fpc reaches variables through 32-bit offsets from the
+  instruction or through the GOT, so new code and data go within 2 GiB of the program. A
+  Mach-O x86-64 object keeps each addend in the instruction's bytes, counted from the end
+  of the instruction.
 - **Linux.** The agent calls `mprotect` around the writes and stops other threads with a
   signal whose handler waits. Libraries start threads that block every signal (Mesa's
   software renderer starts one per core). The agent doesn't send those the signal, because

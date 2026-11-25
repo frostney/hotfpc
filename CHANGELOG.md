@@ -5,6 +5,10 @@
 - macOS x86-64 (Intel Macs): the agent hot-reloads programs built for it, the releases have
   a `macos-x64` archive, and CI builds hotfpc, runs the unit tests and runs the scenarios
   on GitHub's Intel macOS runner.
+- On macOS, a swap now also stops a thread that another thread started while the agent was
+  stopping them, and a thread that can't be suspended makes the agent let the others run
+  and try again. Such a thread used to run on while the agent rewrote code. The agent
+  resumes only the threads it suspended.
 - hotfpc no longer crashes, or corrupts its memory, when a source file grows while it reads
   it, as when a save or a generator writes the file during the twice-a-second look at the
   contents. It read the file's size twice and could read more than it had room for.

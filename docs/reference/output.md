@@ -194,16 +194,19 @@ applied:
 | --- | --- | --- |
 | `a thread of the program did not stop` | Linux | A thread didn't stop within 2 s. |
 | `a thread that blocks signals kept running` | Linux | A thread that blocks every signal, as some libraries start, was running, not waiting in the kernel. |
-| `the program has more threads than the agent can stop` | Linux, Windows | The agent's list of threads to stop is full. |
-| `the threads of the program could not be listed` | macOS | `task_threads` failed, so the agent stopped nothing and wrote nothing. |
+| `the program has more threads than the agent can stop` | any | The agent's list of threads to stop is full. |
+| `the threads of the program could not be listed` | macOS | `task_threads` kept failing, so the agent wrote nothing. |
+| `a thread of the program could not be suspended` | macOS | `thread_suspend` kept failing for a thread, so the agent wrote nothing. |
+| `the agent could not read where a thread of the program stopped` | macOS x86-64 | `thread_get_state` kept failing for a thread, so the agent couldn't check that it was outside the entries it rewrites, and wrote nothing. |
 | `an entry to rewrite could not be written in one store while a thread that blocks signals sleeps` | Linux | A function's entry wasn't aligned for the one 8-byte store that keeps such a thread safe. |
 | `a thread stayed inside the first bytes of a function being redirected` | x86-64 | A thread kept stopping inside an entry the jump overwrites. |
 | `cannot copy a code page of the program` | macOS | The system refused the copy of a signed code page. |
 | `cannot replace a code page of the program` | macOS | The same, for mapping the copy back. |
 | `cannot make a code page of the program writable` | Linux, Windows | `mprotect` or `VirtualProtect` failed. |
 
-On macOS, the system's reason follows, after a colon. When this happens after some
-functions were already redirected, the line is followed by:
+On macOS, an error from a call to the system ends with the system's reason, after a colon.
+When one of these happens after some functions were already redirected, the line is
+followed by:
 
 ```text
 error: the reload stopped halfway: <n> functions are redirected and the rest are not; restart the program (nothing changed)

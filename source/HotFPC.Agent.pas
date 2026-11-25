@@ -125,6 +125,8 @@ const
   BlockerRunningFailure = 'a thread that blocks signals kept running';
   TooManyThreadsFailure = 'the program has more threads than the agent can stop';
   ThreadListFailure = 'the threads of the program could not be listed';
+  ThreadSuspendFailure = 'a thread of the program could not be suspended';
+  ThreadStateFailure = 'the agent could not read where a thread of the program stopped';
   SplitEntryFailure = 'an entry to rewrite could not be written in one store while a thread that blocks signals sleeps';
   StoreSize = 8;
   ParkTimeoutMilliseconds = 2000;
@@ -3764,68 +3766,114 @@ begin
   MachVMProtect(mach_task_self_, AAddress and not (PageSize - 1), PageSize, 0, VM_PROT_READ or VM_PROT_WRITE);
 end;
 
-// thread_suspend for every other thread of the task. On x86-64, thread_get_state then says
-// where each one stopped (StoppedInsidePatch); it waits until the thread has stopped.
+// thread_suspend for every other thread of the task. A thread that runs until it is
+// suspended can start another after the list was taken, so the agent lists the threads
+// again until a list has none it hasn't suspended. On x86-64, thread_get_state then says
+// where each one stopped (StoppedInsidePatch); it waits until the thread has stopped. A
+// thread that can't be suspended or whose state can't be read fails the stop: the commit
+// lets the others run and tries again. Only the threads the agent suspended are resumed.
 var
-  Threads: PLongWord;
-  ThreadCount: LongWord;
+  SuspendedThreads: array[0..MaxThreads - 1] of TMachPort;   // with a send right each, until WorldStart
+  SuspendedCount: LongInt;
 {$ifdef cpux86_64}
-  ProgramCounters: array[0..MaxThreads - 1] of QWord;
-  ProgramCounterCount: LongInt;
+  ProgramCounters: array[0..MaxThreads - 1] of QWord;   // where SuspendedThreads[I] stopped
   ThreadState: array[0..X86ThreadStateCount - 1] of LongWord;   // x86_thread_state64_t
 {$endif}
 
-procedure WorldStop;
+function IsSuspended(AThread: TMachPort): Boolean;
 var
-  CurrentThread: TMachPort;
-  I: LongWord;
+  I: LongInt;
+begin
+  Result := False;
+  for I := 0 to SuspendedCount - 1 do
+    if SuspendedThreads[I] = AThread then Exit(True);
+end;
+
+// Suspends one listed thread. True when the agent now holds it (and its send right).
+function SuspendListedThread(AThread: TMachPort): Boolean;
+var
+  KernelResult: TKernelReturn;
 {$ifdef cpux86_64}
   StateCount: LongWord;
 {$endif}
 begin
-  StopFailure := '';
-{$ifdef cpux86_64}
-  ProgramCounterCount := 0;
-{$endif}
-  if not SuspendThreads then Exit;
-  if TaskThreads(mach_task_self_, Threads, ThreadCount) <> 0 then
+  Result := False;
+  if SuspendedCount > High(SuspendedThreads) then
   begin
-    ThreadCount := 0;
-    StopFailure := ThreadListFailure;   // nothing is stopped: write nothing
+    StopFailure := TooManyThreadsFailure;
     Exit;
   end;
-  CurrentThread := MachThreadSelf;   // a send right, given back below
-  for I := 0 to ThreadCount - 1 do
-    if (Threads[I] <> CurrentThread) and (ThreadSuspend(Threads[I]) = 0) then
-    begin
+  KernelResult := ThreadSuspend(AThread);
+  if KernelResult <> 0 then
+  begin
+    StopFailure := ThreadSuspendFailure;
+    PatchKernelResult := KernelResult;
+    Exit;
+  end;
+  SuspendedThreads[SuspendedCount] := AThread;
+  Inc(SuspendedCount);
+  Result := True;
 {$ifdef cpux86_64}
-      StateCount := X86ThreadStateCount;
-      if ProgramCounterCount > High(ProgramCounters) then StopFailure := TooManyThreadsFailure
-      else if ThreadGetState(Threads[I], X86ThreadState64, @ThreadState[0], StateCount) = 0 then
-      begin
-        ProgramCounters[ProgramCounterCount] := PQWord(@ThreadState[X86ThreadStateRIPIndex * 2])^;
-        Inc(ProgramCounterCount);
-      end;
+  StateCount := X86ThreadStateCount;
+  KernelResult := ThreadGetState(AThread, X86ThreadState64, @ThreadState[0], StateCount);
+  if KernelResult <> 0 then
+  begin
+    StopFailure := ThreadStateFailure;
+    PatchKernelResult := KernelResult;
+  end
+  else ProgramCounters[SuspendedCount - 1] := PQWord(@ThreadState[X86ThreadStateRIPIndex * 2])^;
 {$endif}
+end;
+
+procedure WorldStop;
+var
+  CurrentThread: TMachPort;
+  List: PLongWord;
+  Count: LongWord;
+  I, Added: LongInt;
+  KernelResult: TKernelReturn;
+begin
+  StopFailure := '';
+  PatchKernelResult := 0;
+  SuspendedCount := 0;
+  if not SuspendThreads then Exit;
+  CurrentThread := MachThreadSelf;   // a send right, given back below
+  repeat
+    Added := 0;
+    List := nil;
+    Count := 0;
+    KernelResult := TaskThreads(mach_task_self_, List, Count);
+    if KernelResult <> 0 then
+    begin
+      StopFailure := ThreadListFailure;   // the threads not suspended yet would run on: write nothing
+      PatchKernelResult := KernelResult;
+      Break;
     end;
+    for I := 0 to LongInt(Count) - 1 do
+    begin
+      // each entry of the list is a send right: kept for a thread suspended now, given back otherwise
+      if (StopFailure = '') and (List[I] <> CurrentThread) and not IsSuspended(List[I]) and SuspendListedThread(List[I]) then
+      begin
+        Inc(Added);
+        Continue;
+      end;
+      MachPortDeallocate(mach_task_self_, List[I]);
+    end;
+    VMDeallocate(mach_task_self_, PtrUInt(List), Count * SizeOf(TMachPort));
+  until (StopFailure <> '') or (Added = 0);
   MachPortDeallocate(mach_task_self_, CurrentThread);
 end;
 
 procedure WorldStart;
 var
-  CurrentThread: TMachPort;
-  I: LongWord;
+  I: LongInt;
 begin
-  if not SuspendThreads or (ThreadCount = 0) then Exit;
-  CurrentThread := MachThreadSelf;
-  for I := 0 to ThreadCount - 1 do
+  for I := 0 to SuspendedCount - 1 do
   begin
-    if Threads[I] <> CurrentThread then ThreadResume(Threads[I]);
-    MachPortDeallocate(mach_task_self_, Threads[I]);
+    ThreadResume(SuspendedThreads[I]);
+    MachPortDeallocate(mach_task_self_, SuspendedThreads[I]);
   end;
-  MachPortDeallocate(mach_task_self_, CurrentThread);
-  VMDeallocate(mach_task_self_, PtrUInt(Threads), ThreadCount * SizeOf(LongWord));
-  ThreadCount := 0;
+  SuspendedCount := 0;
 end;
 
 procedure SetupWorldStop;
@@ -3841,7 +3889,7 @@ var
   I: SizeInt;
 begin
   Result := False;
-  for K := 0 to ProgramCounterCount - 1 do
+  for K := 0 to SuspendedCount - 1 do
     for I := 0 to PatchCount - 1 do
       if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
 end;
