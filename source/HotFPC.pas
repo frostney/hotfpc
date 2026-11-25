@@ -632,6 +632,9 @@ type
       it may have got only that far. }
     class function AwaitEmptied(const AOld, ANew: TFileStamps; const ANow, AWaitSeconds: Double;
       const AEmptied: TStrings): Boolean;
+    { When the first of the waits of AEmptied (AwaitEmptied) that are not over at ANow ends,
+      in seconds; 0 when there is none. }
+    class function EmptiedDeadline(const AEmptied: TStrings; const ANow, AWaitSeconds: Double): Double;
     { The files whose digest differs between the two lists of path=digest, or that are new
       in ACurrent. APrevious may be nil: then every file is a change. Each file is kept by
       its whole path, with its case: a path may have = in it, and the digest has none. }
@@ -899,6 +902,27 @@ begin
     Paths.Free;
     Empty.Free;
     Changed.Free;
+  end;
+end;
+
+class function TSourceWatcher.EmptiedDeadline(const AEmptied: TStrings; const ANow, AWaitSeconds: Double): Double;
+var
+  I: Integer;
+  Now, Deadline: Int64;
+  Seconds: Double;
+begin
+  { in whole ms, as AwaitEmptied counts }
+  Now := Trunc(ANow * MillisecondsPerSecond);
+  Result := 0;
+  for I := 0 to AEmptied.Count - 1 do
+  begin
+    Deadline := EmptiedTime(AEmptied[I]) + Round(AWaitSeconds * MillisecondsPerSecond);
+    { a Double first: an Int64 over MillisecondsPerSecond, a constant fpc gives the type
+      Single, is a Single, too coarse for the clock }
+    Seconds := Deadline;
+    Seconds := Seconds / MillisecondsPerSecond;
+    if (Deadline > Now) and ((Result = 0) or (Seconds < Result)) then
+      Result := Seconds;
   end;
 end;
 
@@ -4173,10 +4197,12 @@ procedure TDriver.Watch;
 var
   Seen, Known, Current: TFileStamps;
   Digests, Changed, Emptied: TStringList;
-  LastDigest, SeenAt, CompileSeconds: Double;
+  LastDigest, SeenAt, CompileSeconds, EmptiedUntil: Double;
   Waiting: Boolean;
 begin
   Seen := FWatcher.Stamps;
+  Waiting := False;
+  EmptiedUntil := 0;
   { the stamps of the last look, for the files a save empties: Seen starts over when the
     sources changed during a compile, Known doesn't }
   Known := Seen;
@@ -4192,7 +4218,10 @@ begin
       if ProgramHasEnded then
         Break;
       Current := FWatcher.Stamps;
-      if TSourceWatcher.SameStamps(Current, Seen) and (NowSeconds - LastDigest < DigestIntervalSeconds) then
+      { the next look: when a file changes, at the next look at the contents, or when the
+        wait for a file a save emptied ends, whichever comes first }
+      if TSourceWatcher.SameStamps(Current, Seen) and (NowSeconds - LastDigest < DigestIntervalSeconds)
+        and not (Waiting and (NowSeconds >= EmptiedUntil)) then
         Continue;
       SeenAt := NowSeconds;
       if not TSourceWatcher.SameStamps(Current, Seen) then
@@ -4202,6 +4231,7 @@ begin
       Seen := Current;
       LastDigest := NowSeconds;
       Waiting := TSourceWatcher.AwaitEmptied(Known, Current, LastDigest, DigestIntervalSeconds, Emptied);
+      EmptiedUntil := TSourceWatcher.EmptiedDeadline(Emptied, LastDigest, DigestIntervalSeconds);
       Known := Current;
       { a file a save emptied, or a missing file: a save in progress }
       if Waiting or not FWatcher.ReadDigests(Digests) then
@@ -5059,6 +5089,7 @@ begin
   try
     Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.0, 0.5, Emptied), 'a path with = that a save emptied');
     Expect(TSourceWatcher.AwaitEmptied(New, New, 10.25, 0.5, Emptied), 'still, at a look before its wait is over');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 10.25, 0.5) - 10.5) < 1E-9, 'until half a second after it was seen');
     Old := Copy(New);
     New[0] := Stamp('/src/a=b.inc', 12, 102);
     New[1] := Stamp('/src/A.pas', 0, 102);
@@ -5066,11 +5097,20 @@ begin
     Old := Copy(New);
     New[2] := Stamp('/src/a.pas', 0, 103);
     Expect(TSourceWatcher.AwaitEmptied(Old, New, 11.25, 0.5, Emptied), 'and a.pas after it');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 11.25, 0.5) - 11.5) < 1E-9, 'the first of the two waits ends first');
     Expect(TSourceWatcher.AwaitEmptied(New, New, 11.5, 0.5, Emptied), 'a.pas still waits once A.pas no longer does');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 11.5, 0.5) - 11.75) < 1E-9, 'until half a second after a.pas was seen');
     Expect(not TSourceWatcher.AwaitEmptied(New, New, 11.75, 0.5, Emptied), 'and no longer then');
     New[1] := Stamp('/src/A.pas', 5, 104);
     New[2] := Stamp('/src/a.pas', 5, 104);
     Expect(not TSourceWatcher.AwaitEmptied(New, New, 12.0, 0.5, Emptied), 'both written again');
+    Expect(TSourceWatcher.EmptiedDeadline(Emptied, 12.0, 0.5) = 0, 'no wait is left');
+    { at the clock's time of day, as NowSeconds gives it }
+    Old := Copy(New);
+    New[2] := Stamp('/src/a.pas', 0, 105);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 4004736912.25, 0.5, Emptied), 'a file emptied now');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 4004736912.25, 0.5) - 4004736912.75) < 1E-6,
+      'waits half a second, to the millisecond');
   finally
     Emptied.Free;
   end;
