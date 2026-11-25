@@ -3788,13 +3788,13 @@ begin
   ProgramCounterCount := 0;
 {$endif}
   if not SuspendThreads then Exit;
-  CurrentThread := MachThreadSelf;
   if TaskThreads(mach_task_self_, Threads, ThreadCount) <> 0 then
   begin
     ThreadCount := 0;
     StopFailure := ThreadListFailure;   // nothing is stopped: write nothing
     Exit;
   end;
+  CurrentThread := MachThreadSelf;   // a send right, given back below
   for I := 0 to ThreadCount - 1 do
     if (Threads[I] <> CurrentThread) and (ThreadSuspend(Threads[I]) = 0) then
     begin
