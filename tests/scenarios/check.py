@@ -67,6 +67,10 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    # procedure variables and a method pointer taken before the swap call the new code, and
+    # @OnHidden keeps its first address: the old entry of each, also of a routine declared only
+    # in the implementation section, jumps to the new code
+    "procvars": [re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V2 \d+, same address: TRUE TRUE")],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
     "rapid": [re.compile(r"text five \d+")],
     # the save whose v.pas was emptied first runs with both of its files
