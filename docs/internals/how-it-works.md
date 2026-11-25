@@ -126,7 +126,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    program doesn't have. Then the agent binds every name:
    - A variable the program already has keeps its address and its value.
    - A function keeps its first address, which gets a jump to the new code. That keeps
-     `@Proc`, method pointers and virtual method tables valid.
+     `@Proc`, method pointers and virtual method tables valid. The jump must end before
+     the next symbol or the end of the section, or it would break the routine after it:
+     when an entry has less room, the save needs a restart.
    - A virtual method table is updated in place when its shape is unchanged.
    - A literal, such as a floating point constant, is new with the new code. fpc numbers a
      unit's literals in the order it makes them (`_$U$_Ld1` with fpc 3.2, local `.Ld1` labels

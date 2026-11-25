@@ -200,6 +200,11 @@ const
   X86OpcodeTwoByte = $0f;
   X86OpcodeJccFirst = $80;
   X86OpcodeJccLast = $8f;
+{$ifdef cpuaarch64}
+  RedirectSize = 4;                   // what a redirect writes at an entry: b
+{$else}
+  RedirectSize = X86JumpRel32Size;    // jmp rel32
+{$endif}
   ProtectRead = 1;
   ProtectWrite = 2;
   ProtectExecute = 4;
@@ -2067,6 +2072,84 @@ var
   HostMilliseconds: Double;
   TLSMemorySize, TLSAlignment: QWord;   // the executable's TLS segment
   PageSize: QWord;
+  HostBoundaries: array of QWord;   // where each symbol and section of the program starts, and each section ends; sorted
+  HostBoundaryCount: SizeInt;
+
+procedure AddHostBoundary(AAddress: QWord);
+begin
+  if HostBoundaryCount = Length(HostBoundaries) then SetLength(HostBoundaries, ListGrowthLarge + 2 * Length(HostBoundaries));
+  HostBoundaries[HostBoundaryCount] := AAddress;
+  Inc(HostBoundaryCount);
+end;
+
+// Sorted, each address once.
+procedure FinishHostBoundaries;
+  procedure QuickSort(ALow, AHigh: SizeInt);
+  var
+    I, J: SizeInt;
+    Pivot, Temporary: QWord;
+  begin
+    while ALow < AHigh do
+    begin
+      I := ALow;
+      J := AHigh;
+      Pivot := HostBoundaries[(ALow + AHigh) shr 1];
+      repeat
+        while HostBoundaries[I] < Pivot do Inc(I);
+        while Pivot < HostBoundaries[J] do Dec(J);
+        if I <= J then
+        begin
+          Temporary := HostBoundaries[I];
+          HostBoundaries[I] := HostBoundaries[J];
+          HostBoundaries[J] := Temporary;
+          Inc(I);
+          Dec(J);
+        end;
+      until I > J;
+      if J - ALow < AHigh - I then
+      begin
+        QuickSort(ALow, J);
+        ALow := I;
+      end
+      else
+      begin
+        QuickSort(I, AHigh);
+        AHigh := J;
+      end;
+    end;
+  end;
+var
+  I, Count: SizeInt;
+begin
+  if HostBoundaryCount = 0 then Exit;
+  QuickSort(0, HostBoundaryCount - 1);
+  Count := 1;
+  for I := 1 to HostBoundaryCount - 1 do
+    if HostBoundaries[I] <> HostBoundaries[Count - 1] then
+    begin
+      HostBoundaries[Count] := HostBoundaries[I];
+      Inc(Count);
+    end;
+  HostBoundaryCount := Count;
+end;
+
+// The bytes a routine of the program has at its entry: up to the next symbol or the end of
+// its section. Without symbol sizes on every system, that is the most a jump written there
+// may cover. 0 when nothing follows the address.
+function HostEntryRoom(AAddress: QWord): QWord;
+var
+  Lower, Upper, Middle: SizeInt;
+begin
+  Lower := 0;
+  Upper := HostBoundaryCount;
+  while Lower < Upper do
+  begin
+    Middle := (Lower + Upper) shr 1;
+    if HostBoundaries[Middle] <= AAddress then Lower := Middle + 1 else Upper := Middle;
+  end;
+  if Lower = HostBoundaryCount then Exit(0);
+  Result := HostBoundaries[Lower] - AAddress;
+end;
 
 {$if defined(darwin)}
 var
@@ -2152,6 +2235,8 @@ begin
       begin
         Inc(SectionCount);
         if SectionCount < MachSectionLimit then SectionIsCode[SectionCount] := (SectionHeader^.flags and S_ATTR_PURE_INSTRUCTIONS) <> 0;
+        AddHostBoundary(SectionHeader^.Address + QWord(Slide));
+        AddHostBoundary(SectionHeader^.Address + SectionHeader^.size + QWord(Slide));
         Inc(SectionHeader);
       end;
     end;
@@ -2172,8 +2257,10 @@ begin
       HostPool[I].Address := NameList[I].n_value + QWord(Slide);
       HostPool[I].IsCode := SectionIsCode[NameList[I].n_sect];
       MapPut(HostSymbols, Name, @HostPool[I]);
+      AddHostBoundary(HostPool[I].Address);
     end;
   end;
+  FinishHostBoundaries;
   HostBuilt := True;
   HostMilliseconds := NowMilliseconds - StartTime;
 end;
@@ -2249,6 +2336,12 @@ begin
     Header := PELFHeader(Executable.Buffer);
     SectionHeaders := PELFSectionHeader(Executable.Buffer + Header^.e_shoff);
     for I := 0 to Header^.e_shnum - 1 do
+      if (SectionHeaders[I].sh_flags and SHF_ALLOC) <> 0 then
+      begin
+        AddHostBoundary(SectionHeaders[I].sh_addr + QWord(Slide));
+        AddHostBoundary(SectionHeaders[I].sh_addr + SectionHeaders[I].sh_size + QWord(Slide));
+      end;
+    for I := 0 to Header^.e_shnum - 1 do
     begin
       if SectionHeaders[I].sh_type <> SHT_SYMTAB then Continue;
       Symbols := PELFSymbol(Executable.Buffer + SectionHeaders[I].sh_offset);
@@ -2264,13 +2357,15 @@ begin
         HostPool[J].Address := Symbols[J].st_value + QWord(Slide);
         HostPool[J].IsCode := (SectionHeaders[Symbols[J].st_shndx].sh_flags and SHF_EXECINSTR) <> 0;
         HostPool[J].IsTLS := (SectionHeaders[Symbols[J].st_shndx].sh_flags and SHF_TLS) <> 0;
-        if HostPool[J].IsTLS then HostPool[J].Address := Symbols[J].st_value;   // an offset, not an address
+        if HostPool[J].IsTLS then HostPool[J].Address := Symbols[J].st_value   // an offset, not an address
+        else AddHostBoundary(HostPool[J].Address);
         MapPut(HostSymbols, Name, @HostPool[J]);
       end;
     end;
     FreeMem(Executable.Buffer);
     Executable.Buffer := nil;
   end;
+  FinishHostBoundaries;
   HostBuilt := True;
   HostMilliseconds := NowMilliseconds - StartTime;
 end;
@@ -2449,6 +2544,11 @@ begin
     PEOffset := PLongWord(Buffer + PEHeaderOffsetField)^;
     FileHeader := PCOFFHeader(Buffer + PEOffset + PESignatureSize);
     SectionHeaders := PCOFFSection(Buffer + PEOffset + PEOptionalHeaderOffset + FileHeader^.SizeOfOptionalHeader);
+    for I := 0 to FileHeader^.NumberOfSections - 1 do
+    begin
+      AddHostBoundary(ImageBase + SectionHeaders[I].VirtualAddress);
+      AddHostBoundary(ImageBase + SectionHeaders[I].VirtualAddress + SectionHeaders[I].VirtualSize);
+    end;
     if (FileHeader^.PointerToSymbolTable <> 0) and (FileHeader^.NumberOfSymbols > 0) then
     begin
       Symbols := PCOFFSymbol(Buffer + FileHeader^.PointerToSymbolTable);
@@ -2469,6 +2569,7 @@ begin
             HostPool[I].IsCode := (SectionHeaders[SymbolEntry^.SectionNumber - 1].Characteristics and IMAGE_SCN_MEM_EXECUTE) <> 0;
             // an external name wins over a local one of another unit
             if (SymbolEntry^.StorageClass = IMAGE_SYM_CLASS_EXTERNAL) or (MapGet(HostSymbols, Name) = nil) then MapPut(HostSymbols, Name, @HostPool[I]);
+            AddHostBoundary(HostPool[I].Address);
           end;
         end;
         Inc(I, 1 + SymbolEntry^.NumberOfAuxSymbols);
@@ -2477,6 +2578,7 @@ begin
     FreeMem(Buffer);
   end;
   ReadMapFile(AnsiString(PChar(@Path[0])));
+  FinishHostBoundaries;
   HostBuilt := True;
   HostMilliseconds := NowMilliseconds - StartTime;
 end;
@@ -2728,6 +2830,8 @@ type
     Address: QWord;
     ByteCount: LongInt;
     Bytes: array[0..7] of Byte;
+    Owner: Pointer;   // the PRegistrySymbol redirected
+    Target: QWord;    // the new code the jump leads to, through its island
   end;
 
 {$ifdef cpuaarch64}
@@ -2753,9 +2857,10 @@ var
   Instruction: LongWord;
 begin
   Instruction := ARM64Branch or (LongWord(SarInt64(Int64(ATarget - AFrom), 2)) and ARM64Imm26Mask);
+  FillChar(Result, SizeOf(Result), 0);
   Result.Address := AFrom;
-  Result.ByteCount := 4;
-  Move(Instruction, Result.Bytes[0], 4);
+  Result.ByteCount := RedirectSize;
+  Move(Instruction, Result.Bytes[0], RedirectSize);
 end;
 {$else}
 // An island: jmp qword ptr [rip + slot]. The slot is ordinary memory within 2 GiB.
@@ -2778,8 +2883,9 @@ end;
 // The entry of a function, overwritten: jmp rel32 island (5 bytes).
 function RedirectPatch(AFrom, ATarget: QWord): TPatch;
 begin
+  FillChar(Result, SizeOf(Result), 0);
   Result.Address := AFrom;
-  Result.ByteCount := X86JumpRel32Size;
+  Result.ByteCount := RedirectSize;
   Result.Bytes[0] := X86OpcodeJumpRel32;
   PLongInt(@Result.Bytes[1])^ := LongInt(Int64(ATarget - (AFrom + X86JumpRel32Size)));
 end;
@@ -2816,8 +2922,9 @@ type
     Slot: PQWord;       // functions: what the islands jump through
     Island: QWord;      // next to the program: for the entry in the program's text
     FarIsland: QWord;   // next to the new code: for entries of superseded versions there
+    EntryRoom: QWord;   // the bytes at CurrentAddress up to the next symbol or section
     Pending: Boolean;
-    PendingCanonicalAddress, PendingCurrentAddress: QWord;
+    PendingCanonicalAddress, PendingCurrentAddress, PendingEntryRoom: QWord;
   end;
   TStore = record Destination: PQWord; Value: QWord; end;
   TVMTUpdate = record ObjectFile: PObjectFile; Symbol: PObjectSymbol; OldAddress: QWord; end;
@@ -2886,6 +2993,7 @@ begin
     Symbol^.Pending := True;
     Symbol^.PendingCanonicalAddress := Symbol^.CanonicalAddress;
     Symbol^.PendingCurrentAddress := Symbol^.CurrentAddress;
+    Symbol^.PendingEntryRoom := Symbol^.EntryRoom;
     if PendingCount = Length(PendingSymbols) then SetLength(PendingSymbols, ListGrowthLarge + 2 * Length(PendingSymbols));
     PendingSymbols[PendingCount] := Symbol;
     Inc(PendingCount);
@@ -2918,6 +3026,17 @@ end;
 function PlacedAddress(AObjectFile: PObjectFile; ASymbol: PObjectSymbol): QWord; inline;
 begin
   Result := QWord(PtrUInt(AObjectFile^.Sections[ASymbol^.Section].Base)) + ASymbol^.Value;
+end;
+
+// The bytes a placed routine has at its entry: up to the next symbol of its section, or the
+// padding after the section's end, since the next code section starts CodeAlignment-aligned.
+function PlacedEntryRoom(AObjectFile: PObjectFile; ASymbol: PObjectSymbol): QWord;
+var
+  SectionSize: QWord;
+begin
+  SectionSize := AObjectFile^.Sections[ASymbol^.Section].Size;
+  if ASymbol^.Value + ASymbol^.Size < SectionSize then Result := ASymbol^.Size
+  else Result := ((SectionSize + CodeAlignment - 1) and not QWord(CodeAlignment - 1)) - ASymbol^.Value;
 end;
 
 function KindName(AKind: Byte): AnsiString; inline;
@@ -3046,6 +3165,7 @@ begin
       end
       else Registered^.PendingCanonicalAddress := NewAddress;
       Registered^.PendingCurrentAddress := NewAddress;
+      Registered^.PendingEntryRoom := PlacedEntryRoom(AObjectFile, Symbol);
       Symbol^.ResolvedAddress := Registered^.PendingCanonicalAddress;
       Symbol^.CallAddress := NewAddress;
       Symbol^.Resolved := True;
@@ -4375,7 +4495,9 @@ var
   Bytes: QWord;
   VMTWords, RedirectCount: LongInt;
   Symbol: PRegistrySymbol;
-  OldCurrentAddress, ViaAddress: QWord;
+  OldCurrentAddress, ViaAddress, Room: QWord;
+  Patch: TPatch;
+  Kept: SizeInt;
   Distance: Int64;
   NewWords, OldWords: PQWord;
   OldObject: PObjectFile;
@@ -4469,6 +4591,16 @@ begin
       else if Symbol^.PendingCanonicalAddress <> Symbol^.PendingCurrentAddress then OldCurrentAddress := Symbol^.PendingCanonicalAddress
       else OldCurrentAddress := 0;
       if OldCurrentAddress = 0 then Continue;   // a new function: nothing to redirect
+      // A jump longer than the routine at the entry would overwrite the routine after it:
+      // with {$codealign proc=1} fpc packs routines, and an assembler one can be shorter
+      // than the jump.
+      if InJIT(OldCurrentAddress) then Room := Symbol^.EntryRoom else Room := HostEntryRoom(OldCurrentAddress);
+      if Room < RedirectSize then
+      begin
+        Restart(Pretty(Symbol^.Name) + ' is ' + UnsignedToString(Room) + ' bytes from the next routine, too close for the ' + SignedToString(RedirectSize) + '-byte jump to its new code');
+        Succeeded := False;
+        Break;
+      end;
       if Symbol^.Slot = nil then
       begin
         Symbol^.Slot := NewSlot(Symbol^.PendingCurrentAddress);
@@ -4502,11 +4634,35 @@ begin
         Succeeded := False;
         Break;
       end;
-      AddPatch(RedirectPatch(OldCurrentAddress, ViaAddress));
+      Patch := RedirectPatch(OldCurrentAddress, ViaAddress);
+      Patch.Owner := Symbol;
+      Patch.Target := Symbol^.PendingCurrentAddress;
+      AddPatch(Patch);
       Inc(RedirectCount);
     end;
     if IslandNext > SavedIslandNext then ClearCache(SavedIslandNext, IslandNext - SavedIslandNext);
     if VeneerNext > SavedVeneerNext then ClearCache(SavedVeneerNext, VeneerNext - SavedVeneerNext);
+  end;
+  if Succeeded then
+  begin
+    // Two names of one routine (main and PASCALMAIN) give two jumps at one entry that lead
+    // to the same new code: one is enough. Jumps that overlap otherwise would break each
+    // other.
+    SortPatches;
+    Kept := 0;
+    for I := 0 to PatchCount - 1 do
+    begin
+      if (Kept > 0) and (Patches[I].Address < Patches[Kept - 1].Address + QWord(Patches[Kept - 1].ByteCount)) then
+      begin
+        if (Patches[I].Address = Patches[Kept - 1].Address) and (Patches[I].Target = Patches[Kept - 1].Target) then Continue;
+        Restart(Pretty(PRegistrySymbol(Patches[Kept - 1].Owner)^.Name) + ' and ' + Pretty(PRegistrySymbol(Patches[I].Owner)^.Name) + ' have overlapping entries');
+        Succeeded := False;
+        Break;
+      end;
+      Patches[Kept] := Patches[I];
+      Inc(Kept);
+    end;
+    PatchCount := Kept;
   end;
   if Succeeded then
   begin
@@ -4530,7 +4686,6 @@ begin
       Address := QWord(PtrUInt(Stores[I].Destination));
       if (Address < QWord(PtrUInt(DataRegion))) or (Address >= QWord(PtrUInt(DataRegion)) + DataAreaSize) then MakeWritable(Address);
     end;
-    SortPatches;
     PatchedCount := 0;
     Cleared := False;
     for Attempt := 1 to StopAttempts do
@@ -4585,6 +4740,7 @@ begin
       Symbol := PendingSymbols[I];
       Symbol^.CanonicalAddress := Symbol^.PendingCanonicalAddress;
       Symbol^.CurrentAddress := Symbol^.PendingCurrentAddress;
+      Symbol^.EntryRoom := Symbol^.PendingEntryRoom;
       Symbol^.Pending := False;
     end;
     for I := 0 to High(ObjectFiles) do

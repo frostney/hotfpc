@@ -4,7 +4,7 @@
   scenario.py                 run every case
   scenario.py classes heap    run the named cases
 """
-import os, shlex, re, shutil, subprocess, sys, threading, time
+import os, platform, shlex, re, shutil, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOTRUN = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc")
@@ -975,6 +975,58 @@ case("crash", {"main.pas": MAIN, "u.pas": U_COUNTED}, [
     ("the initialization no longer ends it: the next save starts the program again",
      [("u.pas", "initialization\n  Halt(3);\n", ""), ("u.pas", "'two calls", "'three calls")]),
 ], restart=True)
+
+# ---------------------------------------------------------------------------- a short entry
+# A swap writes a jump at the entry of every routine of the unit, 5 bytes on x86-64. With
+# {$codealign proc=1} fpc packs routines where the assembler doesn't pad their sections (on
+# macOS, and on Linux with the external assembler, -Aas): Small is 3 bytes long and Next
+# starts right after it. The jump at Small would overwrite Next, so on x86-64 the save needs
+# a restart. Tick calls both through their first addresses, as old code and pointers do.
+SHORT_ENTRY_OPTS = ("-Aas",) if sys.platform.startswith("linux") and platform.machine() == "x86_64" \
+    and "-Twin" not in os.environ.get("HOT_DRIVER_OPTS", "") else ()
+case("shortentry", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+{$codealign proc=1}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+type
+  TValue = function: LongInt;
+{$if defined(cpux86_64)}
+{$asmmode intel}
+function Small: LongInt; assembler; nostackframe;
+asm
+  xor eax, eax
+end;
+function Next: LongInt; assembler; nostackframe;
+asm
+  mov eax, 7
+end;
+{$else}
+function Small: LongInt;
+begin
+  Result := 0;
+end;
+function Next: LongInt;
+begin
+  Result := 7;
+end;
+{$endif}
+function Tick(n: Integer): string;
+var
+  First, Second: TValue;
+begin
+  First := @Small;
+  Second := @Next;
+  Result := Format('small %d next %d', [First(), Second()]);
+end;
+end.
+'''}, [
+    ("Small returns 3", [("u.pas", "  xor eax, eax\n", "  mov eax, 3\n"), ("u.pas", "Result := 0;", "Result := 3;")]),
+], opts=SHORT_ENTRY_OPTS, restart=True)
 
 
 # The driver's line that ends its work on a save: the swap, the code that came out the same, a

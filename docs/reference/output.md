@@ -122,6 +122,8 @@ restart needed: the sizes of variables with initial values are unknown: <why> (n
 | `the thread variable <name> changed size from <n> to <n> bytes` | A `threadvar` changed size. | |
 | `the thread variables of unit <unit> changed` | The unit's `threadvar` block changed. | `threadvars` |
 | `<unit> uses <name>, which the running program does not contain` | The new code calls a routine that isn't in the program, such as one of a runtime unit it wasn't linked with. On Windows, also a runtime routine the program never called: fpc's Windows linker leaves those out. | `newunit`, `interfaces` on Windows |
+| `<name> is <n> bytes from the next routine, too close for the <n>-byte jump to its new code` | A swap writes a jump at the entry of each routine of the changed units, 5 bytes on x86-64, and the routine is shorter and followed right away by another. fpc packs routines that way with `{$codealign proc=1}` where the assembler doesn't pad them: on macOS, and on Linux with `-Aas`. Every save of that unit needs a restart. | `shortentry` |
+| `<name> and <name> have overlapping entries` | The jumps at two entries would overlap, such as two names of one routine that now lead to different code. | |
 | `no room left for new code or data` | The memory near the program that new code and data go into is used up. | |
 | `no room left for call islands` | The same, for the jumps the agent puts between old and new code. | |
 | `no room left for data` | The same, for the addresses new code loads through. | |

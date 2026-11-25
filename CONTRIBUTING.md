@@ -34,7 +34,7 @@ and run the scenarios with `HOT_DRIVER_OPTS` set to `-Twin64 -Px86_64`.
 
 ## When a change is done
 
-The unit tests pass, and `check.py` prints "27 of 27 cases as expected" on every system
+The unit tests pass, and `check.py` prints "28 of 28 cases as expected" on every system
 the change can affect: macOS arm64, macOS x86-64, Linux x86-64, Linux arm64, and Windows
 x86-64. Changes
 to the agent, or to the checks of layouts and sizes, are tested with fpc 3.2.2 and 3.3.1.

@@ -7,6 +7,11 @@ the edits that need a restart; these are the limits around them.
   started. A swap puts the new code in place, and hotfpc notes that the section changed.
 - **A new unit needs a restart.** Its initialization section has never run, and can't run
   on the agent's thread.
+- **A routine shorter than the jump at its entry, right before another, needs a
+  restart.** A swap writes a 5-byte jump at the entry of each routine on x86-64. With
+  `{$codealign proc=1}`, an assembler routine can be shorter than that and the next one can
+  follow right after it; then every save of its unit restarts the program
+  ([Output](output.md#restart-needed)).
 - **The main program's block keeps its old code.** It is already running. Code you want to
   change belongs in routines and units; the main block can call them.
 - **In the program file, hotfpc checks sizes, not types.** It finds a type that changed

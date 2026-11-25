@@ -5,6 +5,11 @@
 - macOS x86-64 (Intel Macs): the agent hot-reloads programs built for it, the releases have
   a `macos-x64` archive, and CI builds hotfpc, runs the unit tests and runs the scenarios
   on GitHub's Intel macOS runner.
+- On x86-64, a swap no longer writes the jump at a routine's entry over the routine after
+  it: with `{$codealign proc=1}`, fpc can pack an assembler routine shorter than the 5-byte
+  jump right before the next one, on macOS and on Linux with `-Aas`, and the program then
+  crashed when it called one of them through its old address. Such a save now needs a
+  restart.
 - On macOS, a swap now also stops a thread that another thread started while the agent was
   stopping them, and a thread that can't be suspended makes the agent let the others run
   and try again. Such a thread used to run on while the agent rewrote code. The agent
