@@ -37,6 +37,7 @@ uses
   {$ifdef unix}
   cthreads,
   BaseUnix,
+  Unix,
   {$endif}
   {$ifdef windows}
   WinSock2,
@@ -588,7 +589,9 @@ type
   TFileStamp = record
     Path: string;
     Size: Int64;
-    Time: LongInt;
+    { When the file was last written, in StampUnitsPerSecond since the system's epoch, as
+      finely as the file system keeps it }
+    Time: Int64;
   end;
 
   TFileStamps = array of TFileStamp;
@@ -596,6 +599,7 @@ type
   TSourceWatcher = class
   private
     FDirectories: TStringList;
+    FStampedAt: Int64;
   public
     { ASourceDirectory is the program's own; ACompilerOptions are the options for fpc,
       where -Fu, -Fi and @response files name more directories. }
@@ -609,6 +613,14 @@ type
     { A 64-bit hash of the contents: FNV-1a, from the seed the driver has always used. }
     class function ContentDigest(const AContents: string): QWord;
     class function SameStamps(const AFirst, ASecond: TFileStamps): Boolean;
+    { The system's clock, in the units and from the epoch of a stamp's time. }
+    class function Clock: Int64;
+    { Whether a write to one of the files after AAt (Clock) gives it another time, so that its
+      stamp shows the write even when the content and the size are back to what they were:
+      the time of each is older than AAt by more than the tick of the clock behind file times
+      (StampGranuleSeconds), or two seconds for a time in whole seconds, as file systems
+      such as FAT and HFS+ keep them. }
+    class function TimesShowWrites(const AStamps: TFileStamps; const AAt: Int64): Boolean;
     { The files of ANew whose size or time differs from AOld's or that AOld lacks, and the
       files of AOld that ANew lacks. The caller frees the list. }
     class function ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
@@ -620,7 +632,8 @@ type
       names differ only in case are two files where the file system keeps both. The caller
       frees the list. }
     function Files: TStringList;
-    { Names, sizes and times of the watched files. Times have whole seconds only. }
+    { Names, sizes and times of the watched files, the times as finely as the file system
+      keeps them; StampedAt is then the Clock before they were read. }
     function Stamps: TFileStamps;
     { The content of every watched file as path=digest. False while a file is missing or empty
       (a save in progress); ADigests is then nil. Otherwise the caller frees the list. }
@@ -630,6 +643,7 @@ type
       ADigests may be nil; then only the sizes and times count. The caller frees the list. }
     function ChangedSince(const AStamps: TFileStamps; const ADigests: TStrings): TStringList;
     property Directories: TStringList read FDirectories;
+    property StampedAt: Int64 read FStampedAt;
   end;
 
 const
@@ -648,6 +662,21 @@ const
   DigestSeed = QWord(1469598103934665603);
   FNVPrime = QWord(1099511628211);
   DigestWidth = 16;
+  {$ifdef windows}
+  { a FILETIME counts 100 ns }
+  StampUnitsPerSecond = 10000000;
+  {$else}
+  StampUnitsPerSecond = 1000000000;
+  {$endif}
+  { The clock behind file times ticks every 15.6 ms on Windows and every 1 to 10 ms on Linux:
+    two writes within one tick give a file the same time. }
+  StampGranuleSeconds = 0.02;
+  { FAT keeps the time a file was written in steps of two seconds. }
+  WholeSecondGranule = 2;
+
+{$ifdef windows}
+procedure GetSystemTimeAsFileTime(out ATime: Int64); stdcall; external 'kernel32' name 'GetSystemTimeAsFileTime';
+{$endif}
 
 constructor TSourceWatcher.Create(const ASourceDirectory: string; const ACompilerOptions: TStrings);
 var
@@ -754,6 +783,37 @@ begin
   Result := True;
 end;
 
+class function TSourceWatcher.Clock: Int64;
+{$ifdef unix}
+var
+  Now: TTimeVal;
+{$endif}
+begin
+  {$ifdef windows}
+  GetSystemTimeAsFileTime(Result);
+  {$else}
+  fpgettimeofday(@Now, nil);
+  Result := Int64(Now.tv_sec) * StampUnitsPerSecond + Int64(Now.tv_usec) * (StampUnitsPerSecond div 1000000);
+  {$endif}
+end;
+
+class function TSourceWatcher.TimesShowWrites(const AStamps: TFileStamps; const AAt: Int64): Boolean;
+var
+  I: Integer;
+  Granule: Int64;
+begin
+  for I := 0 to High(AStamps) do
+  begin
+    if AStamps[I].Time mod StampUnitsPerSecond = 0 then
+      Granule := WholeSecondGranule * StampUnitsPerSecond
+    else
+      Granule := Round(StampGranuleSeconds * StampUnitsPerSecond);
+    if AStamps[I].Time > AAt - Granule then
+      Exit(False);
+  end;
+  Result := True;
+end;
+
 class function TSourceWatcher.ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
 var
   Old: TStringList;
@@ -851,9 +911,14 @@ function TSourceWatcher.Stamps: TFileStamps;
 var
   Watched: TStringList;
   I: Integer;
+  {$ifdef windows}
   Search: TSearchRec;
+  {$else}
+  Info: TStat;
+  {$endif}
 begin
   Result := nil;
+  FStampedAt := Clock;
   Watched := Files;
   try
     SetLength(Result, Watched.Count);
@@ -862,12 +927,28 @@ begin
       Result[I].Path := Watched[I];
       Result[I].Size := -1;
       Result[I].Time := 0;
+      {$ifdef windows}
       if FindFirst(Watched[I], faAnyFile, Search) = 0 then
       begin
         Result[I].Size := Search.Size;
-        Result[I].Time := Search.Time;
+        Result[I].Time := Int64(Search.FindData.ftLastWriteTime.dwHighDateTime) shl 32
+          or Search.FindData.ftLastWriteTime.dwLowDateTime;
         FindClose(Search);
       end;
+      {$else}
+      if FpStat(Watched[I], Info) = 0 then
+      begin
+        Result[I].Size := Info.st_size;
+        Result[I].Time := Int64(Info.st_mtime) * StampUnitsPerSecond
+          {$if defined(linux)}
+          + Int64(Info.st_mtime_nsec);
+          {$elseif defined(darwin) or defined(bsd)}
+          + Int64(Info.st_mtimensec);
+          {$else}
+          ;
+          {$endif}
+      end;
+      {$endif}
     end;
   finally
     Watched.Free;
@@ -1865,6 +1946,7 @@ const
   { a size the assembler does not give }
   UnknownSize = '?';
   UnknownSizes = 'the sizes of variables with initial values are unknown: ';
+  UnseenSaves = 'the times of the sources may not show a save while fpc compiled them';
   { fpc's section of a datum: its kind, this, and the datum's name (.data.n_TC_$U_$$_CALLS) }
   DatumSectionInfix = '.n_';
   { the parts of a COFF object (the PE/COFF specification) the names are read from }
@@ -3123,6 +3205,8 @@ type
     { The sizes and times of the sources when FDigests was read: the state the compile of a
       save starts from. }
     FSettled: TFileStamps;
+    { The clock before FSettled was read (TSourceWatcher.StampedAt) }
+    FSettledAt: Int64;
     { The sources changed while fpc read them, so the compile was not acted on: Watch compiles
       them again. }
     FStale: Boolean;
@@ -3619,7 +3703,9 @@ end;
   padding of its section. Compiles to assembler only when a changed unit has such data. A
   save whose sizes cannot be compared, because fpc did not write the assembler, the running
   program's sizes are unknown, either has no size for a datum a changed object file names,
-  or the sources kept changing during the compiles (FUnsettled), needs a restart too. }
+  or the sources kept changing during the compiles (FUnsettled), needs a restart too, and so
+  does one whose sources' times could not show a save that came and was put back during the
+  compiles (TSourceWatcher.TimesShowWrites). }
 function TDriver.SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
   var AInterfaceSeconds: Double): Boolean;
 var
@@ -3653,6 +3739,13 @@ begin
   if FUnsettled then
   begin
     RefuseUncheckedSizes('the sources changed while fpc compiled them', ACompileSeconds);
+    Exit(False);
+  end;
+  { nor can the stamps show that no save came and was put back during the compiles (Settle
+    waits long enough for a save it saw) }
+  if not TSourceWatcher.TimesShowWrites(FSettled, FSettledAt) then
+  begin
+    RefuseUncheckedSizes(UnseenSaves, ACompileSeconds);
     Exit(False);
   end;
   Compiled := ReadAssembly(AChanged, Problem);
@@ -3938,7 +4031,8 @@ end;
 
 { Waits for the save to stop changing the files, for MaximumSettleSeconds at most, or for
   one --settle wait when that is longer (SettleWaitEnd). Stops as soon as the program has
-  ended, also during a long wait (Watch then ends with it). The files as they are then. }
+  ended, also during a long wait (Watch then ends with it). The files as they are then. With
+  the check of sizes, each wait is longer than a tick of the clock behind file times. }
 function TDriver.Settle(const AStamps: TFileStamps): TFileStamps;
 var
   Again: TFileStamps;
@@ -3947,6 +4041,10 @@ var
 begin
   Result := AStamps;
   Wait := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  { a write after the files settled then gives them another time: the check of sizes needs
+    that (TSourceWatcher.TimesShowWrites) }
+  if FCheckSizes and (Wait < StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond) then
+    Wait := StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
   Start := NowSeconds;
   repeat
     WaitEnd := SettleWaitEnd(Start, NowSeconds, Wait);
@@ -4045,6 +4143,7 @@ begin
     end;
     FStale := False;
     FSettled := Current;
+    FSettledAt := FWatcher.StampedAt;
     FUnsettled := False;
     Changed := TSourceWatcher.ChangedFiles(FDigests, Digests);
     if GetEnvironmentVariable(DebugVariable) <> '' then
@@ -4125,6 +4224,7 @@ begin
   { the state the build starts from: a save fpc reads only in part, or after it read the file,
     is compiled as soon as Watch starts }
   FSettled := FWatcher.Stamps;
+  FSettledAt := FWatcher.StampedAt;
   FWatcher.ReadDigests(FDigests);
   if not BuildProgram then
     Exit(1);
@@ -4789,7 +4889,7 @@ begin
   end;
 end;
 
-function Stamp(const APath: string; const ASize: Int64; const ATime: LongInt): TFileStamp;
+function Stamp(const APath: string; const ASize: Int64; const ATime: Int64): TFileStamp;
 begin
   Result.Path := APath;
   Result.Size := ASize;
@@ -4949,6 +5049,69 @@ begin
     Watcher.Free;
     Options.Free;
   end;
+end;
+
+{ A save that writes a file and then puts its content back, within one second and at the
+  same size, as one during a compile may: the stamps show it, as file systems keep finer
+  times than seconds. Each write waits out the tick of the clock behind file times. }
+procedure TestStampsShowARevertedSave;
+var
+  Root: string;
+  Watcher: TSourceWatcher;
+  Options, Changed: TStringList;
+  Before: TFileStamps;
+begin
+  Root := MakeTestDirectory('reverted-save');
+  Options := TStringList.Create;
+  Watcher := TSourceWatcher.Create(Root, Options);
+  try
+    { early in a second, so that the writes below share it }
+    while Frac(NowSeconds) > 0.5 do
+      Sleep(10);
+    WriteTestFile(Root + 'u.pas', 'unit U; { one }');
+    Sleep(25);
+    Before := Watcher.Stamps;
+    Sleep(25);
+    WriteTestFile(Root + 'u.pas', 'unit U; { two }');
+    Sleep(25);
+    WriteTestFile(Root + 'u.pas', 'unit U; { one }');
+    Changed := TSourceWatcher.ChangedStamps(Before, Watcher.Stamps);
+    try
+      ExpectEqual(Changed.CommaText, Root + 'u.pas', 'a save put back within a second shows in the stamps');
+    finally
+      Changed.Free;
+    end;
+  finally
+    Watcher.Free;
+    Options.Free;
+  end;
+end;
+
+{ Whether the stamps can show a write after a moment: every file's time older than it by more
+  than a tick of the clock behind file times, or by two seconds when the time is in whole
+  seconds. }
+procedure TestTimesShowWrites;
+var
+  Stamps: TFileStamps;
+  At: Int64;
+begin
+  At := 1000 * Int64(StampUnitsPerSecond);
+  SetLength(Stamps, 2);
+  Stamps[0] := Stamp('/src/old.pas', 10, 900 * Int64(StampUnitsPerSecond) + 1);
+  Stamps[1] := Stamp('/src/new.pas', 10, At - Round(0.03 * StampUnitsPerSecond));
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'times older than a tick');
+  Stamps[1].Time := At - Round(0.01 * StampUnitsPerSecond);
+  Expect(not TSourceWatcher.TimesShowWrites(Stamps, At), 'not a time within a tick of the moment');
+  Stamps[1].Time := At + 1;
+  Expect(not TSourceWatcher.TimesShowWrites(Stamps, At), 'nor a time after it');
+  Stamps[1].Time := At - 3 * Int64(StampUnitsPerSecond);
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'a time in whole seconds older than two seconds');
+  Stamps[1].Time := At - Int64(StampUnitsPerSecond);
+  Expect(not TSourceWatcher.TimesShowWrites(Stamps, At), 'but not a time in whole seconds a second before');
+  Stamps[1] := Stamp('/src/gone.pas', -1, 0);
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'a missing file has no time to show');
+  SetLength(Stamps, 0);
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'no files');
 end;
 
 function Absolute(const APath: string): string;
@@ -6789,6 +6952,8 @@ begin
     TestChangedStamps;
     TestChangedSince;
     TestWatchedPaths;
+    TestStampsShowARevertedSave;
+    TestTimesShowWrites;
     TestOptionDirectories;
     TestResponseFile;
     TestWatchedFiles;
