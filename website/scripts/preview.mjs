@@ -4,7 +4,9 @@
 //
 //   npm run build && npm run start     # http://localhost:3000/hotfpc/
 //
-// PORT and HOST change where it listens; BASE_PATH must match next.config.mjs.
+// PORT and HOST change where it listens; BASE_PATH must match next.config.mjs. A request
+// with one byte range (Range: bytes=start-end), as a browser sends to seek in a video, gets
+// that part with 206, as GitHub Pages answers it.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,6 +56,24 @@ function resolveFile(urlPath) {
   return candidates.find((file) => fs.existsSync(file) && fs.statSync(file).isFile()) ?? null;
 }
 
+// The one range of a Range header, as [start, end] inclusive, for a file of `size` bytes:
+// null for a header to ignore (not bytes, several ranges, malformed), which gets the whole
+// file, and 'unsatisfiable' for a range that starts past the end.
+function byteRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match || (match[1] === '' && match[2] === '')) return null;
+  if (match[1] === '') {
+    const length = Number(match[2]);
+    if (length === 0 || size === 0) return 'unsatisfiable';
+    return [Math.max(size - length, 0), size - 1];
+  }
+  const start = Number(match[1]);
+  const end = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1);
+  if (match[2] !== '' && Number(match[2]) < start) return null;
+  if (start >= size) return 'unsatisfiable';
+  return [start, end];
+}
+
 const server = http.createServer((req, res) => {
   const reqPath = (req.url ?? '/').split('?')[0];
   if (reqPath === '/' || reqPath === '') {
@@ -74,10 +94,31 @@ const server = http.createServer((req, res) => {
     else res.end('Not found');
     return;
   }
-  res.writeHead(200, {
+  const size = fs.statSync(file).size;
+  const headers = {
     'Content-Type': contentTypes[path.extname(file)] ?? 'application/octet-stream',
-  });
-  fs.createReadStream(file).pipe(res);
+    'Accept-Ranges': 'bytes',
+  };
+  const range = req.headers.range ? byteRange(req.headers.range, size) : null;
+  if (range === 'unsatisfiable') {
+    res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+    res.end();
+    return;
+  }
+  if (range) {
+    const [start, end] = range;
+    res.writeHead(206, {
+      ...headers,
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': end - start + 1,
+    });
+    if (req.method === 'HEAD') res.end();
+    else fs.createReadStream(file, { start, end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, { ...headers, 'Content-Length': size });
+  if (req.method === 'HEAD') res.end();
+  else fs.createReadStream(file).pipe(res);
 });
 
 server.listen(port, host, () => {
