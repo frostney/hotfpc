@@ -2,7 +2,8 @@
 
 The site at <https://frostney.github.io/hotfpc/>: a landing page and the documentation,
 rendered from the repository's `docs/` as it is. It is a [Fumadocs](https://fumadocs.dev)
-site, exported as static files by Next.js. Building hotfpc doesn't need any of this.
+site, exported as static files by Next.js. Building hotfpc doesn't need any of this. It
+needs Node.js 22.12 or later; CI uses Node.js 24.
 
 ```sh
 npm ci
