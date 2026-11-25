@@ -3440,9 +3440,6 @@ begin
   FWatcher.ReadDigests(FDigests);
   repeat
     Result := FCompiler.Compile(True, Errors, FBuildSeconds);
-    RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.LiveDirectory));
-    ForceDirectories(FWorkspace.LiveDirectory);
-    CopyObjectsToLive;
     { before the check of the sources, which may remove the records ppudump is probed with }
     if Result and (FReader = nil) then
       ProbeLayouts;
@@ -3467,6 +3464,10 @@ begin
   end;
   if not Result then
     Exit;
+  { the units of this build only: while the program is not running, the check of the sources
+    (ForgetNewUnits) removed every object file of a build that was set aside, such as one of
+    a unit the program no longer uses }
+  CopyObjectsToLive;
   if not SizesKnown then
   begin
     FCheckSizes := False;
@@ -3604,7 +3605,8 @@ begin
 end;
 
 { Removes the object files and records of units the running program does not have, so that
-  a compile that leaves such a unit out doesn't find them. }
+  a compile that leaves such a unit out doesn't find them: before the program first starts,
+  every unit's. }
 procedure TDriver.ForgetNewUnits;
 var
   Objects: TStringList;

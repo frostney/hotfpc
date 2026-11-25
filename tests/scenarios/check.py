@@ -42,6 +42,9 @@ EXPECT = {
     # a save during the first build while fpc cannot write the assembler, and one during the
     # build after it: the program starts from the last, and its grown variable needs a restart
     "startblock": (0, 1, 0),
+    # a unit the program no longer uses after a save during the first build, then uses again:
+    # a restart, for a unit the running program does not have
+    "startunit": (0, 1, 0),
     # a typed constant in a unit new to the program, which a restart adds, then grows: a
     # restart again
     "newconst": (0, 2, 0),
@@ -74,6 +77,12 @@ SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n
 # once after the swap's line, as its Tick ran the old code or had its result already
 UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
              for name in ("signature", "slowsave")}
+# case: lines hotfpc must print (patterns, after "[hot] ")
+SAYS = {
+    # the program starts with the units of the build it runs, without one a save left out
+    "startunit": [r"v1: built in [\d.]+ ms, started in [\d.]+ ms, 2 units of its own",
+                  r"restart needed: unit w is not part of the running program"],
+}
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
 # so every tick prints it and the two numbers stay equal
@@ -142,6 +151,8 @@ for name in names:
     missing = [text for text in PRINTS.get(name, [])
                if not re.search(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", body, re.M)]
     ok = ok and not missing
+    unsaid = [pattern for pattern in SAYS.get(name, []) if not re.search(r"\[hot\] " + pattern, body)]
+    ok = ok and not unsaid
     drift = []
     for tick, text in records if name in COUNTERS else []:
         count = re.search(r"\b%s (\d+)" % COUNTERS[name], text)
@@ -164,6 +175,7 @@ for name in names:
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
           + "".join("; never printed %r" % getattr(text, "pattern", text) for text in missing)
+          + "".join("; hotfpc never said %r" % pattern for pattern in unsaid)
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow)

@@ -23,7 +23,7 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
 ./build.sh                                   # build/hotfpc and the unit tests
-python3 tests/scenarios/check.py             # the 34 scenarios, about 2 minutes
+python3 tests/scenarios/check.py             # the 35 scenarios, about 2 minutes
 python3 scripts/check-reference-docs.py      # docs/reference/ against the source
 npx --yes markdownlint-cli2@0.24.0           # the Markdown lint
 ```
@@ -34,7 +34,7 @@ and run the scenarios with `HOT_DRIVER_OPTS` set to `-Twin64 -Px86_64`.
 
 ## When a change is done
 
-The unit tests pass, and `check.py` prints "34 of 34 cases as expected" on every system
+The unit tests pass, and `check.py` prints "35 of 35 cases as expected" on every system
 the change can affect: macOS arm64, macOS x86-64, Linux x86-64, Linux arm64, and Windows
 x86-64. Changes
 to the agent, or to the checks of layouts and sizes, are tested with fpc 3.2.2 and 3.3.1.

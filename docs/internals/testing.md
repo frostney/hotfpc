@@ -7,14 +7,14 @@ scenarios that run real programs under hotfpc and save edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 34 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 35 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
 ## When a change is done
 
-A change is done when the unit tests pass and `check.py` prints "34 of 34 cases as
+A change is done when the unit tests pass and `check.py` prints "35 of 35 cases as
 expected" on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
 Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
 Windows). Changes to the agent or to the checks of layouts and sizes are tested with fpc
@@ -33,7 +33,7 @@ with 1 when a check failed. `./build.sh tests` compiles `source/HotFPC.pas` with
 
 ## The scenarios
 
-`tests/scenarios/scenario.py` holds 34 cases. Each is a small program, `main.pas` and its
+`tests/scenarios/scenario.py` holds 35 cases. Each is a small program, `main.pas` and its
 units, and a list of steps: the edits the script saves into the files while the program
 runs. The script saves a step once hotfpc has reported its outcome for the step before (a
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on

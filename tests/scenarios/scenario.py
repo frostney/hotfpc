@@ -941,6 +941,38 @@ case("startblock", {
     ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
 ])
 
+# ---------------------------------------------------------------------------- a unit left out during the start
+# progvar's program, which also uses w, a unit with an initialization section. A save during
+# the first build leaves w out, so the program starts without it: when main uses it again, w
+# is a unit the running program does not have, and its initialization has never run
+W_STARTED = r'''unit w;
+{$mode objfpc}{$H+}
+interface
+var
+  Started: Integer;
+function WText: string;
+implementation
+uses SysUtils;
+function WText: string;
+begin
+  Result := Format(' w started %d', [Started]);
+end;
+initialization
+  Started := 42;
+end.
+'''
+
+case("startunit", {
+    "main.pas": PROGVAR_MAIN.replace("uses SysUtils, u;", "uses SysUtils, u, w;"),
+    "u.pas": PROGVAR_U,
+    "w.pas": W_STARTED}, [
+    ("main no longer uses w, while hotfpc builds the program to start it",
+     [("main.pas", "uses SysUtils, u, w;", "uses SysUtils, u;")], AT_START),
+    ("main uses w again and prints what w's initialization set",
+     [("main.pas", "uses SysUtils, u;", "uses SysUtils, u, w;"),
+      ("main.pas", "Format(' main one %d', [Calls])", "Format(' main one %d', [Calls]) + WText")]),
+])
+
 # ---------------------------------------------------------------------------- a new unit's typed constant
 # The program has no variable with an initial value of its own until u uses a new unit, w,
 # which has a typed constant: the restart that adds w must take its size, so that the save
