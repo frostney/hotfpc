@@ -1689,13 +1689,14 @@ begin
     end;
     Inc(I, 1 + SymbolEntry^.NumberOfAuxSymbols);
   end;
-  // fpc 3.2 gives an implementation-section variable no symbol at all, only a section of its
-  // own named after it (.bss.n_u_$u_$$_hidden). Such a section stands for a variable named
-  // after the section; the program's map file says where the linker put it.
+  // fpc 3.2 gives an implementation-section variable or routine no symbol at all, only a
+  // section of its own named after it (.bss.n_u_$u_$$_hidden, .text.n_u_$$_hidden$longint).
+  // Such a section stands for a variable or routine named after the section; the program's
+  // map file says where the linker put it.
   for I := 0 to Header^.NumberOfSections - 1 do
   begin
     Section := @AObjectFile^.Sections[I];
-    if (Section^.Kind <> KindData) or (Section^.Size = 0) or (Pos('$', Section^.Name) = 0) then Continue;
+    if not (Section^.Kind in [KindData, KindCode]) or (Section^.Size = 0) or (Pos('$', Section^.Name) = 0) then Continue;
     K := 0;
     while (K < LongInt(Header^.NumberOfSymbols)) and not (AObjectFile^.Symbols[K].Defined and (AObjectFile^.Symbols[K].Section = I)) do Inc(K);
     if K < LongInt(Header^.NumberOfSymbols) then Continue;   // it has symbols of its own
@@ -1705,7 +1706,7 @@ begin
     Symbol^.External := True;
     Symbol^.Section := I;
     Symbol^.Value := 0;
-    Symbol^.Kind := KindData;
+    Symbol^.Kind := Section^.Kind;
     AddDefined(AObjectFile, Header^.NumberOfSymbols + I);
   end;
   for I := 0 to Header^.NumberOfSections - 1 do
@@ -2457,7 +2458,8 @@ end;
 
 // The linker's map (hotfpc links Windows programs with -Xm) lists every input section with
 // its address: "<name> 0x<address> 0x<size> <object>", the name alone on the line before
-// when it is long. Sections named after a variable (with a $ in the name) become host names.
+// when it is long. Sections named after a variable or a routine (with a $ in the name)
+// become host names: a routine's where the address is in the program's code.
 var
   MapPool: array of THostSymbol;
 
@@ -2550,8 +2552,9 @@ begin
     if Count = Length(MapPool) then SetLength(MapPool, Count * 2);
     // the pool only grows before any pointer into it is taken: pointers are taken below
     MapPool[Count].Address := Address + QWord(Slide);
-    MapPool[Count].IsCode := False;
+    MapPool[Count].IsCode := (MapPool[Count].Address >= TextLow) and (MapPool[Count].Address < TextHigh);
     MapPool[Count].IsTLS := False;
+    AddHostBoundary(MapPool[Count].Address);
     Inc(Count);
     MapPut(MapNames, SectionSymbolName(Name), Pointer(PtrUInt(Count)));   // index + 1 for now
   end;

@@ -22,7 +22,7 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | The body of a generic method, specialised in a unit and in the main program | swap | `generics` |
 | The body of an inline function that the running main block and a unit both inlined | swap, with a note that the main block keeps its old code | `inline` |
 | `Area(w)` becomes `Area(w, h)`, and its callers pass two arguments | swap, with a note that the old `Area` stays for callers that weren't compiled again | `signature` |
-| Two bodies, while the main block holds a procedure variable and a method pointer taken before the swap | swap: both call the new code | `procvars` |
+| Three bodies, while the main block holds procedure variables and a method pointer taken before the swap, one of them of a routine declared only in the implementation section | swap: all three call the new code | `procvars` |
 | New code raises an exception that the old main block catches | swap | `exceptions` |
 | New code makes the runtime raise (`StrToInt` of a word) and catches it | swap | `exceptions` |
 | New code shrinks an array, cuts a string and frees a list that old code allocated | swap | `heap` |
