@@ -7,7 +7,8 @@ needs Node.js 22.12 or later; CI uses Node.js 24.
 
 ```sh
 npm ci
-npm run build      # the static export in out/; a broken link or section in docs/ fails it
+npm run build      # the static export in out/; a broken link or section in docs/ fails it,
+                   # and so does scripts/check-export.mjs, which runs after it
 npm run start      # out/ at http://localhost:3000/hotfpc/
 npm run dev        # a development server with reloading
 ```
