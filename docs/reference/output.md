@@ -196,7 +196,7 @@ applied:
 
 | Error | Where | What it means |
 | --- | --- | --- |
-| `a thread of the program did not stop` | Linux, Windows | On Linux a thread that is still running didn't stop within 2 s; on both, new threads kept starting for 2 s while the agent stopped them. |
+| `a thread of the program did not stop` | Linux, Windows | On Linux the agent couldn't confirm within 2 s that every thread it sent the signal had stopped or ended; on both, new threads kept starting for 2 s while the agent stopped them. |
 | `a thread that blocks signals kept running` | Linux | A thread that blocks the signal the agent stops threads with, as the threads some libraries start that block every signal do, was running, not waiting in the kernel. |
 | `the program has more threads than the agent can stop` | any | The agent's list of threads to stop is full. |
 | `the threads of the program could not be listed` | any | `task_threads`, reading `/proc/self/task`, or `NtQuerySystemInformation`, `NtGetNextThread` or `NtQueryInformationThread` kept failing, so the agent wrote nothing. Under Wine before 6.8, which has no `NtGetNextThread`, every swap fails with it. |
