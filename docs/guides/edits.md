@@ -65,6 +65,7 @@ The program's variables keep their values through every swap: the scenarios `glo
 | --- | --- | --- |
 | An include file used by two units | swap, of both units | `include` |
 | A constant in an include file | swap, of both units | `include` |
+| A save that empties one file first and writes it 0.3 s later, with another file written meanwhile | one swap, of both, once the file is written | `include` |
 | The initialization section assigns something else | swap, with the note `the initialization section of u changed; it is not run again` | `initfinal` |
 | The finalization section prints something else | swap | `initfinal` |
 | The program now uses a new unit of its own | restart: `unit extra is not part of the running program` | `newunit` |

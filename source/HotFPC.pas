@@ -624,6 +624,17 @@ type
     { The files of ANew whose size or time differs from AOld's or that AOld lacks, and the
       files of AOld that ANew lacks. The caller frees the list. }
     class function ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
+    { Keeps AEmptied as the files a save emptied, ms=path, with the time ANow they were first
+      seen so: a file of ANew that is empty and changed since AOld (another size or time, or
+      new). A file with content again, or gone, leaves it. Each is kept by its whole path,
+      with its case, as the stamps are: a path may have = in it. True while one of them was
+      seen less than AWaitSeconds before ANow: an editor that empties a file before it writes
+      it may have got only that far. }
+    class function AwaitEmptied(const AOld, ANew: TFileStamps; const ANow, AWaitSeconds: Double;
+      const AEmptied: TStrings): Boolean;
+    { When the first of the waits of AEmptied (AwaitEmptied) that are not over at ANow ends,
+      in seconds; 0 when there is none. }
+    class function EmptiedDeadline(const AEmptied: TStrings; const ANow, AWaitSeconds: Double): Double;
     { The files whose digest differs between the two lists of path=digest, or that are new
       in ACurrent. APrevious may be nil: then every file is a change. Each file is kept by
       its whole path, with its case: a path may have = in it, and the digest has none. }
@@ -635,8 +646,9 @@ type
     { Names, sizes and times of the watched files, the times as finely as the file system
       keeps them; StampedAt is then the Clock before they were read. }
     function Stamps: TFileStamps;
-    { The content of every watched file as path=digest. False while a file is missing or empty
-      (a save in progress); ADigests is then nil. Otherwise the caller frees the list. }
+    { The content of every watched file as path=digest, an empty file's too. False while a file
+      is missing (a save in progress); ADigests is then nil. Otherwise the caller frees the
+      list. }
     function ReadDigests(out ADigests: TStringList): Boolean;
     { The files that changed since the sources had AStamps and ADigests: another size or time,
       new or gone, or, for an edit of the same size within the same second, other content.
@@ -843,6 +855,77 @@ begin
   end;
 end;
 
+{ An entry of AwaitEmptied's list: the time, which has no =, then the path, which may. }
+function EmptiedPath(const AEntry: string): string;
+begin
+  Result := Copy(AEntry, Pos('=', AEntry) + 1, MaxInt);
+end;
+
+function EmptiedTime(const AEntry: string): Int64;
+begin
+  Result := StrToInt64(Copy(AEntry, 1, Pos('=', AEntry) - 1));
+end;
+
+class function TSourceWatcher.AwaitEmptied(const AOld, ANew: TFileStamps; const ANow, AWaitSeconds: Double;
+  const AEmptied: TStrings): Boolean;
+var
+  Changed, Empty, Paths: TStringList;
+  I: Integer;
+  Now: Int64;
+begin
+  { whole ms, rounded down: the next look AWaitSeconds after ANow finds the wait over }
+  Now := Trunc(ANow * MillisecondsPerSecond);
+  Changed := ChangedStamps(AOld, ANew);
+  Empty := TStringList.Create;
+  Paths := TStringList.Create;
+  try
+    Changed.CaseSensitive := True;
+    Empty.CaseSensitive := True;
+    Paths.CaseSensitive := True;
+    for I := 0 to AEmptied.Count - 1 do
+      Paths.Add(EmptiedPath(AEmptied[I]));
+    for I := 0 to High(ANew) do
+      if ANew[I].Size = 0 then
+      begin
+        Empty.Add(ANew[I].Path);
+        if (Changed.IndexOf(ANew[I].Path) >= 0) and (Paths.IndexOf(ANew[I].Path) < 0) then
+          AEmptied.Add(IntToStr(Now) + '=' + ANew[I].Path);
+      end;
+    for I := AEmptied.Count - 1 downto 0 do
+      if Empty.IndexOf(EmptiedPath(AEmptied[I])) < 0 then
+        AEmptied.Delete(I);
+    Result := False;
+    for I := 0 to AEmptied.Count - 1 do
+      if Now - EmptiedTime(AEmptied[I]) < Round(AWaitSeconds * MillisecondsPerSecond) then
+        Result := True;
+  finally
+    Paths.Free;
+    Empty.Free;
+    Changed.Free;
+  end;
+end;
+
+class function TSourceWatcher.EmptiedDeadline(const AEmptied: TStrings; const ANow, AWaitSeconds: Double): Double;
+var
+  I: Integer;
+  Now, Deadline: Int64;
+  Seconds: Double;
+begin
+  { in whole ms, as AwaitEmptied counts }
+  Now := Trunc(ANow * MillisecondsPerSecond);
+  Result := 0;
+  for I := 0 to AEmptied.Count - 1 do
+  begin
+    Deadline := EmptiedTime(AEmptied[I]) + Round(AWaitSeconds * MillisecondsPerSecond);
+    { a Double first: an Int64 over MillisecondsPerSecond, a constant fpc gives the type
+      Single, is a Single, too coarse for the clock }
+    Seconds := Deadline;
+    Seconds := Seconds / MillisecondsPerSecond;
+    if (Deadline > Now) and ((Result = 0) or (Seconds < Result)) then
+      Result := Seconds;
+  end;
+end;
+
 { An entry of a list of digests: the path, which may have =, then the digest, which has none. }
 function DigestPath(const AEntry: string): string;
 begin
@@ -966,7 +1049,7 @@ begin
   try
     for I := 0 to Watched.Count - 1 do
     begin
-      if not ReadFileContents(Watched[I], Contents) or (Contents = '') then
+      if not ReadFileContents(Watched[I], Contents) then
       begin
         FreeAndNil(ADigests);
         Exit(False);
@@ -984,7 +1067,7 @@ var
   Digests, Changed: TStringList;
 begin
   Result := ChangedStamps(AStamps, Stamps);
-  { a file that is missing or empty has already shown in the stamps }
+  { a file that is missing has already shown in the stamps }
   if (Result.Count > 0) or (ADigests = nil) or not ReadDigests(Digests) then
     Exit;
   try
@@ -4106,67 +4189,87 @@ end;
 { Polls the sizes and times of the sources every few milliseconds and their contents twice a
   second: the content check catches an edit of the same size within the same second. A save
   whose files changed again while fpc compiled them is compiled again once they settle
-  (FStale), even when their content is back to what it was. }
+  (FStale), even when their content is back to what it was. A file that a save left empty
+  holds every save back until the next look at the contents, half a second later, and is
+  compiled then if it is still empty: an editor that empties a file before it writes it may
+  not have written it yet. }
 procedure TDriver.Watch;
 var
-  Seen, Current: TFileStamps;
-  Digests, Changed: TStringList;
-  LastDigest, SeenAt, CompileSeconds: Double;
+  Seen, Known, Current: TFileStamps;
+  Digests, Changed, Emptied: TStringList;
+  LastDigest, SeenAt, CompileSeconds, EmptiedUntil: Double;
+  Waiting: Boolean;
 begin
   Seen := FWatcher.Stamps;
-  { the sources changed during the first build }
-  if FStale then
-    Seen := nil;
-  LastDigest := NowSeconds;
-  while True do
-  begin
-    Sleep(PollIntervalMilliseconds);
-    if ProgramHasEnded then
-      Break;
-    Current := FWatcher.Stamps;
-    if TSourceWatcher.SameStamps(Current, Seen) and (NowSeconds - LastDigest < DigestIntervalSeconds) then
-      Continue;
-    SeenAt := NowSeconds;
-    if not TSourceWatcher.SameStamps(Current, Seen) then
-      Current := Settle(Current);
-    if ProgramHasEnded then
-      Break;
-    Seen := Current;
-    LastDigest := NowSeconds;
-    { a missing or empty file: a save in progress }
-    if not FWatcher.ReadDigests(Digests) then
-      Continue;
-    if not FStale and (FDigests <> nil) and (Digests.Text = FDigests.Text) then
-    begin
-      Digests.Free;
-      Continue;
-    end;
-    FStale := False;
-    FSettled := Current;
-    FSettledAt := FWatcher.StampedAt;
-    FUnsettled := False;
-    Changed := TSourceWatcher.ChangedFiles(FDigests, Digests);
-    if GetEnvironmentVariable(DebugVariable) <> '' then
-      WriteLn('[hot debug] seen at ', FormatFloat('0.000', SeenAt - LastDigest), ' changed ', Changed.CommaText);
-    FCompiler.ForgetUnits(Changed);
-    FAssemblyWritten := False;
-    Changed.Free;
-    FDigests.Free;
-    FDigests := Digests;
-    if FProgram = nil then
-    begin
-      if CompileSources(CompileSeconds) then
-        Restart(SeenAt);
-    end
-    else if Reload(SeenAt, NowSeconds) and FOptions.Restart then
-      Restart(SeenAt);
-    { settle first: the save that changed them may still be in progress }
+  Waiting := False;
+  EmptiedUntil := 0;
+  { the stamps of the last look, for the files a save empties: Seen starts over when the
+    sources changed during a compile, Known doesn't }
+  Known := Seen;
+  Emptied := TStringList.Create;
+  try
+    { the sources changed during the first build }
     if FStale then
-      Seen := nil
-    else
-      FUnusedCompiles := 0;
-    if ProgramHasEnded then
-      Break;
+      Seen := nil;
+    LastDigest := NowSeconds;
+    while True do
+    begin
+      Sleep(PollIntervalMilliseconds);
+      if ProgramHasEnded then
+        Break;
+      Current := FWatcher.Stamps;
+      { the next look: when a file changes, at the next look at the contents, or when the
+        wait for a file a save emptied ends, whichever comes first }
+      if TSourceWatcher.SameStamps(Current, Seen) and (NowSeconds - LastDigest < DigestIntervalSeconds)
+        and not (Waiting and (NowSeconds >= EmptiedUntil)) then
+        Continue;
+      SeenAt := NowSeconds;
+      if not TSourceWatcher.SameStamps(Current, Seen) then
+        Current := Settle(Current);
+      if ProgramHasEnded then
+        Break;
+      Seen := Current;
+      LastDigest := NowSeconds;
+      Waiting := TSourceWatcher.AwaitEmptied(Known, Current, LastDigest, DigestIntervalSeconds, Emptied);
+      EmptiedUntil := TSourceWatcher.EmptiedDeadline(Emptied, LastDigest, DigestIntervalSeconds);
+      Known := Current;
+      { a file a save emptied, or a missing file: a save in progress }
+      if Waiting or not FWatcher.ReadDigests(Digests) then
+        Continue;
+      if not FStale and (FDigests <> nil) and (Digests.Text = FDigests.Text) then
+      begin
+        Digests.Free;
+        Continue;
+      end;
+      FStale := False;
+      FSettled := Current;
+      FSettledAt := FWatcher.StampedAt;
+      FUnsettled := False;
+      Changed := TSourceWatcher.ChangedFiles(FDigests, Digests);
+      if GetEnvironmentVariable(DebugVariable) <> '' then
+        WriteLn('[hot debug] seen at ', FormatFloat('0.000', SeenAt - LastDigest), ' changed ', Changed.CommaText);
+      FCompiler.ForgetUnits(Changed);
+      FAssemblyWritten := False;
+      Changed.Free;
+      FDigests.Free;
+      FDigests := Digests;
+      if FProgram = nil then
+      begin
+        if CompileSources(CompileSeconds) then
+          Restart(SeenAt);
+      end
+      else if Reload(SeenAt, NowSeconds) and FOptions.Restart then
+        Restart(SeenAt);
+      { settle first: the save that changed them may still be in progress }
+      if FStale then
+        Seen := nil
+      else
+        FUnusedCompiles := 0;
+      if ProgramHasEnded then
+        Break;
+    end;
+  finally
+    Emptied.Free;
   end;
 end;
 
@@ -4926,6 +5029,136 @@ begin
   end;
 end;
 
+{ An empty file is a save in progress only when a save made it empty, and only until the next
+  look at the contents: an empty file that stays as it was holds nothing back, and another
+  file saved meanwhile doesn't end the wait. }
+procedure TestAwaitEmptied;
+var
+  Old, New, Peer: TFileStamps;
+  Emptied: TStringList;
+begin
+  SetLength(Old, 2);
+  Old[0] := Stamp('/src/a.pas', 10, 100);
+  Old[1] := Stamp('/src/unused.inc', 0, 90);
+  SetLength(New, 2);
+  New[0] := Stamp('/src/a.pas', 12, 101);
+  New[1] := Stamp('/src/unused.inc', 0, 90);
+  Emptied := TStringList.Create;
+  try
+    Expect(not TSourceWatcher.AwaitEmptied(Old, New, 10.0, 0.5, Emptied), 'an empty file that did not change');
+    New[0] := Stamp('/src/a.pas', 0, 101);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.0, 0.5, Emptied), 'a file the save emptied');
+    Expect(TSourceWatcher.AwaitEmptied(New, New, 10.2, 0.5, Emptied), 'still, at a look before the wait is over');
+    SetLength(Peer, 3);
+    Peer[0] := New[0];
+    Peer[1] := New[1];
+    Peer[2] := Stamp('/src/b.pas', 30, 101);
+    Expect(TSourceWatcher.AwaitEmptied(New, Peer, 10.3, 0.5, Emptied),
+      'still, when another file is saved meanwhile and the emptied one has not changed again');
+    Expect(not TSourceWatcher.AwaitEmptied(Peer, Peer, 10.5, 0.5, Emptied), 'no longer half a second after it was seen');
+    Expect(not TSourceWatcher.AwaitEmptied(Peer, Peer, 12.0, 0.5, Emptied), 'nor later, while it stays empty');
+    Peer[0] := Stamp('/src/a.pas', 12, 102);
+    Expect(not TSourceWatcher.AwaitEmptied(Peer, Peer, 12.1, 0.5, Emptied), 'a file written again');
+    ExpectEqual(Emptied.Count, 0, 'is no longer an emptied file');
+    New[0] := Stamp('/src/a.pas', 0, 103);
+    Expect(TSourceWatcher.AwaitEmptied(Peer, New, 13.0, 0.5, Emptied), 'until a save empties it again');
+    Emptied.Clear;
+    SetLength(New, 3);
+    New[0] := Stamp('/src/a.pas', 10, 100);
+    New[2] := Stamp('/src/c.pas', 0, 101);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 20.0, 0.5, Emptied), 'a new file that is empty');
+  finally
+    Emptied.Free;
+  end;
+end;
+
+{ A file is kept by its whole path: one with = in it, and two whose names differ in case only,
+  each wait for their own save. }
+procedure TestAwaitEmptiedPaths;
+var
+  Old, New: TFileStamps;
+  Emptied: TStringList;
+begin
+  SetLength(Old, 3);
+  Old[0] := Stamp('/src/a=b.inc', 10, 100);
+  Old[1] := Stamp('/src/A.pas', 10, 100);
+  Old[2] := Stamp('/src/a.pas', 10, 100);
+  New := Copy(Old);
+  New[0] := Stamp('/src/a=b.inc', 0, 101);
+  Emptied := TStringList.Create;
+  try
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.0, 0.5, Emptied), 'a path with = that a save emptied');
+    Expect(TSourceWatcher.AwaitEmptied(New, New, 10.25, 0.5, Emptied), 'still, at a look before its wait is over');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 10.25, 0.5) - 10.5) < 1E-9, 'until half a second after it was seen');
+    Old := Copy(New);
+    New[0] := Stamp('/src/a=b.inc', 12, 102);
+    New[1] := Stamp('/src/A.pas', 0, 102);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 11.0, 0.5, Emptied), 'A.pas emptied');
+    Old := Copy(New);
+    New[2] := Stamp('/src/a.pas', 0, 103);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 11.25, 0.5, Emptied), 'and a.pas after it');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 11.25, 0.5) - 11.5) < 1E-9, 'the first of the two waits ends first');
+    Expect(TSourceWatcher.AwaitEmptied(New, New, 11.5, 0.5, Emptied), 'a.pas still waits once A.pas no longer does');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 11.5, 0.5) - 11.75) < 1E-9, 'until half a second after a.pas was seen');
+    Expect(not TSourceWatcher.AwaitEmptied(New, New, 11.75, 0.5, Emptied), 'and no longer then');
+    New[1] := Stamp('/src/A.pas', 5, 104);
+    New[2] := Stamp('/src/a.pas', 5, 104);
+    Expect(not TSourceWatcher.AwaitEmptied(New, New, 12.0, 0.5, Emptied), 'both written again');
+    Expect(TSourceWatcher.EmptiedDeadline(Emptied, 12.0, 0.5) = 0, 'no wait is left');
+    { at the clock's time of day, as NowSeconds gives it }
+    Old := Copy(New);
+    New[2] := Stamp('/src/a.pas', 0, 105);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 4004736912.25, 0.5, Emptied), 'a file emptied now');
+    Expect(Abs(TSourceWatcher.EmptiedDeadline(Emptied, 4004736912.25, 0.5) - 4004736912.75) < 1E-6,
+      'waits half a second, to the millisecond');
+  finally
+    Emptied.Free;
+  end;
+end;
+
+{ Two include files whose names differ only in case, where the file system keeps both: the
+  watcher's stamps have both, so a save that empties either holds the next compile back,
+  also while the other is saved. }
+procedure TestAwaitEmptiedThroughTheWatcher;
+var
+  Root, Contents: string;
+  Watcher: TSourceWatcher;
+  Options, Emptied: TStringList;
+  Old, New: TFileStamps;
+begin
+  Root := MakeTestDirectory('await-emptied-case');
+  WriteTestFile(Root + 'u.pas', 'unit U;');
+  WriteTestFile(Root + 'A.inc', '{ upper }');
+  WriteTestFile(Root + 'a.inc', '{ lower }');
+  if not (ReadFileContents(Root + 'A.inc', Contents) and (Contents = '{ upper }')) then
+    Exit;
+  Options := TStringList.Create;
+  Emptied := TStringList.Create;
+  Watcher := TSourceWatcher.Create(Root, Options);
+  try
+    Old := Watcher.Stamps;
+    WriteTestFile(Root + 'a.inc', '');
+    WriteTestFile(Root + 'A.inc', '{ UPPER, saved }');
+    New := Watcher.Stamps;
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.0, 0.5, Emptied), 'a.inc emptied while A.inc is saved');
+    ExpectEqual(Emptied.Count, 1, 'one file waits');
+    if Emptied.Count = 1 then
+      ExpectEqual(EmptiedPath(Emptied[0]), Root + 'a.inc', 'a.inc');
+    Old := New;
+    WriteTestFile(Root + 'a.inc', '{ lower, saved }');
+    WriteTestFile(Root + 'A.inc', '');
+    New := Watcher.Stamps;
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.25, 0.5, Emptied), 'A.inc emptied once a.inc has content again');
+    ExpectEqual(Emptied.Count, 1, 'one file waits then too');
+    if Emptied.Count = 1 then
+      ExpectEqual(EmptiedPath(Emptied[0]), Root + 'A.inc', 'A.inc');
+  finally
+    Watcher.Free;
+    Emptied.Free;
+    Options.Free;
+  end;
+end;
+
 { What a compile checks when it is done: whether the sources it started from changed
   meanwhile. }
 procedure TestChangedSince;
@@ -5236,8 +5469,9 @@ begin
     Expect(not TSourceWatcher.SameStamps(Stamps, Edited), 'an edit that changes the size changes the stamps');
     WriteTestFile(Extra + 'helper.pp', '');
     Digests := nil;
-    Expect(not Watcher.ReadDigests(Digests), 'an empty file is a save in progress');
-    Expect(Digests = nil, 'and gives no digests');
+    Expect(Watcher.ReadDigests(Digests), 'an empty file has a digest too');
+    Expect((Digests <> nil) and (Digests.IndexOfName(Extra + 'helper.pp') >= 0), 'of no content');
+    Digests.Free;
   finally
     Watcher.Free;
     Options.Free;
@@ -6993,6 +7227,9 @@ begin
     TestSameStamps;
     TestChangedFiles;
     TestChangedStamps;
+    TestAwaitEmptied;
+    TestAwaitEmptiedPaths;
+    TestAwaitEmptiedThroughTheWatcher;
     TestChangedSince;
     TestWatchedPaths;
     TestStampsShowARevertedSave;

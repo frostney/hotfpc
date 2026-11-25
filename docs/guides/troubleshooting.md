@@ -56,9 +56,6 @@ hotfpc.
 
 ### I saved, and nothing happened
 
-- **A watched file is empty.** hotfpc takes an empty file for a save in progress and waits:
-  while any `.pas`, `.pp`, `.inc`, `.lpr` or `.dpr` file in a watched directory is empty,
-  no save is compiled. Delete it or give it content.
 - **The file isn't watched.** hotfpc watches the program's directory and the `-Fu` and `-Fi`
   directories, not their subdirectories. The start line says how many files it watches.
   Add the directory with `-Fu` or `-Fi`.

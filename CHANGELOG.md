@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- An empty source file in a watched directory, such as an empty `.inc` nothing uses, no
+  longer holds back every save. hotfpc took any empty file for a save still being written
+  and compiled nothing while one was there. Now only a file that a save has just emptied
+  waits, for half a second, in case the editor has yet to write it.
 - A program that a signal ends before its agent connects now prints `exit code -1`, as when
   a signal ends it later, and when that ends hotfpc, hotfpc ends with 255. hotfpc used to
   print `exit code 0` and end with 0, as if the program had succeeded. A program a restart

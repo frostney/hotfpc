@@ -123,3 +123,6 @@ read it, so what it swaps or reports can mix old and new text. On Windows, a sav
 variables with initial values hotfpc checks needs a restart then instead. Save again once
 the files have stopped changing
 ([how it works](../internals/how-it-works.md#one-save)).
+A save that leaves a file empty is compiled half a second later, if the file is still
+empty then, and so is a file saved meanwhile: some editors empty a file before they write
+it.
