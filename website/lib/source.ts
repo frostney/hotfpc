@@ -50,8 +50,10 @@ export const source = loader({
 
 export type DocsPage = (typeof source)['$inferPage'];
 
-// The title of a page without frontmatter: its H1, or else its file name
-// ('quick-start' becomes 'Quick Start'); the docs root is 'Documentation'.
+// The title of a page: its H1, which fumadocs-mdx's postprocess puts in page.data.title when
+// there is no frontmatter, as for every page of docs/. A page without an H1 gets its file
+// name ('quick-start' becomes 'Quick Start'), and the docs root 'Documentation'. The page's
+// metadata, its structured data, its Open Graph image and the search index all use this.
 export function pageTitle(page: DocsPage): string {
   if (page.data.title) return page.data.title;
   const slug = page.slugs.at(-1);
