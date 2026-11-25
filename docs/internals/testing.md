@@ -43,11 +43,13 @@ once. The script then starts the program itself, with `HOT_PORT` set to a port i
 on and `HOT_TOKEN` to the token it expects in the agent's hello, and stands in for hotfpc on
 the agent's protocol (the comment at the top
 of `source/HotFPC.Agent.pas`): it waits for the agent's hello, sends each case's command and
-checks the reply. The one case so far, `badobject`, loads a file that is no object file and
+checks the reply, and at the end that the agent closes its connection as the program ends.
+The one case so far, `badobject`, loads a file that is no object file and
 expects the error to name the object files of the system the agent runs on, such as
 `is not an x86-64 ELF object`. `HOT_DRIVER` and `HOT_DRIVER_OPTS` pick the hotfpc and its
-options as for the scenarios; the script starts the program as hotfpc does, with `--run`'s
-launcher, or under Wine for a Windows target on another system.
+options as for the scenarios, and hotfpc runs in the directory the script runs in, as for
+them. The script starts the program as hotfpc does, with `--run`'s launcher, or under Wine
+for a Windows target on another system, in `tests/agent/work/`.
 
 ## The scenarios
 

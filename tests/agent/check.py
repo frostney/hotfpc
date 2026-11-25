@@ -10,8 +10,9 @@ build/hotfpc) and $HOT_DRIVER_OPTS adds options to it, as for the scenarios.
 import os, platform, shlex, shutil, signal, socket, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# absolute: hotfpc runs in the work directory, so that fpc's link files go there
-DRIVER = os.path.abspath(os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc"))
+# hotfpc runs in this script's directory, as for the scenarios, so that a relative path in
+# these means the same to both
+DRIVER = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc")
 OPTS = shlex.split(os.environ.get("HOT_DRIVER_OPTS", ""))
 WORK = os.path.join(HERE, "work")
 TOKEN = "agent-check"
@@ -63,6 +64,10 @@ WINDOWS = sys.platform == "win32" or any(opt[:2] == "-T" and opt[2:5].lower() ==
 # what hotfpc starts the program with: --run's launcher, and for a Windows program on another
 # system Wine
 LAUNCHER = RUN or ("wine" if WINDOWS and sys.platform != "win32" else None)
+# the program runs in the work directory: a launcher's path is taken from here, as hotfpc
+# takes it, and a bare name is looked up on PATH
+if LAUNCHER and os.path.dirname(LAUNCHER):
+    LAUNCHER = os.path.abspath(LAUNCHER)
 # the most stopping a program and what it started may take, in s
 STOP_TIMEOUT = 30
 
@@ -107,20 +112,19 @@ def build():
     os.makedirs(WORK)
     with open(os.path.join(WORK, "main.pas"), "w") as f:
         f.write(MAIN)
-    command = ([sys.executable, DRIVER] if DRIVER.endswith(".py") else [DRIVER]) + OPTS + ["--no-restart", "main.pas"]
+    command = ([sys.executable, DRIVER] if DRIVER.endswith(".py") else [DRIVER]) + OPTS + ["--no-restart", os.path.join(WORK, "main.pas")]
     # hotfpc's output goes to a file: a pipe that something hotfpc started holds open could
     # keep this script waiting
     log = os.path.join(WORK, "hotfpc.log")
     with open(log, "w") as out:
-        process = start(command, cwd=WORK, stdout=out, stderr=subprocess.STDOUT)
+        process = start(command, stdout=out, stderr=subprocess.STDOUT)
         try:
             code = process.wait(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
-            stop_tree(process)
             code = None
-        except BaseException:
+        finally:
+            # also what it left running, as the program it started once
             stop_tree(process)
-            raise
     with open(log) as f:
         output = f.read()
     executable = os.path.join(WORK, ".hot", "main.exe" if WINDOWS else "main")
@@ -183,13 +187,35 @@ class Agent:
                 return reply
             reply.append(line)
 
+    def closed_by_agent(self, deadline):
+        """Whether the agent closes its connection before the deadline, as it does when the
+        program ends."""
+        if self.connection is None:
+            return False
+        try:
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                self.connection.settimeout(left)
+                if not self.connection.recv(4096):
+                    return True
+        except ConnectionResetError:
+            return True
+        except OSError:   # the timeout
+            return False
+
     def close(self):
-        """Ends the program through the file it waits for; its exit code. It and what it
-        started are stopped when it doesn't end."""
+        """Ends the program through the file it waits for. Its exit code, or None when its
+        agent didn't close the connection as the program ended: a launcher may end before
+        the program does. It and what it started are stopped when it doesn't end."""
         try:
             with open(os.path.join(WORK, STOP), "w"):
                 pass
-            return self.process.wait(timeout=TIMEOUT)
+            deadline = time.monotonic() + TIMEOUT
+            if not self.closed_by_agent(deadline):
+                return None
+            return self.process.wait(timeout=max(deadline - time.monotonic(), 1))
         finally:
             try:
                 stop_tree(self.process)
@@ -223,7 +249,9 @@ def main():
             failed += not ok
     finally:
         code = agent.close()
-    if code != 0:
+    if code is None:
+        print("the program's agent did not close its connection within %d s" % TIMEOUT)
+    elif code != 0:
         print("the program ended with %d" % code)
     print("%d of %d cases as expected" % (len(CASES) - failed, len(CASES)))
     return 1 if failed or code != 0 else 0
