@@ -36,6 +36,10 @@ PRINTS = {
     # a restarted program runs the new code and counts from the start
     "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
 }
+# case: the word before a number that counts the calls of Tick, as the tick number does. It
+# is a variable of the unit's implementation section, which every swap must leave in place,
+# so every tick prints it and the two numbers stay equal
+COUNTERS = {"globals": "hidden", "hidden": "calls"}
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
 LOAD_LIMITS = {"signals": 1000}
@@ -77,17 +81,28 @@ for name in names:
     # newest text either way
     merged = unchanged if name == "rapid" else 0
     ok = rc == 0 and (applied + merged in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == merged and restarts == RESTARTS.get(name, 0) and "!!! the edit does not apply" not in body
-    ticks = [int(x) for x in re.findall(r"tick (\d+):", body)]
+    # the program's tick records, each a line of its own after the script's timestamp: the
+    # same records count toward continuity and carry the counters
+    records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)
+    ticks = [int(tick) for tick, _ in records]
     seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
     ok = ok and seq
     missing = [text for text in PRINTS.get(name, []) if not re.search(r"tick \d+: " + re.escape(text) + "$", body, re.M)]
     ok = ok and not missing
+    drift = []
+    for tick, text in records if name in COUNTERS else []:
+        count = re.search(r"\b%s (\d+)" % COUNTERS[name], text)
+        if not count or count.group(1) != tick:
+            drift.append((tick, count and count.group(1)))
+    ok = ok and not drift
     loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
           + "".join("; never printed %r" % text for text in missing)
+          + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
+                    for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow))
     if not ok:
         failing.append((name, body))

@@ -18,6 +18,8 @@ jobs:
         include:
           - asset: linux-x64
             runner: ubuntu-24.04
+          - asset: linux-arm64
+            runner: ubuntu-24.04-arm
           - asset: macos-arm64
             runner: macos-15
           - asset: windows-x64

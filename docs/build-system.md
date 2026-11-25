@@ -74,7 +74,7 @@ Every build writes it again, so the binary always carries the agent it was built
 
 ## Release binaries
 
-`.github/workflows/release.yml` builds `hotfpc` for macOS arm64, Linux x86-64 and Windows
-x86-64 with fpc 3.2.2 (`./build.sh clean hotfpc --production`, and `build.bat` on Windows)
-when a version tag is pushed. It attaches the archives and a checksum file to the GitHub
-release.
+`.github/workflows/release.yml` builds `hotfpc` for macOS arm64, Linux x86-64, Linux arm64
+and Windows x86-64 with fpc 3.2.2 (`./build.sh clean hotfpc --production`, and `build.bat`
+on Windows) when a version tag is pushed. It attaches the archives and a checksum file to
+the GitHub release.

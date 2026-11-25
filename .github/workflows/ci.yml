@@ -24,6 +24,9 @@ jobs:
           - name: Linux x86-64, fpc 3.2.2
             runner: ubuntu-24.04
             fpc: apt
+          - name: Linux arm64, fpc 3.2.2
+            runner: ubuntu-24.04-arm
+            fpc: apt
           - name: macOS arm64, fpc 3.2.2
             runner: macos-15
             fpc: brew
