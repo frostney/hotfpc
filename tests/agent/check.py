@@ -17,9 +17,9 @@ WORK = os.path.join(HERE, "work")
 TOKEN = "agent-check"
 # the longest the build, the agent's connection, a reply or the program's end may take, in s
 TIMEOUT = 120
-# The program and the agent get paths relative to the work directory, where the program runs:
-# the Windows agent opens files with the system's ANSI code page, which a checkout's absolute
-# path may not fit
+# The program and the agent get paths relative to the work directory, where the program runs
+# (a --run launcher has to start it there): the Windows agent opens files with the system's
+# ANSI code page, which a checkout's absolute path may not fit
 STOP = "stop"
 
 # The program waits for the file its first argument names, so that its agent stays connected,
@@ -40,19 +40,31 @@ end.
 '''
 
 
-def option_value(name):
-    """The value of one of hotfpc's options in $HOT_DRIVER_OPTS, or None."""
-    for i, opt in enumerate(OPTS[:-1]):
-        if opt == name:
-            return OPTS[i + 1]
-    return None
+def read_options(arguments):
+    """hotfpc's launcher (--run, the last one) and fpc options in $HOT_DRIVER_OPTS, read as
+    hotfpc reads its command line (TOptions.Parse): an option that takes a value takes the
+    argument after it."""
+    launcher, compiler_options, i = None, [], 0
+    while i < len(arguments):
+        argument = arguments[i]
+        if argument in ("--fpc", "--ppudump", "--run", "--settle", "--log") and i + 1 < len(arguments):
+            i += 1
+            if argument == "--run":
+                launcher = arguments[i]
+        elif argument.startswith(("-", "@")) and argument not in ("--quiet", "--no-restart", "--version"):
+            compiler_options.append(argument)
+        i += 1
+    return launcher, compiler_options
 
 
+RUN, COMPILER_OPTIONS = read_options(OPTS)
 # a Windows target, as hotfpc decides it: an fpc option -T followed by win in any case
-WINDOWS = sys.platform == "win32" or any(opt[:2] == "-T" and opt[2:5].lower() == "win" for opt in OPTS)
-# what hotfpc starts the program with (--run), and for a Windows program on another system
-# Wine, as hotfpc does
-LAUNCHER = option_value("--run") or ("wine" if WINDOWS and sys.platform != "win32" else None)
+WINDOWS = sys.platform == "win32" or any(opt[:2] == "-T" and opt[2:5].lower() == "win" for opt in COMPILER_OPTIONS)
+# what hotfpc starts the program with: --run's launcher, and for a Windows program on another
+# system Wine
+LAUNCHER = RUN or ("wine" if WINDOWS and sys.platform != "win32" else None)
+# the most stopping a program and what it started may take, in s
+STOP_TIMEOUT = 30
 
 
 def object_format():
@@ -66,15 +78,26 @@ def object_format():
     return "aarch64 ELF" if arm else "x86-64 ELF"
 
 
-def stop_tree(process):
-    """Stops a process this script started and what it started (fpc), by its PID."""
-    if process.poll() is not None:
-        return
+def start(command, **options):
+    """Starts a process in a group of its own, so that stop_tree reaches what it starts."""
     if sys.platform == "win32":
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP, **options)
+    return subprocess.Popen(command, start_new_session=True, **options)
+
+
+def stop_tree(process):
+    """Stops a process this script started and what it started (fpc, or the program behind a
+    launcher), by its PID. Raises when they don't end."""
+    if sys.platform == "win32":
+        if process.poll() is None:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=STOP_TIMEOUT)
     else:
-        os.killpg(process.pid, signal.SIGKILL)   # its own process group (start_new_session)
-    process.wait()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)   # the group start() gave it
+        except ProcessLookupError:
+            pass
+    process.wait(timeout=STOP_TIMEOUT)
 
 
 def build():
@@ -89,13 +112,15 @@ def build():
     # keep this script waiting
     log = os.path.join(WORK, "hotfpc.log")
     with open(log, "w") as out:
-        process = subprocess.Popen(command, cwd=WORK, stdout=out, stderr=subprocess.STDOUT,
-                                   start_new_session=sys.platform != "win32")
+        process = start(command, cwd=WORK, stdout=out, stderr=subprocess.STDOUT)
         try:
             code = process.wait(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
             stop_tree(process)
             code = None
+        except BaseException:
+            stop_tree(process)
+            raise
     with open(log) as f:
         output = f.read()
     executable = os.path.join(WORK, ".hot", "main.exe" if WINDOWS else "main")
@@ -118,18 +143,19 @@ class Agent:
         listener.listen(1)
         listener.settimeout(TIMEOUT)
         env = dict(os.environ, HOT_PORT=str(listener.getsockname()[1]), HOT_TOKEN=TOKEN)
-        self.process = subprocess.Popen(([LAUNCHER] if LAUNCHER else []) + [executable, STOP], cwd=WORK, env=env,
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + TIMEOUT
+        self.process = start(([LAUNCHER] if LAUNCHER else []) + [executable, STOP], cwd=WORK, env=env,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             try:
                 self.connection, _ = listener.accept()
             finally:
                 listener.close()
-            hello = self.line(time.monotonic() + TIMEOUT)
+            hello = self.line(deadline)
             if hello != "hello " + TOKEN:
                 raise RuntimeError("the agent said %r instead of its hello" % hello)
         except BaseException:
-            self.kill()
+            self.close()
             raise
 
     def line(self, deadline):
@@ -157,22 +183,19 @@ class Agent:
                 return reply
             reply.append(line)
 
-    def kill(self):
-        if self.process.poll() is None:
-            self.process.kill()
-        self.process.wait()
-        if self.connection is not None:
-            self.connection.close()
-
     def close(self):
-        """Ends the program through the file it waits for; its exit code. It is killed when it
-        doesn't end."""
+        """Ends the program through the file it waits for; its exit code. It and what it
+        started are stopped when it doesn't end."""
         try:
             with open(os.path.join(WORK, STOP), "w"):
                 pass
             return self.process.wait(timeout=TIMEOUT)
         finally:
-            self.kill()
+            try:
+                stop_tree(self.process)
+            finally:
+                if self.connection is not None:
+                    self.connection.close()
 
 
 def bad_object(agent):
