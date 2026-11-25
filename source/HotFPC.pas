@@ -3052,6 +3052,9 @@ const
     rewriting, would otherwise hold back every save; the next compile is then used as it is,
     and the changes still to come are compiled after it. }
   MaximumUnusedCompiles = 3;
+  { The longest hotfpc waits for the files to stop changing. A file that changes all the time
+    is then compiled as it is, and that compile sees the change: the limit above applies. }
+  MaximumSettleSeconds = 1.0;
   { macOS checks a newly linked executable on its first start (seconds, more under load); Wine
     starts its server the first time. }
   ConnectTimeoutSeconds = 60;
@@ -3894,19 +3897,22 @@ begin
     RefreshLiveAssembly(Problem);
 end;
 
-{ Waits for the save to stop changing the files. }
+{ Waits for the save to stop changing the files, for MaximumSettleSeconds at most, and no
+  longer once the program has ended (Watch sees to that). The files as they are then. }
 function TDriver.Settle(const AStamps: TFileStamps): TFileStamps;
 var
   Again: TFileStamps;
+  Deadline: Double;
 begin
   Result := AStamps;
+  Deadline := NowSeconds + MaximumSettleSeconds;
   repeat
     Sleep(Trunc(FOptions.SettleSeconds * MillisecondsPerSecond) + SettleSlackMilliseconds);
     Again := FWatcher.Stamps;
     if TSourceWatcher.SameStamps(Again, Result) then
       Break;
     Result := Again;
-  until False;
+  until (NowSeconds > Deadline) or ((FProgram <> nil) and not FProgram.Running);
 end;
 
 { True when the program has ended and hotfpc ends with it. A program that a restart started
@@ -3953,6 +3959,8 @@ begin
     SeenAt := NowSeconds;
     if not TSourceWatcher.SameStamps(Current, Seen) then
       Current := Settle(Current);
+    if ProgramHasEnded then
+      Break;
     Seen := Current;
     LastDigest := NowSeconds;
     { a missing or empty file: a save in progress }

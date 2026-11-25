@@ -82,7 +82,8 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    link of a restart and the first build the same way: a save during the first build is
    compiled as soon as the program runs. A source that changes faster than fpc compiles, such
    as a file a generator keeps rewriting, holds a save back for three compiles, links or
-   compiles to assembler at most: the fourth is used as it is. For a Windows program whose
+   compiles to assembler at most, each after a wait of a second at most for the files to
+   settle: the fourth is used as it is. For a Windows program whose
    sizes step 4 checks, such a save needs a restart instead: its object files and its
    assembler may come from different sources, so the sizes counted may not be the code's.
 3. ppudump reads each changed unit: the interface from its JSON output, and the
