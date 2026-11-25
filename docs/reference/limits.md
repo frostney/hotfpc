@@ -9,6 +9,12 @@ the edits that need a restart; these are the limits around them.
   on the agent's thread.
 - **The main program's block keeps its old code.** It is already running. Code you want to
   change belongs in routines and units; the main block can call them.
+- **In the program file, hotfpc checks sizes, not types.** It finds a type that changed
+  without changing a size (`LongInt` to `Single`, two fields of a record swapped) by reading
+  the changed unit's `.ppu` file with ppudump, and fpc writes none for the program file.
+  Such an edit to a declaration there is swapped, and the new code reads the old bytes as
+  the new type. A change of size is found, as in a unit. Declarations in units are checked
+  in full.
 - **A restart doesn't keep any state and doesn't run finalization sections.** hotfpc stops
   the program the way the system ends a process (`SIGTERM`, then `SIGKILL`, on Linux and
   macOS; `TerminateProcess` on Windows).

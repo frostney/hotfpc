@@ -71,8 +71,11 @@ hotfpc.
 ### The change shows, but the program's values are wrong
 
 The program read a variable with the new code's idea of its type. hotfpc refuses such an
-edit when its check of layouts is on, so look for `the check of interface layouts is off`
-at the start, and name `--ppudump`. Restart the program to get correct values back.
+edit to a unit when its check of layouts is on, so look for `the check of interface layouts
+is off` at the start, and name `--ppudump`. That check doesn't cover declarations in the
+program file, where only a change of size needs a restart
+([limits](../reference/limits.md)): keep variables and types there in units. Restart the
+program to get correct values back.
 
 ### Every save restarts the program
 

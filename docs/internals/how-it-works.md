@@ -101,7 +101,8 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    moved, or a field or variable that changed its type without changing a size, is
    invisible in the object file, so this check catches it. The check compares each record
    and class and the type of each variable with the running unit's, by name, because the
-   compiler numbers types again on every compile.
+   compiler numbers types again on every compile. The program file has no `.ppu`, so its
+   declarations get only the checks of sizes.
 4. For a Windows program whose changed units have a variable with an initial value or a
    typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
    `.hot/asm/`, which keeps units of its own. The program and each changed unit compile

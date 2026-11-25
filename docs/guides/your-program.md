@@ -36,10 +36,10 @@ or a wrapper script:
 hotfpc --fpc /opt/fpc-3.3.1/bin/fpc game.pas
 ```
 
-hotfpc checks the layouts of records, classes and variables with the `ppudump` in the same
-directory as the compiler. When there's none there, which happens with a wrapper script in
-another directory, hotfpc says so when it starts and runs without that check. Name it with
-`--ppudump`:
+hotfpc checks the layouts of records, classes and variables in units with the `ppudump` in
+the same directory as the compiler. When there's none there, which happens with a wrapper
+script in another directory, hotfpc says so when it starts and runs without that check.
+Name it with `--ppudump`:
 
 ```sh
 hotfpc --fpc ~/bin/fpc --ppudump /opt/fpc/bin/ppudump game.pas

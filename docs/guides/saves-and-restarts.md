@@ -52,8 +52,10 @@ code you want to change in routines in units, and call them from the main block.
 
 An edit needs a restart when the program's state depends on what it changes:
 
-- a variable's size or type, also when the size stays the same (`Integer` to `Single`);
-- a record's or class's layout: a field added, removed, moved or retyped;
+- a variable's size, and in a unit also its type when the size stays the same (`Integer`
+  to `Single`);
+- a record's or class's layout: a field added or removed, and in a unit also a field moved
+  or retyped;
 - a class's virtual methods (its virtual method table), or its parent class;
 - a new unit of the program's own, or a renamed one;
 - a new thread variable, or one that changed size;
@@ -63,6 +65,11 @@ An edit needs a restart when the program's state depends on what it changes:
 
 hotfpc names the declaration in the way, such as `scene.Score: the declaration changed its
 layout or type`, and then starts the program over.
+
+The program file has no unit file for hotfpc to compare, so there it sees sizes only: a
+variable of the program file that changes its type but not its size is swapped, and the
+new code reads the old bytes as the new type ([limits](../reference/limits.md)). Keep such
+declarations in units.
 
 ## What a restart does
 

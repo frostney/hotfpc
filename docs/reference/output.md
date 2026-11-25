@@ -102,7 +102,7 @@ restart needed: the sizes of variables with initial values are unknown: <why> (n
 
 | Reason | What changed | Scenario |
 | --- | --- | --- |
-| `<unit>.<declaration>: the declaration changed its layout or type` | A variable's type, or a record's or class's fields, by ppudump: also when the size stays the same (`Integer` to `Single`, two fields swapped). | `globals`, `records`, `hidden`, `restart` |
+| `<unit>.<declaration>: the declaration changed its layout or type` | A variable's type, or a record's or class's fields, in a unit, by ppudump: also when the size stays the same (`Integer` to `Single`, two fields swapped). The program file has no unit file for ppudump, so there only a change of size is found ([limits](limits.md)). | `globals`, `records`, `hidden`, `restart` |
 | `unit <unit> is not part of the running program` | The program now uses a unit of its own that it didn't use when it started, or a unit was renamed. | `newunit`, `rename`, `linkfail` |
 | `variable <name> changed size from <n> to <n> bytes` | A variable, a variable with an initial value or a typed constant changed size. | `typedconst`, `progvar`, `localconst` |
 | `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (<problem>)` | A Windows program: fpc didn't write the assembler that shows the sizes of the changed units' variables with initial values and typed constants, for this save or when the program last started over, so one of them may have grown. | `progvar` on Windows |
