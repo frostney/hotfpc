@@ -36,8 +36,10 @@ A swap changes code, not state:
 - **Constants and literals are new.** The new code uses its own, so a changed `const`
   takes effect at once.
 - **A changed initial value** (`Speed: Integer = 5` to `= 50`) is applied when the
-  variable still holds the old initial value, byte for byte, and neither value holds an
-  address, such as a pointer, a `PChar` or a string. Otherwise it keeps the value it has.
+  variable still holds the old initial value, byte for byte, and neither the old nor the
+  new value is an address the linker fills in: `@Table`, a routine, a `PChar` or a string
+  with text. Otherwise it keeps the value it has. A pointer that holds a plain number, such
+  as `nil` or `Pointer(42)`, is bytes like any other value, so its new value is applied.
   hotfpc compares values, not writes: a variable the program changed and then set back to
   its initial value gets the new one. hotfpc notes which it was.
 - **Threads keep running.** The agent stops the program's other threads for the few
