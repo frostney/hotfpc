@@ -8,6 +8,9 @@ cd examples/demo
 hotfpc demo.pas
 ```
 
+On Windows, with the official installer's fpc, ask for a 64-bit program:
+`hotfpc -Twin64 -Px86_64 demo.pas`.
+
 While it runs, edit `scene.pas` and save. For example:
 
 - set `Glyph` to `'*'`;

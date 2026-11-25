@@ -16,7 +16,7 @@ With raylib installed ([how to get it](../../docs/guides/raylib.md#get-raylib)):
 cd examples/raylib
 hotfpc -Fl/opt/homebrew/lib game.pas                       # macOS with Homebrew
 hotfpc -Fl$RAYLIB/lib -k-rpath -k$RAYLIB/lib game.pas      # an unpacked release, macOS or Linux
-hotfpc game.pas                                            # Windows, with raylib.dll here
+hotfpc -Twin64 -Px86_64 game.pas                           # Windows, with raylib.dll here
 ```
 
 Click to drop a ball, press space to make them all jump, and r to start again. Then change

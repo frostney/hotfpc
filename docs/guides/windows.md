@@ -8,8 +8,9 @@ same in both; it is compiled for the target, like the program.
 
 Install fpc with the win32 and win64 installer from
 [freepascal.org](https://www.freepascal.org/download.html), and get `hotfpc.exe` from the
-`windows-x64` release archive or build it with `build.bat hotfpc`. The installer's `fpc`
-builds 32-bit programs by default, so ask for a 64-bit one:
+`windows-x64` release archive or build it with `build.bat hotfpc -- -Twin64 -Px86_64`. The
+installer's `fpc` builds 32-bit programs by default, which the agent doesn't support, so ask
+for a 64-bit one, for hotfpc and for your program:
 
 ```bat
 hotfpc -Twin64 -Px86_64 demo.pas

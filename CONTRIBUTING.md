@@ -28,7 +28,9 @@ python3 scripts/check-reference-docs.py      # docs/reference/ against the sourc
 npx --yes markdownlint-cli2@0.24.0           # the Markdown lint
 ```
 
-On Windows, `build.bat` takes the same arguments as `build.sh`.
+On Windows, `build.bat` takes the same arguments as `build.sh`. The installer's fpc builds
+32-bit programs by default, so give it the 64-bit target, `build.bat -- -Twin64 -Px86_64`,
+and run the scenarios with `HOT_DRIVER_OPTS` set to `-Twin64 -Px86_64`.
 
 ## When a change is done
 

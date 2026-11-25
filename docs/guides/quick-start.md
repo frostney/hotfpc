@@ -55,8 +55,9 @@ cd hotfpc
 export PATH="$PWD/build:$PATH"
 ```
 
-On Windows, `build.bat hotfpc` builds `build\hotfpc.exe`. To build it in your own tree
-without the scripts, see [Building hotfpc](../internals/build-system.md).
+On Windows, `build.bat hotfpc -- -Twin64 -Px86_64` builds a 64-bit `build\hotfpc.exe`; the
+options after `--` go to fpc, whose default from the installer is a 32-bit program. To build
+it in your own tree without the scripts, see [Building hotfpc](../internals/build-system.md).
 
 `hotfpc --version` prints the version.
 
@@ -75,6 +76,13 @@ On Windows, the release's "Source code (zip)" has the same files. Then start it:
 
 ```sh
 hotfpc demo.pas
+```
+
+On Windows, ask the installer's fpc for a 64-bit program, which is what hotfpc hot-reloads
+there ([Windows programs](windows.md)):
+
+```bat
+hotfpc -Twin64 -Px86_64 demo.pas
 ```
 
 hotfpc builds the program, starts it and prints one line of its own:

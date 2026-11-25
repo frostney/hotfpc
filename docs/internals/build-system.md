@@ -11,6 +11,8 @@ fpcres -of res -o source/HotFPC.res source/HotFPC.rc
 fpc source/HotFPC.pas
 ```
 
+On Windows, add `-Twin64 -Px86_64` to the fpc line for the 64-bit hotfpc.
+
 For working on hotfpc itself, [`build.sh`](../../build.sh) is the entry point, and
 [`build.bat`](../../build.bat) is the same for Windows:
 
@@ -26,6 +28,8 @@ FPCRES=/path/to/fpcres ./build.sh   # another fpcres (default: fpcres on PATH)
 ```
 
 On Windows, `build.bat` takes the same arguments and variables and builds `build\hotfpc.exe`.
+The fpc from the official installer builds 32-bit programs by default, so build the x86-64
+hotfpc with `build.bat hotfpc -- -Twin64 -Px86_64`, as CI and the release workflow do.
 
 ## Targets
 
@@ -78,6 +82,7 @@ Every build writes it again, so the binary always carries the agent it was built
 ## Release binaries
 
 `.github/workflows/release.yml` builds `hotfpc` for macOS arm64, Linux x86-64, Linux arm64
-and Windows x86-64 with fpc 3.2.2 (`./build.sh clean hotfpc --production`, and `build.bat`
-on Windows) when a version tag is pushed. It attaches the archives and a checksum file to
+and Windows x86-64 with fpc 3.2.2 (`./build.sh clean hotfpc --production`, and
+`build.bat clean hotfpc --production -- -Twin64 -Px86_64` on Windows) when a version tag is
+pushed. It attaches the archives and a checksum file to
 the GitHub release. [Releasing](releasing.md) has the steps.

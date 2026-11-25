@@ -107,8 +107,9 @@ You need Free Pascal 3.2.2 or later; hotfpc checks the version when it starts.
 - **A release archive** from the [releases](https://github.com/frostney/hotfpc/releases),
   with a checksum file. Release 1.1.0 has macOS arm64, Linux x86-64 and Windows x86-64;
   Linux arm64 comes with the next release.
-- **From source**: `./build.sh hotfpc` builds `build/hotfpc`, and `build.bat hotfpc` builds
-  `build\hotfpc.exe` on Windows. It's plain Pascal and needs nothing beyond fpc.
+- **From source**: `./build.sh hotfpc` builds `build/hotfpc`, and
+  `build.bat hotfpc -- -Twin64 -Px86_64` builds a 64-bit `build\hotfpc.exe` on Windows. It's
+  plain Pascal and needs nothing beyond fpc.
 
 The [quick start](docs/guides/quick-start.md) has each way step by step, and
 [platforms](docs/reference/platforms.md) has what runs where and what was tested.

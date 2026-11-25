@@ -10,7 +10,7 @@ This page is the record; the README and the guides link here.
 | macOS arm64 | `macos-arm64` | ✓ | `./build.sh hotfpc` |
 | Linux x86-64 | `linux-x64` | ✓ | `./build.sh hotfpc` |
 | Linux arm64 | `linux-arm64`, from the next release on | not yet | `./build.sh hotfpc` |
-| Windows x86-64 | `windows-x64` | | `build.bat hotfpc` |
+| Windows x86-64 | `windows-x64` | | `build.bat hotfpc -- -Twin64 -Px86_64` |
 
 The [releases](https://github.com/frostney/hotfpc/releases) have an archive per system
 (`hotfpc-<version>-<system>.tar.gz`, `.zip` for Windows) and a checksum file. Release 1.1.0

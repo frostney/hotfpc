@@ -25,11 +25,12 @@ code you change in units.
 ## Get raylib
 
 - **macOS:** `brew install raylib`.
-- **Linux:** download `raylib-<version>_linux_amd64.tar.gz` from raylib's
-  [releases](https://github.com/raysan5/raylib/releases) and unpack it anywhere. Your
-  distribution's package works too, if it has one.
+- **Linux:** download the archive for your processor from raylib's
+  [releases](https://github.com/raysan5/raylib/releases) and unpack it anywhere:
+  `raylib-<version>_linux_amd64.tar.gz` on x86-64, `raylib-<version>_linux_arm64.tar.gz` on
+  arm64. Your distribution's package works too, if it has one.
 - **Windows:** download `raylib-<version>_win64_mingw-w64.zip` from the same page and copy
-  `lib/raylib.dll` into `examples/raylib`.
+  `lib/raylib.dll` from it into `examples/raylib`.
 
 The example was written against raylib 6.2.
 
@@ -39,12 +40,14 @@ The example was written against raylib 6.2.
 cd examples/raylib
 hotfpc -Fl/opt/homebrew/lib game.pas                       # macOS with Homebrew
 hotfpc -Fl$RAYLIB/lib -k-rpath -k$RAYLIB/lib game.pas      # an unpacked release, macOS or Linux
-hotfpc game.pas                                            # Windows, with raylib.dll here
+hotfpc -Twin64 -Px86_64 game.pas                           # Windows, with raylib.dll here
 ```
 
 `$RAYLIB` is where you unpacked the release. `-Fl` tells fpc where the library is, and
 `-k-rpath` tells the program where to find it when it starts. hotfpc passes both to fpc,
-and builds the agent with them too.
+and builds the agent with them too. On Windows, `-Twin64 -Px86_64` makes the installer's
+fpc build a 64-bit program, which hotfpc needs and the 64-bit `raylib.dll` loads into
+([Windows programs](windows.md)).
 
 Click to drop a ball, press space to make them all jump, and r to start again.
 
