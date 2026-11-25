@@ -279,7 +279,6 @@ const
   ThreadBasicInformation = 0;
   SystemProcessInformation = 5;
   STATUS_INFO_LENGTH_MISMATCH = LongInt($C0000004);
-  ERROR_INVALID_PARAMETER = 87;      // OpenThread: no thread has the ID (any more)
   MEM_RELEASE = $8000;
   // SYSTEM_PROCESS_INFORMATION on x64: NextEntryOffset, NumberOfThreads, ..., UniqueProcessId at
   // 0x50, then from 0x100 a SYSTEM_THREAD_INFORMATION of 0x50 bytes per thread, ClientId.UniqueThread at 0x30
@@ -346,8 +345,6 @@ type
   end;
 function NtQueryInformationThread(AThread: TWindowsHandle; AClass: LongInt; AInformation: Pointer; ALength: LongWord; AReturnLength: PLongWord): LongInt; stdcall; external 'ntdll' name 'NtQueryInformationThread';
 function NtQuerySystemInformation(AClass: LongInt; AInformation: Pointer; ALength: LongWord; AReturnLength: PLongWord): LongInt; stdcall; external 'ntdll' name 'NtQuerySystemInformation';
-function OpenThread(AAccess: LongWord; AInherit: LongBool; AThreadID: LongWord): TWindowsHandle; stdcall; external 'kernel32' name 'OpenThread';
-function WinGetLastError: LongWord; stdcall; external 'kernel32' name 'GetLastError';
 function GetProcAddress(AModule: PtrUInt; AName: PChar): Pointer; stdcall; external 'kernel32' name 'GetProcAddress';
 function VirtualFree(AAddress: Pointer; ASize: PtrUInt; AFreeType: LongWord): LongBool; stdcall; external 'kernel32' name 'VirtualFree';
 function WaitForSingleObject(AHandle: TWindowsHandle; AMilliseconds: LongWord): LongWord; stdcall; external 'kernel32' name 'WaitForSingleObject';
@@ -4438,14 +4435,13 @@ end;
 type
   TStatusBuffer = array[0..StatusBufferSize - 1] of AnsiChar;
 
-// /proc/self/task/<thread>/<file> into a buffer, with nothing allocated: these are read
-// while other threads are stopped and may hold the heap's lock. The number of bytes read.
-function ReadTaskFile(AThreadID: LongInt; const AFile: ShortString; var ABuffer: TStatusBuffer): TSsize;
+// Opens /proc/self/task/<thread>/<file>, with nothing allocated: these are read while other
+// threads are stopped and may hold the heap's lock. A negative result when it can't.
+function OpenTaskFile(const AThreadID: LongInt; const AFile: ShortString): cint;
 var
   Path: array[0..TaskPathSize - 1] of AnsiChar;
   PathLength: SizeInt;
   Number: ShortString;
-  FileDescriptor: cint;
 
   procedure Put(const AText: ShortString);
   begin
@@ -4461,9 +4457,74 @@ begin
   Put('/');
   Put(AFile);
   Path[PathLength] := #0;
-  FileDescriptor := FpOpen(PChar(@Path[0]), O_RDONLY);
+  Result := FpOpen(PChar(@Path[0]), O_RDONLY);
+end;
+
+// /proc/self/task/<thread>/<file> into a buffer. The number of bytes read.
+function ReadTaskFile(AThreadID: LongInt; const AFile: ShortString; var ABuffer: TStatusBuffer): TSsize;
+var
+  FileDescriptor: cint;
+begin
+  FileDescriptor := OpenTaskFile(AThreadID, AFile);
   if FileDescriptor < 0 then Exit(0);
   Result := FpRead(FileDescriptor, ABuffer[0], SizeOf(ABuffer));
+  FpClose(FileDescriptor);
+end;
+
+// The number a field of /proc/self/task/<thread>/status holds, in ABase (10, or 16 in lower
+// case). The file is read a buffer at a time, since a long Groups: line can come first; a
+// field's name starts a line, since the thread's name, on the first line, may hold the same
+// text. False when the field or a complete number isn't there.
+function ReadStatusNumber(const AThreadID: LongInt; const AField: ShortString; const ABase: LongInt; out AValue: QWord): Boolean;
+const
+  HexLetterBase = 10;   // the value of 'a'
+var
+  Buffer: TStatusBuffer;
+  FileDescriptor: cint;
+  Count, Index: TSsize;
+  Matched, Digit, Digits: LongInt;   // Matched: characters of AField matched on this line, -1 for none
+  InValue: Boolean;
+  Character: AnsiChar;
+begin
+  Result := False;
+  AValue := 0;
+  FileDescriptor := OpenTaskFile(AThreadID, 'status');
+  if FileDescriptor < 0 then Exit;
+  Matched := 0;
+  InValue := False;
+  Digits := 0;
+  repeat
+    Count := FpRead(FileDescriptor, Buffer[0], SizeOf(Buffer));
+    for Index := 0 to Count - 1 do
+    begin
+      Character := Buffer[Index];
+      if InValue then
+      begin
+        if (Digits = 0) and (Character in [' ', #9]) then Continue;
+        Digit := -1;
+        if Character in ['0'..'9'] then Digit := Ord(Character) - Ord('0')
+        else if (ABase = 16) and (Character in ['a'..'f']) then Digit := Ord(Character) - Ord('a') + HexLetterBase;
+        if Digit < 0 then
+        begin
+          Result := (Digits > 0) and (Character = #10);
+          FpClose(FileDescriptor);
+          Exit;
+        end;
+        AValue := AValue * QWord(ABase) + QWord(Digit);
+        Inc(Digits);
+      end
+      else if Character = #10 then Matched := 0
+      else if Matched >= 0 then
+      begin
+        if Character = AField[Matched + 1] then
+        begin
+          Inc(Matched);
+          InValue := Matched = Length(AField);
+        end
+        else Matched := -1;
+      end;
+    end;
+  until Count <= 0;
   FpClose(FileDescriptor);
 end;
 
@@ -4471,66 +4532,19 @@ end;
 // that block every signal, such as the workers of Mesa's software renderer. Such a thread
 // never parks, and sending it the signal each time would queue real-time signals until
 // the process may queue no more.
-// Where the value of a field of /proc/self/task/<thread>/status starts, or -1. A field's name
-// starts a line: the thread's name, on the first line, may hold the same text.
-function FindStatusField(const ABuffer: TStatusBuffer; const ACount: TSsize; const AField: ShortString): TSsize;
-var
-  K: TSsize;
-begin
-  Result := 0;
-  while Result + Length(AField) <= ACount do
-  begin
-    if (Result = 0) or (ABuffer[Result - 1] = #10) then
-    begin
-      K := 0;
-      while (K < Length(AField)) and (ABuffer[Result + K] = AField[K + 1]) do Inc(K);
-      if K = Length(AField) then Break;
-    end;
-    Inc(Result);
-  end;
-  if Result + Length(AField) > ACount then Exit(-1);
-  Result := Result + Length(AField);
-  while (Result < ACount) and (ABuffer[Result] in [' ', #9]) do Inc(Result);
-end;
-
 function BlocksParkSignal(const AThreadID: LongInt): Boolean;
-const
-  HexBase = 16;
-  HexLetterBase = 10;   // the value of 'a'
 var
-  Buffer: TStatusBuffer;
-  Count, Index: TSsize;
   Mask: QWord;
 begin
-  Result := False;
-  Count := ReadTaskFile(AThreadID, 'status', Buffer);
-  Index := FindStatusField(Buffer, Count, 'SigBlk:');
-  if Index < 0 then Exit;
-  Mask := 0;
-  while (Index < Count) and (Buffer[Index] in ['0'..'9', 'a'..'f']) do
-  begin
-    if Buffer[Index] <= '9' then Mask := Mask * HexBase + QWord(Ord(Buffer[Index]) - Ord('0'))
-    else Mask := Mask * HexBase + QWord(Ord(Buffer[Index]) - Ord('a') + HexLetterBase);
-    Inc(Index);
-  end;
-  Result := (Mask and (QWord(1) shl (ParkSignal - 1))) <> 0;
+  Result := ReadStatusNumber(AThreadID, 'SigBlk:', 16, Mask) and ((Mask and (QWord(1) shl (ParkSignal - 1))) <> 0);
 end;
 
 // How many threads the process has (Threads: in the status file), or -1 when it can't be read.
 function ThreadCount(const AThreadID: LongInt): LongInt;
 var
-  Buffer: TStatusBuffer;
-  Count, Index: TSsize;
+  Count: QWord;
 begin
-  Count := ReadTaskFile(AThreadID, 'status', Buffer);
-  Index := FindStatusField(Buffer, Count, 'Threads:');
-  if (Index < 0) or (Index >= Count) or not (Buffer[Index] in ['0'..'9']) then Exit(-1);
-  Result := 0;
-  while (Index < Count) and (Buffer[Index] in ['0'..'9']) do
-  begin
-    Result := Result * 10 + Ord(Buffer[Index]) - Ord('0');
-    Inc(Index);
-  end;
+  if ReadStatusNumber(AThreadID, 'Threads:', 10, Count) then Result := LongInt(Count) else Result := -1;
 end;
 
 // Whether a thread waits in the kernel (state S or D in /proc/self/task/<thread>/stat, after
@@ -4979,8 +4993,8 @@ end;
 // (NtQuerySystemInformation, which runs in the kernel there), and one of them that still
 // runs fails the stop. Wine's NtGetNextThread fails on such a thread instead, and Wine
 // allocates for that list, so under Wine the agent leaves it out. Wine before 6.8 has no
-// NtGetNextThread: there the agent makes the list before it suspends any thread, and
-// suspends the threads of the list, once.
+// NtGetNextThread, and nothing else lists the threads again without allocating while some
+// are suspended: there every stop fails, and no swap is written.
 //
 // Under Wine a thread exists before it has started, with no TEB yet, and GetThreadContext
 // waits until it starts, which a suspended creator never lets it do. Once suspended, such a
@@ -5154,41 +5168,7 @@ begin
   else StopFailure := ThreadStateFailure;
 end;
 
-// Opens a thread of the census by its ID: 0 when it has ended, its ID now names a thread of
-// another process, or, with StopFailure set, it runs and can't be opened.
-function OpenListedThread(const AThreadID, AAccess: LongWord): TWindowsHandle;
-var
-  Information: TThreadBasicInformation;
-begin
-  Result := OpenThread(AAccess or THREAD_QUERY_LIMITED_INFORMATION, False, AThreadID);
-  if Result = 0 then
-  begin
-    if WinGetLastError <> ERROR_INVALID_PARAMETER then StopFailure := ThreadSuspendFailure;
-    Exit;
-  end;
-  if not QueryThread(Result, Information) then StopFailure := ThreadStateFailure
-  else if LongWord(Information.UniqueProcess) = GetCurrentProcessId then Exit;
-  CloseHandle(Result);
-  Result := 0;
-end;
-
-// Without NtGetNextThread: suspends the threads of the census, once.
-procedure SuspendCensus;
-var
-  I: LongInt;
-  Handle: TWindowsHandle;
-  Ended: Boolean;
-begin
-  for I := 0 to CensusCount - 1 do
-  begin
-    if StopFailure <> '' then Exit;
-    if CensusIDs[I] = GetCurrentThreadId then Continue;
-    Handle := OpenListedThread(CensusIDs[I], ThreadAccess);
-    if (Handle <> 0) and not SuspendOpenedThread(Handle, CensusIDs[I], Ended) then CloseHandle(Handle);
-  end;
-end;
-
-// With NtGetNextThread: passes over the threads until one meets none it hasn't met before.
+// Passes over the threads until one meets none it hasn't met before.
 procedure SuspendPasses;
 var
   Process, Previous, Next: TWindowsHandle;
@@ -5265,7 +5245,7 @@ begin
   if not SuspendThreads then Exit;
   if not Assigned(NextThread) then
   begin
-    if TakeCensus then SuspendCensus;
+    StopFailure := ThreadListFailure;
     Exit;
   end;
   SuspendPasses;

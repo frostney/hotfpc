@@ -250,23 +250,21 @@ after its agent connected, and the first program in every case, end hotfpc.
   and goes through them again until a pass meets none it hasn't met before, as on macOS; new
   threads that keep coming for 2 s refuse the swap. On Windows `NtGetNextThread` leaves out a
   thread it can't open, so after the passes the agent lists the IDs of the process's threads
-  with `NtQuerySystemInformation`, which runs in the kernel there; one that the passes never
-  met and that hasn't terminated ran after them, and fails the stop. Wine's `NtGetNextThread` fails on such a thread instead, and
-  Wine allocates for that list, so under Wine the agent doesn't make it. A thread that ended
-  is left out.
-  When a list can't be made, or a thread can't be suspended for another reason or its
-  context can't be read, the agent lets the others run and tries again, and it resumes only
-  the threads it suspended. Wine before 6.8 has no `NtGetNextThread`; there the agent makes
-  that list before it suspends any thread and suspends the threads of the list, so a thread
-  started while it stops them keeps running. Under Wine a thread exists before it has started, with no TEB yet, and
-  `GetThreadContext` would wait until it starts, which a suspended creator never lets it do;
-  suspended, such a thread stops before it runs any of the program's code, so the agent
-  keeps it suspended without its context. On x86-64
-  the agent also checks that no thread is stopped inside the five bytes of an entry it
-  overwrites, and retries if one is; `GetThreadContext` gives its stack pointer, and
-  `VirtualQuery` the committed memory of the stack it reads. New
-  code's unwind tables are registered with `RtlAddFunctionTable`, so exceptions pass
-  through it.
+  with `NtQuerySystemInformation`, which runs in the kernel there; one that the agent didn't
+  suspend and that hasn't terminated ran after the passes, and fails the stop. Wine's
+  `NtGetNextThread` fails on such a thread instead, and Wine allocates for that list, so
+  under Wine the agent doesn't make it. A thread that ended is left out. When a list can't
+  be made, or a thread can't be suspended for another reason or its context can't be read,
+  the agent lets the others run and tries again, and it resumes only the threads it
+  suspended. Wine before 6.8 has no `NtGetNextThread`, and nothing else lists the threads
+  again without allocating while some are suspended, so there every swap is refused. Under
+  Wine a thread exists before it has started, with no TEB yet, and `GetThreadContext` would
+  wait until it starts, which a suspended creator never lets it do; suspended, such a thread
+  stops before it runs any of the program's code, so the agent keeps it suspended without
+  its context. On x86-64 the agent also checks that no thread is stopped inside the five
+  bytes of an entry it overwrites, and retries if one is; `GetThreadContext` gives its stack
+  pointer, and `VirtualQuery` the committed memory of the stack it reads. New code's unwind
+  tables are registered with `RtlAddFunctionTable`, so exceptions pass through it.
   - fpc's COFF objects refer to everything in the same unit as a section plus an offset.
     The agent maps those references back to the symbols they mean, allowing for an
     immediate's length that fpc folds into the offset, so a unit's own variables keep
