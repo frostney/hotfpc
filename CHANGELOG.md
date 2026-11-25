@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- On Windows and Linux, a swap now also stops a thread that another thread started while
+  the agent was stopping them, and a thread that can't be stopped, or on Windows can't be
+  opened, makes the agent let the others run and try again. Such a thread used to run on
+  while the agent rewrote code, and on Linux no thread was stopped at all when
+  `/proc/self/task` couldn't be read, nor on Windows when the list of threads couldn't be
+  made. On Windows the agent resumes only the threads it suspended. Under Wine before 6.8,
+  which lacks a call the agent needs for this, every swap is now refused; on Linux a thread
+  that blocks the agent's signal and sleeps isn't stopped ([limits](docs/reference/limits.md)).
 - On Windows with fpc 3.2, a swap now redirects the old entry of a routine declared only
   in a unit's implementation section, other than a method, to its new code, as it does on
   macOS and Linux and with fpc 3.3.1. fpc 3.2 gives such a routine no symbol in a Windows

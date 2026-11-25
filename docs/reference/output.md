@@ -196,12 +196,12 @@ applied:
 
 | Error | Where | What it means |
 | --- | --- | --- |
-| `a thread of the program did not stop` | Linux | A thread didn't stop within 2 s. |
-| `a thread that blocks signals kept running` | Linux | A thread that blocks every signal, as some libraries start, was running, not waiting in the kernel. |
+| `a thread of the program did not stop` | Linux, Windows | On Linux a thread didn't stop within 2 s; on both, new threads kept starting for 2 s while the agent stopped them. |
+| `a thread that blocks signals kept running` | Linux | A thread that blocks the signal the agent stops threads with, as the threads some libraries start that block every signal do, was running, not waiting in the kernel. |
 | `the program has more threads than the agent can stop` | any | The agent's list of threads to stop is full. |
-| `the threads of the program could not be listed` | macOS | `task_threads` kept failing, so the agent wrote nothing. |
-| `a thread of the program could not be suspended` | macOS | `thread_suspend` kept failing for a thread, so the agent wrote nothing. |
-| `the agent could not read where a thread of the program stopped` | macOS x86-64, Windows | `thread_get_state` or `GetThreadContext` kept failing for a thread, so the agent couldn't check that it was outside the entries it rewrites, and wrote nothing. |
+| `the threads of the program could not be listed` | any | `task_threads`, reading `/proc/self/task`, or `NtQuerySystemInformation`, `NtGetNextThread` or `NtQueryInformationThread` kept failing, so the agent wrote nothing. Under Wine before 6.8, which has no `NtGetNextThread`, every swap fails with it. |
+| `a thread of the program could not be suspended` | any | `thread_suspend`, the signal that stops a thread on Linux, or `SuspendThread` kept failing for a thread that hadn't ended, or on Windows a running thread couldn't be opened, so the agent wrote nothing. |
+| `the agent could not read where a thread of the program stopped` | macOS x86-64, Windows | `thread_get_state`, or on Windows reading a suspended thread's TEB or `GetThreadContext`, kept failing for a thread, so the agent couldn't check that it was outside the entries it rewrites, and wrote nothing. |
 | `the agent could not find the stack of a thread of the program` | x86-64 | The memory a thread's stack pointer points into kept not being found, or on Linux where a thread that blocks signals sleeps couldn't be read, so the agent couldn't check that the thread won't resume inside the entries it rewrites, and wrote nothing. |
 | `an entry to rewrite could not be written in one store while a thread that blocks signals sleeps` | Linux | A function's entry wasn't aligned for the one 8-byte store that keeps such a thread safe. |
 | `a thread stayed inside the first bytes of a function being redirected` | x86-64 | A thread kept stopping inside an entry the jump overwrites. |
