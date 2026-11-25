@@ -5116,6 +5116,49 @@ begin
   end;
 end;
 
+{ Two include files whose names differ only in case, where the file system keeps both: the
+  watcher's stamps have both, so a save that empties either holds the next compile back,
+  also while the other is saved. }
+procedure TestAwaitEmptiedThroughTheWatcher;
+var
+  Root, Contents: string;
+  Watcher: TSourceWatcher;
+  Options, Emptied: TStringList;
+  Old, New: TFileStamps;
+begin
+  Root := MakeTestDirectory('await-emptied-case');
+  WriteTestFile(Root + 'u.pas', 'unit U;');
+  WriteTestFile(Root + 'A.inc', '{ upper }');
+  WriteTestFile(Root + 'a.inc', '{ lower }');
+  if not (ReadFileContents(Root + 'A.inc', Contents) and (Contents = '{ upper }')) then
+    Exit;
+  Options := TStringList.Create;
+  Emptied := TStringList.Create;
+  Watcher := TSourceWatcher.Create(Root, Options);
+  try
+    Old := Watcher.Stamps;
+    WriteTestFile(Root + 'a.inc', '');
+    WriteTestFile(Root + 'A.inc', '{ UPPER, saved }');
+    New := Watcher.Stamps;
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.0, 0.5, Emptied), 'a.inc emptied while A.inc is saved');
+    ExpectEqual(Emptied.Count, 1, 'one file waits');
+    if Emptied.Count = 1 then
+      ExpectEqual(EmptiedPath(Emptied[0]), Root + 'a.inc', 'a.inc');
+    Old := New;
+    WriteTestFile(Root + 'a.inc', '{ lower, saved }');
+    WriteTestFile(Root + 'A.inc', '');
+    New := Watcher.Stamps;
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.25, 0.5, Emptied), 'A.inc emptied once a.inc has content again');
+    ExpectEqual(Emptied.Count, 1, 'one file waits then too');
+    if Emptied.Count = 1 then
+      ExpectEqual(EmptiedPath(Emptied[0]), Root + 'A.inc', 'A.inc');
+  finally
+    Watcher.Free;
+    Emptied.Free;
+    Options.Free;
+  end;
+end;
+
 { What a compile checks when it is done: whether the sources it started from changed
   meanwhile. }
 procedure TestChangedSince;
@@ -7186,6 +7229,7 @@ begin
     TestChangedStamps;
     TestAwaitEmptied;
     TestAwaitEmptiedPaths;
+    TestAwaitEmptiedThroughTheWatcher;
     TestChangedSince;
     TestWatchedPaths;
     TestStampsShowARevertedSave;
