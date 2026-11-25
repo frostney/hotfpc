@@ -169,6 +169,11 @@ const
   MainBlockName = 'PASCALMAIN';
   MainSymbolName = 'main';
   SectionSymbolPrefix = '@sect:';
+  SectionNameInfix = '.n_';                 // fpc's section of one item: .text.n_<its name>
+  ProgramNamePrefix = 'p$';                 // a program's names start with P$<program>
+  UnitLevelSeparator = '_$$_';              // <unit>_$$_<routine>; a nested routine has $_$
+  FinallyHelperName = 'fin$';               // fpc's helper for a finally: fin$ and a label
+  FinallyHelperLabelLength = 8;             // the label's number, in hexadecimal digits
   AnchorSymbolName = 'HOTFPC.AGENT_$$_HOTANCHOR';
   DebugSectionPrefix = '.debug';
   PDataSectionPrefix = '.pdata';
@@ -1577,15 +1582,20 @@ const
   COFFAlignmentMask = $f;
   COFFDefaultAlignment = 16;
 
-// The name a section without symbols stands under (see ParseCOFF), in objects and in the map.
-function SectionSymbolName(const ASection: AnsiString): AnsiString;
+function LowerCaseName(const AName: AnsiString): AnsiString;
 var
   I: SizeInt;
 begin
-  Result := ASection;
+  Result := AName;
+  UniqueString(Result);
   for I := 1 to Length(Result) do
     if Result[I] in ['A'..'Z'] then Result[I] := Chr(Ord(Result[I]) + 32);
-  Result := SectionSymbolPrefix + Result;
+end;
+
+// The name a section without symbols stands under (see ParseCOFF), in objects and in the map.
+function SectionSymbolName(const ASection: AnsiString): AnsiString;
+begin
+  Result := SectionSymbolPrefix + LowerCaseName(ASection);
 end;
 
 // A name of 8 characters or fewer is in place; a longer one is in the string table.
@@ -1611,6 +1621,36 @@ begin
     Val(Copy(Result, 2, 7), Offset, ErrorCode);
     if ErrorCode = 0 then Result := PChar(AStringTable + Offset);
   end;
+end;
+
+// Whether a section fpc named after a routine is a routine of a unit's own level
+// (.text.n_u_$$_hidden$longint), not one nested in a routine or method
+// (.text.n_u$_$hidden$longint_$$_nested, and the helper of a routine's implicit finally,
+// .text.n_u$_$hidden$longint_$$_fin$00000016). A nested routine works in its parent's
+// frame, so its old entry must keep its old code for a parent that runs the old code. fpc
+// 3.2 names a program's own routines; the program's sections without a symbol are the
+// main block's helpers (.text.n_p$main_$$_fin$00000003), which the running main block
+// calls with its frame. The helper of a unit's initialization or finalization has the
+// unit's level (.text.n_variants_$$_fin$000001e9); a label's number starts with a digit,
+// which no routine's or type's name does.
+function IsUnitLevelRoutineSection(const AName: AnsiString): Boolean;
+var
+  Index, Digit: SizeInt;
+  Rest, Routine: AnsiString;
+begin
+  Index := Pos(SectionNameInfix, AName);
+  if Index = 0 then Exit(False);
+  Rest := Copy(AName, Index + Length(SectionNameInfix), Length(AName));
+  if StartsWith(Rest, ProgramNamePrefix) then Exit(False);
+  Index := Pos('$', Rest);
+  Result := (Index > 1) and (Copy(Rest, Index - 1, Length(UnitLevelSeparator)) = UnitLevelSeparator);
+  if not Result then Exit;
+  Routine := Copy(Rest, Index - 1 + Length(UnitLevelSeparator), Length(Rest));
+  if not StartsWith(Routine, FinallyHelperName) or (Length(Routine) <> Length(FinallyHelperName) + FinallyHelperLabelLength)
+    or not (Routine[Length(FinallyHelperName) + 1] in ['0'..'9']) then Exit;
+  for Digit := Length(FinallyHelperName) + 1 to Length(Routine) do
+    if not (Routine[Digit] in ['0'..'9', 'a'..'f']) then Exit;
+  Result := False;
 end;
 
 function ParseCOFF(AObjectFile: PObjectFile): Boolean;
@@ -1691,13 +1731,17 @@ begin
     end;
     Inc(I, 1 + SymbolEntry^.NumberOfAuxSymbols);
   end;
-  // fpc 3.2 gives an implementation-section variable no symbol at all, only a section of its
-  // own named after it (.bss.n_u_$u_$$_hidden). Such a section stands for a variable named
-  // after the section; the program's map file says where the linker put it.
+  // fpc 3.2 gives an implementation-section variable, or a routine of a unit's level declared
+  // only there, no symbol at all, only a section of its own named after it
+  // (.bss.n_u_$u_$$_hidden, .text.n_u_$$_hidden$longint). Such a section stands for a
+  // variable or routine named after the section; the program's map file says where the
+  // linker put it. A nested routine stays unnamed: new code reaches it as section + offset,
+  // and its old entry keeps its old code.
   for I := 0 to Header^.NumberOfSections - 1 do
   begin
     Section := @AObjectFile^.Sections[I];
-    if (Section^.Kind <> KindData) or (Section^.Size = 0) or (Pos('$', Section^.Name) = 0) then Continue;
+    if not (Section^.Kind in [KindData, KindCode]) or (Section^.Size = 0) or (Pos('$', Section^.Name) = 0) then Continue;
+    if (Section^.Kind = KindCode) and not IsUnitLevelRoutineSection(Section^.Name) then Continue;
     K := 0;
     while (K < LongInt(Header^.NumberOfSymbols)) and not (AObjectFile^.Symbols[K].Defined and (AObjectFile^.Symbols[K].Section = I)) do Inc(K);
     if K < LongInt(Header^.NumberOfSymbols) then Continue;   // it has symbols of its own
@@ -1707,7 +1751,7 @@ begin
     Symbol^.External := True;
     Symbol^.Section := I;
     Symbol^.Value := 0;
-    Symbol^.Kind := KindData;
+    Symbol^.Kind := Section^.Kind;
     AddDefined(AObjectFile, Header^.NumberOfSymbols + I);
   end;
   for I := 0 to Header^.NumberOfSections - 1 do
@@ -2459,7 +2503,8 @@ end;
 
 // The linker's map (hotfpc links Windows programs with -Xm) lists every input section with
 // its address: "<name> 0x<address> 0x<size> <object>", the name alone on the line before
-// when it is long. Sections named after a variable (with a $ in the name) become host names.
+// when it is long. Sections named after a variable or a routine (with a $ in the name)
+// become host names: a routine's where the address is in the program's code.
 var
   MapPool: array of THostSymbol;
 
@@ -2552,8 +2597,9 @@ begin
     if Count = Length(MapPool) then SetLength(MapPool, Count * 2);
     // the pool only grows before any pointer into it is taken: pointers are taken below
     MapPool[Count].Address := Address + QWord(Slide);
-    MapPool[Count].IsCode := False;
+    MapPool[Count].IsCode := (MapPool[Count].Address >= TextLow) and (MapPool[Count].Address < TextHigh);
     MapPool[Count].IsTLS := False;
+    AddHostBoundary(MapPool[Count].Address);
     Inc(Count);
     MapPut(MapNames, SectionSymbolName(Name), Pointer(PtrUInt(Count)));   // index + 1 for now
   end;
@@ -3090,6 +3136,33 @@ begin
   Result := Symbol;
 end;
 
+{$ifdef windows}
+// fpc 3.2 names a routine of a unit's implementation section after its section (a stand-in,
+// see ParseCOFF), and the same routine in the interface by its symbol; fpc names the
+// section after the symbol in lower case. When a save moves a routine from one section to
+// the other, both names must share one record: its first entry then follows every later
+// version, not the one the other name had last. The section's stand-in name is the name
+// both forms have in common.
+function RoutineSectionName(AObjectFile: PObjectFile; ASymbol: PObjectSymbol): AnsiString;
+begin
+  Result := '';
+  if ASymbol^.Value <> 0 then Exit;
+  Result := SectionSymbolName(AObjectFile^.Sections[ASymbol^.Section].Name);
+  if (Result <> ASymbol^.Name) and not EndsWith(Result, SectionNameInfix + LowerCaseName(ASymbol^.Name)) then Result := '';
+end;
+
+// Before a routine's name is bound: a name with no record of its own takes the record of
+// its section's stand-in name, if a save made one.
+procedure ShareRoutineRecord(const ASectionName, AName: AnsiString);
+var
+  Shared: PRegistrySymbol;
+begin
+  if (ASectionName = '') or (ASectionName = AName) or (RegistryGet(AName) <> nil) then Exit;
+  Shared := RegistryGet(ASectionName);
+  if (Shared <> nil) and (Shared^.Kind = KindCode) then MapPut(Registry, AName, Shared);
+end;
+{$endif}
+
 // The address a name has in the process before this transaction: 0 when it has none.
 function ExistingAddressOf(const AName: AnsiString; out AKind: Byte): QWord;
 var
@@ -3194,6 +3267,9 @@ var
   Removed: LongInt;
   HostSymbol: PHostSymbol;
   MainBlockNoted: Boolean;
+{$ifdef windows}
+  SectionName: AnsiString;
+{$endif}
 begin
   Previous := AObjectFile^.Previous;
   // fpc names the main block twice, PASCALMAIN and main: one note
@@ -3230,6 +3306,13 @@ begin
       end;
       Continue;
     end;
+{$ifdef windows}
+    if Symbol^.Kind = KindCode then
+    begin
+      SectionName := RoutineSectionName(AObjectFile, Symbol);
+      ShareRoutineRecord(SectionName, Symbol^.Name);
+    end;
+{$endif}
     ExistingAddress := ExistingAddressOf(Symbol^.Name, ExistingKind);
     if (ExistingAddress <> 0) and (ExistingKind <> Symbol^.Kind) then
     begin
@@ -3246,6 +3329,9 @@ begin
         Continue;
       end;
       Registered := RegistryStage(Symbol^.Name, KindCode);
+{$ifdef windows}
+      if (SectionName <> '') and (RegistryGet(SectionName) = nil) then MapPut(Registry, SectionName, Registered);
+{$endif}
       Symbol^.BoundToExisting := ExistingAddress <> 0;   // the program has it: it will be redirected
       if ExistingAddress <> 0 then
       begin

@@ -71,6 +71,6 @@ it too; otherwise the old program keeps running, and hotfpc says so:
   the program ends. hotfpc links the new program into `.hot/next/` and moves it into place,
   trying for up to 5 s.
 - **hotfpc links with `-Xm`.** The agent reads the linker's map, `.hot/<program>.map`, to
-  find the variables fpc 3.2 gives no symbol.
+  find the variables and routines fpc 3.2 gives no symbol.
 
 [How it works](../internals/how-it-works.md#per-system) has the details for each system.
