@@ -58,7 +58,9 @@
   times of the sources as finely as the file system keeps them, so a save that came and
   was put back during a compile, at the same size and within the same second, shows too.
   On Windows such a save needs a restart where the times can't show it, as on a file
-  system that keeps whole seconds, and hotfpc waits 22 ms for a save to settle instead of 4.
+  system that keeps whole seconds, and so does every save that needs the sizes when the
+  times couldn't show it for the build the program starts from; hotfpc waits 22 ms for a
+  save to settle instead of 4.
 - hotfpc keeps each source file by its whole path, with its case. In a directory whose
   path has `=` in it, the files used to share one entry, so unchanged sources looked
   changed after every compile: each save was compiled four times, and on Windows a save

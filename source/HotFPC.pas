@@ -3801,14 +3801,18 @@ end;
 
 { Why the sizes of the program about to start are unknown, or '': fpc did not write its
   assembler (ASizesKnown, AProblem), or the sources kept changing during its build or link
-  and its compile to assembler (FUnsettled), so these may come from different sources. }
+  and its compile to assembler (FUnsettled), or their times could not show a save that came
+  and was put back meanwhile (TSourceWatcher.TimesShowWrites), so these may come from
+  different sources. }
 function TDriver.LiveSizesProblem(const ASizesKnown: Boolean; const AProblem: string): string;
 begin
   Result := '';
   if not ASizesKnown then
     Result := NotAssembled(AProblem)
   else if FUnsettled then
-    Result := UnsettledSources;
+    Result := UnsettledSources
+  else if not TSourceWatcher.TimesShowWrites(FSettled, FSettledAt) then
+    Result := UnseenSaves;
 end;
 
 { The sizes of the units the program starts with become the running program's (FSizes), from
@@ -7267,6 +7271,33 @@ begin
   end;
 end;
 
+{ The sizes a Windows program starts with are unknown when the times of its sources could
+  not show a save that came and was put back during the builds: a file written in the same
+  whole second as the build started, as file systems that keep whole seconds give it. }
+procedure TestLiveSizesProblem;
+var
+  Options: TOptions;
+  Driver: TDriver;
+begin
+  Options := ParseOptions(['-Twin64', MakeTestDirectory('live-sizes') + 'demo.pas'], False);
+  Driver := TDriver.Create(Options);
+  try
+    Driver.FSettledAt := 1000 * Int64(StampUnitsPerSecond);
+    SetLength(Driver.FSettled, 1);
+    Driver.FSettled[0] := Stamp('/src/u.pas', 10, 990 * Int64(StampUnitsPerSecond));
+    ExpectEqual(Driver.LiveSizesProblem(True, ''), '', 'sources written well before the build');
+    ExpectEqual(Driver.LiveSizesProblem(False, 'no space'), Driver.NotAssembled('no space'),
+      'fpc did not write the assembler');
+    Driver.FSettled[0] := Stamp('/src/u.pas', 10, 1000 * Int64(StampUnitsPerSecond));
+    ExpectEqual(Driver.LiveSizesProblem(True, ''), UnseenSaves, 'a time in whole seconds of the second the build started');
+    Driver.FUnsettled := True;
+    ExpectEqual(Driver.LiveSizesProblem(True, ''), UnsettledSources, 'sources that kept changing');
+  finally
+    Driver.Free;
+    Options.Free;
+  end;
+end;
+
 procedure TestEndedBeforeConnecting;
 begin
   ExpectEqual(ExitCodeBeforeConnecting('ended', 'exit 3'), 3, 'a program that ends before its agent connects gives its exit code');
@@ -7356,6 +7387,7 @@ begin
     TestWriteAssembler;
     TestWriteAssemblerAnew;
     TestVerifyVersion;
+    TestLiveSizesProblem;
     TestEndedBeforeConnecting;
     Result := FinishTests;
   finally

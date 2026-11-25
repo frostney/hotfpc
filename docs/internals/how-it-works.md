@@ -102,9 +102,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    the compiles, at the same size: the time of a file written less than 20 ms before the
    compile, about a tick of the clock behind file times, or less than two seconds before
    when the file system keeps whole seconds. For such a program the driver waits 22 ms for
-   the files to settle, so that a save it saw isn't one of them. When the sources kept
-   changing during the build or link the program starts from, its sizes are unknown, and
-   until it starts over again every save that needs them needs a restart.
+   the files to settle, so that a save it saw isn't one of them. When either happens to the
+   build or link the program starts from, its sizes are unknown, and until it starts over
+   again every save that needs them needs a restart.
 3. ppudump reads each changed unit: the interface from its JSON output, and the
    implementation section from its text output, which the JSON leaves out. A field that
    moved, or a field or variable that changed its type without changing a size, is
