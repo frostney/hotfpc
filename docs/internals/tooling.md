@@ -99,8 +99,8 @@ npm run start      # website/out at http://localhost:3000/hotfpc/
 - A ```` ```mermaid ```` block is drawn in the browser by `components/mermaid.tsx`; GitHub
   draws the same block natively.
 - The site has a static search index, `llms.txt`, `llms-full.txt` and a Markdown copy of
-  every page, whose links to pages and files of the site are absolute URLs, an Open Graph
-  image per page and a sitemap.
+  every page, whose links to pages, sections and files of the site are absolute URLs, an
+  Open Graph image per page and a sitemap.
 - `package.json` pins every package to an exact version, and `package-lock.json` the rest.
 
 `pages.yml` builds the site on every pull request that touches `docs/` or `website/`, so a
