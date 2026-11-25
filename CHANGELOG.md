@@ -47,7 +47,8 @@
   same save a second time. The same goes for a save's compile to assembler on Windows and
   the link of a restart. A save that landed during the first build, after fpc had read the
   file, used to be left out until the next save; hotfpc now builds the program again before
-  it starts it, also when the build failed on it. After three such compiles, links or compiles to assembler in a row, hotfpc
+  it starts it, also when the build failed on it, and waits for a file that save emptied
+  first, as it does once the program runs. After three such compiles, links or compiles to assembler in a row, hotfpc
   uses the next one as it is, and it waits at most a second for the files to settle before
   a compile, so a file that keeps changing can't hold back every save, nor keep hotfpc
   running after the program has ended. On Windows a save whose sizes of variables with

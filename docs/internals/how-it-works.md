@@ -91,7 +91,8 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    link of a restart and the first build the same way: a save during the first build makes
    the driver build the program again before it starts it, also when that build, or its
    compile to assembler, failed, and from scratch: the units of the build set aside, such
-   as one the save no longer uses, are not the program's. A source that changes faster
+   as one the save no longer uses, are not the program's. Before that build it waits for a
+   file the save emptied as it does in step 1. A source that changes faster
    than fpc compiles, such as a file a generator keeps rewriting, holds a save back for three
    compiles, links or compiles to assembler at most, each after a wait of a second at most
    for the files to settle: the fourth is used as it is. For a Windows program whose sizes

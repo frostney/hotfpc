@@ -4,7 +4,7 @@ Every kind of edit hotfpc has a test for, and what it does. Each row is a step o
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
 small program that runs while the test saves the edit into it, run by CI on pull requests
 and on pushes to main. The
-outcomes are from runs of all 37 scenarios on Linux x86-64 with fpc 3.2.2 on 2026-11-25, and they are what `check.py` expects on macOS and Linux. Where a Windows
+outcomes are from runs of all 38 scenarios on Linux x86-64 with fpc 3.2.2 on 2026-11-25, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.
 
 In a swap, the program keeps running with its state; in a restart, hotfpc starts it over
@@ -107,6 +107,8 @@ These scenarios let hotfpc start the program over; the others pass `--no-restart
 | That save, compiled once the program runs, and another text | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes`; on Windows `the sizes of variables with initial values are unknown: the sources changed while fpc compiled them`, for one or both saves | `startcap` |
 | Saves during each of the first four builds, as in `startcap`, while fpc can't write the program's assembler for the fourth | the fourth build is used as it is; on Windows its sizes are unknown, and hotfpc says so | `startnoasm` |
 | The save that grew `Calls`, compiled once the program runs, and another text once fpc can write the assembler again | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes`; on Windows `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (<problem>)`, for one or both saves | `startnoasm` |
+| Another text, saved while hotfpc builds the program to start it, by an editor that empties the file and writes it 0.3 s later | built again once the file is written: the program runs the save from its first tick | `startempty` |
+| Another text | swap | `startempty` |
 | The program no longer uses a unit, saved while hotfpc builds the program to start it | built again before the program starts: the program starts without the unit | `startunit` |
 | The program uses that unit again | restart: `unit w is not part of the running program` | `startunit` |
 | A unit the program uses gets a new unit with a typed constant, `Limit: Integer = 7` | restart: `unit w is not part of the running program` | `newconst` |

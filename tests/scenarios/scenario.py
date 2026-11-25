@@ -51,12 +51,14 @@ EMPTIED_FIRST = "emptied first"
 # program's object file, .hot/units/main.o, so fpc has read main.pas and is linking. It comes
 # first, and has no outcome of its own: the program starts with it. A second such step waits
 # for the main.o of the next build, which the save before makes the driver do: one newer
-# than the program the build before linked after the main.o it waited for.
+# than the program the build before linked after the main.o it waited for. Such a step may
+# also be EMPTIED_FIRST: (description, edits, AT_START, EMPTIED_FIRST).
 AT_START = "at the start"
 
 
 def case(name, files, steps, opts=(), restart=False):
-    """steps: (description, edits) or (description, edits, WHILE_COMPILING, EMPTIED_FIRST or AT_START). restart: the driver
+    """steps: (description, edits) or (description, edits, WHILE_COMPILING, EMPTIED_FIRST or AT_START), or
+    (description, edits, AT_START, EMPTIED_FIRST). restart: the driver
     starts the program over when an edit needs a restart; the other cases pass --no-restart, so
     that the program they check keeps running."""
     CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
@@ -976,6 +978,18 @@ case("startnoasm", {
      [(".hot/asm/main.s", None, None), ("main.pas", "' main four", "' main five")]),
 ])
 
+# ---------------------------------------------------------------------------- a file emptied during the start
+# progvar's program; a save during the first build empties main.pas and writes it 0.3 s later,
+# as an editor that empties a file before it writes it. The build after it waits for the file
+# as a save does once the program runs, and the program starts with the saved text
+case("startempty", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, emptied first, while hotfpc builds the program to start it",
+     [("main.pas", "' main one", "' main two")], AT_START, EMPTIED_FIRST),
+    ("another text", [("main.pas", "' main two", "' main three")]),
+])
+
 # ---------------------------------------------------------------------------- a unit left out during the start
 # progvar's program, which also uses w, a unit with an initialization section. A save during
 # the first build leaves w out, so the program starts without it: when main uses it again, w
@@ -1521,6 +1535,19 @@ def run(name):
             with open(path, "w") as fh:
                 fh.write(text)
 
+    def write_emptied_first(texts):
+        """Saves a step's files as an editor that empties the first before it writes it: the
+        others 0.1 s after it emptied it, and its text 0.3 s after."""
+        first = next(iter(texts))
+        open(first, "w").close()
+        emptied = time.time()
+        time.sleep(0.1)
+        for path, text in list(texts.items())[1:]:
+            write(path, text)
+        time.sleep(max(0.0, emptied + 0.3 - time.time()))
+        with open(first, "w") as fh:
+            fh.write(texts[first])
+
     def texts_of(edits):
         """The files the edits make, by path, in the order the edits name them."""
         texts = {}
@@ -1556,6 +1583,7 @@ def run(name):
     before = None
     while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
         desc, edits = steps[0][:2]
+        emptied_first = EMPTIED_FIRST in steps[0][3:]
         steps = steps[1:]
         deadline = time.time() + OUTCOME_TIMEOUT
         while not built(before) and p.poll() is None and time.time() < deadline \
@@ -1565,8 +1593,12 @@ def run(name):
             out("!!! the driver did not build main.pas %sbefore it started the program" % ("again " if before else ""))
         before = written(os.path.join("units", "main.o"))
         out("--- the script saves: " + desc)
-        for path, text in texts_of(edits).items():
-            write(path, text)
+        texts = texts_of(edits)
+        if emptied_first:
+            write_emptied_first(texts)
+        else:
+            for path, text in texts.items():
+                write(path, text)
     # Wait until the driver watches the files and the program runs: the steps must not depend
     # on how long the build or the start took. (Waiting for the build's object file was not
     # enough: under load a new executable took up to 9 s to start, and early saves merged.)
@@ -1587,24 +1619,18 @@ def run(name):
             since = len(lines)
         saved = time.time()
         first = next(iter(texts))
-        for k, (path, text) in enumerate(texts.items()):
-            if k == 1 and while_compiling:
-                record = os.path.join(work, ".hot", "units", os.path.splitext(os.path.basename(first))[0] + ".ppu")
-                deadline = time.time() + OUTCOME_TIMEOUT
-                while os.path.exists(record) and time.time() < deadline:
-                    time.sleep(0.001)
-                if os.path.exists(record):
-                    out("!!! the driver did not start to compile %s within %d s" % (os.path.basename(first), OUTCOME_TIMEOUT))
-            if k == 0 and emptied_first:
-                open(path, "w").close()
-                emptied = time.time()
-                time.sleep(0.1)
-                continue
-            write(path, text)
         if emptied_first:
-            time.sleep(max(0.0, emptied + 0.3 - time.time()))
-            with open(first, "w") as fh:
-                fh.write(texts[first])
+            write_emptied_first(texts)
+        else:
+            for k, (path, text) in enumerate(texts.items()):
+                if k == 1 and while_compiling:
+                    record = os.path.join(work, ".hot", "units", os.path.splitext(os.path.basename(first))[0] + ".ppu")
+                    deadline = time.time() + OUTCOME_TIMEOUT
+                    while os.path.exists(record) and time.time() < deadline:
+                        time.sleep(0.001)
+                    if os.path.exists(record):
+                        out("!!! the driver did not start to compile %s within %d s" % (os.path.basename(first), OUTCOME_TIMEOUT))
+                write(path, text)
         if quick_next:
             time.sleep(0.12)
             continue

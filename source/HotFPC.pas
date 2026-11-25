@@ -3333,6 +3333,7 @@ type
     procedure Watch;
     function ProgramHasEnded: Boolean;
     function Settle(const AStamps: TFileStamps): TFileStamps;
+    function SettleSave(const AKnown: TFileStamps): TFileStamps;
     procedure SayErrors(const AErrors: TStringList; const AFallback: string);
     function SourcesChangedDuringCompile: Boolean;
     procedure ForgetNewUnits;
@@ -3452,7 +3453,7 @@ begin
       Break;
     FreeAndNil(Errors);
     FStale := False;
-    FSettled := Settle(FWatcher.Stamps);
+    FSettled := SettleSave(FSettled);
     FSettledAt := FWatcher.StampedAt;
     FreeAndNil(FDigests);
     FWatcher.ReadDigests(FDigests);
@@ -4207,6 +4208,35 @@ begin
       Break;
     Result := Again;
   until (SettleWaitEnd(Start, NowSeconds, Wait) <= NowSeconds) or ((FProgram <> nil) and not FProgram.Running);
+end;
+
+{ Waits for a save as Watch does before it compiles one: for the files to settle, and while
+  one that the save emptied since the sources had AKnown is still empty, until half a second
+  after that was first seen (TSourceWatcher.AwaitEmptied): some editors empty a file before
+  they write it. The files as they are then. }
+function TDriver.SettleSave(const AKnown: TFileStamps): TFileStamps;
+var
+  Known, Current: TFileStamps;
+  Emptied: TStringList;
+  Deadline: Double;
+begin
+  Emptied := TStringList.Create;
+  try
+    Known := AKnown;
+    Result := Settle(FWatcher.Stamps);
+    while TSourceWatcher.AwaitEmptied(Known, Result, NowSeconds, DigestIntervalSeconds, Emptied) do
+    begin
+      Known := Result;
+      Deadline := TSourceWatcher.EmptiedDeadline(Emptied, NowSeconds, DigestIntervalSeconds);
+      repeat
+        Sleep(PollIntervalMilliseconds);
+        Current := FWatcher.Stamps;
+      until (NowSeconds >= Deadline) or not TSourceWatcher.SameStamps(Current, Result);
+      Result := Settle(Current);
+    end;
+  finally
+    Emptied.Free;
+  end;
 end;
 
 class function TDriver.SettleWaitEnd(const AStart, ANow, AWait: Double): Double;

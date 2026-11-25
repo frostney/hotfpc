@@ -50,6 +50,9 @@ EXPECT = {
     # startcap's saves, with no assembler for the fourth build: the check stays on, and the
     # grown variable needs a restart, once or twice
     "startnoasm": (0, (1, 2), 0),
+    # a save that empties the program file during the first build: the build after it waits
+    # for the file, and the program starts with the saved text
+    "startempty": (1, 0, 0),
     # a unit the program no longer uses after a save during the first build, then uses again:
     # a restart, for a unit the running program does not have
     "startunit": (0, 1, 0),
@@ -76,6 +79,7 @@ PRINTS = {
     "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
     "newconst": ["n 1 limit 7", "n 1 limit 8"],
     "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"], "startnoasm": ["n 1 main four 1"],
+    "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code

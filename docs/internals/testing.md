@@ -7,14 +7,14 @@ scenarios that run real programs under hotfpc and save edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 37 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 38 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
 
 ## When a change is done
 
-A change is done when the unit tests pass and `check.py` prints "37 of 37 cases as
+A change is done when the unit tests pass and `check.py` prints "38 of 38 cases as
 expected" on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
 Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
 Windows). Changes to the agent or to the checks of layouts and sizes are tested with fpc
@@ -33,7 +33,7 @@ with 1 when a check failed. `./build.sh tests` compiles `source/HotFPC.pas` with
 
 ## The scenarios
 
-`tests/scenarios/scenario.py` holds 37 cases. Each is a small program, `main.pas` and its
+`tests/scenarios/scenario.py` holds 38 cases. Each is a small program, `main.pas` and its
 units, and a list of steps: the edits the script saves into the files while the program
 runs. The script saves a step once hotfpc has reported its outcome for the step before (a
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
@@ -44,7 +44,7 @@ first file, writes the others 0.1 s later and the first 0.3 s after it emptied i
 editor that empties a file before it writes it. A step marked `AT_START` is saved while
 hotfpc builds the program to start it, once fpc has written the program's object file: the
 program starts with it. Each further `AT_START` step waits for the object file of the build
-after it, which that save makes hotfpc do. An edit `(path, None, BLOCKED)` puts a directory where hotfpc
+after it, which that save makes hotfpc do. An `AT_START` step may be `EMPTIED_FIRST` too. An edit `(path, None, BLOCKED)` puts a directory where hotfpc
 writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
 `(path, None, None)` removes it again. After the last step the script tells the program to
 end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
