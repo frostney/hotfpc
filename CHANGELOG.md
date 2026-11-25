@@ -5,8 +5,8 @@
 - On Windows with fpc 3.2, a swap now applies a changed initial value of a variable in a
   unit's implementation section by the same rule as on the other systems
   ([What a swap keeps](docs/guides/saves-and-restarts.md#what-a-swap-keeps)): while the
-  variable still holds the old one, and neither is an address the linker fills in. It
-  prints `note: U.SPEED still had its initial value; set to the new one`. It kept the
+  variable still holds the old one, and neither contains an address the linker fills in.
+  It prints `note: U.SPEED still had its initial value; set to the new one`. It kept the
   running value and printed `note: U.SPEED changed; the running copy is kept`: fpc 3.2
   names such a variable only by its section, and the agent recognised a variable with an
   initial value only by the `TC_$` prefix of a symbol's name.
