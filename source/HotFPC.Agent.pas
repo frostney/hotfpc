@@ -350,6 +350,8 @@ const
   VM_FLAGS_ANYWHERE = 1;
   VM_FLAGS_OVERWRITE = $4000;
   VM_INHERIT_NONE = 2;
+  KERN_TERMINATED = 37;                  // the thread is ending in the kernel
+  MACH_SEND_INVALID_DEST = $10000003;    // the thread has ended: its port is a dead name
   X86ThreadState64 = 4;          // x86_THREAD_STATE64
   X86ThreadStateCount = 42;      // x86_THREAD_STATE64_COUNT: 21 registers of 8 bytes, in 4-byte words
   X86ThreadStateRIPIndex = 16;   // rax rbx rcx rdx rdi rsi rbp rsp r8..r15, then rip
@@ -3789,7 +3791,8 @@ begin
     if SuspendedThreads[I] = AThread then Exit(True);
 end;
 
-// Suspends one listed thread. True when the agent now holds it (and its send right).
+// Suspends one listed thread. True when the agent now holds it (and its send right). A
+// thread that ended after the list was taken runs no more code: it is left out.
 function SuspendListedThread(AThread: TMachPort): Boolean;
 var
   KernelResult: TKernelReturn;
@@ -3804,6 +3807,7 @@ begin
     Exit;
   end;
   KernelResult := ThreadSuspend(AThread);
+  if (KernelResult = KERN_TERMINATED) or (KernelResult = MACH_SEND_INVALID_DEST) then Exit;
   if KernelResult <> 0 then
   begin
     StopFailure := ThreadSuspendFailure;

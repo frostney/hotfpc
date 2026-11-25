@@ -170,9 +170,10 @@ after its agent connected, and the first program in every case, end hotfpc.
 
 - **macOS.** The agent stops the other threads with `thread_suspend`. A thread that runs
   until it's suspended can start another after the agent listed them, so the agent lists
-  the threads again until a list has none it hasn't suspended. When a thread can't be
-  suspended, or on x86-64 its state can't be read, the agent lets the others run and
-  tries again, and it resumes only the threads it suspended.
+  the threads again until a list has none it hasn't suspended. A thread that ended after
+  the list was taken is left out. When a thread can't be suspended for another reason, or
+  on x86-64 its state can't be read, the agent lets the others run and tries again, and it
+  resumes only the threads it suspended.
 - **macOS arm64.** The program's code pages are signed, so the agent copies a page, writes
   the copy, and maps it back (`VM_PROT_COPY`). New code goes into `MAP_JIT` memory. macOS
   checks a newly linked executable on its first start, which can take seconds, so the
