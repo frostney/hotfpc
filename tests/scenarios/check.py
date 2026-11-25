@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
-    "slowsave": (1, 0, 0), "procvars": (3, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
+    "slowsave": (1, 0, 0), "procvars": (3, 0, 0), "nestedframe": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
     "include": (3, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
@@ -99,6 +99,9 @@ UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n *
 # and new
 SWAPPED["procvars"] = lambda n: "PLAIN V2 %d, METHOD V2 %d, HIDDEN V4 %d, same address: TRUE TRUE" % (n, n, n)
 UNSWAPPED["procvars"] = lambda n: re.compile(r"PLAIN V2 %d, METHOD V2 %d, HIDDEN V[34] %d, same address: TRUE (TRUE|FALSE)" % (n, n, n))
+# nestedframe: the frame of Run that runs across the swap keeps calling the old Show, with
+# Run's values; the new Show would read Run's old frame with the new layout
+SWAPPED["nestedframe"] = UNSWAPPED["nestedframe"] = lambda n: "base 42 v1"
 # case: notes every swap of the case gives: these change the main block
 NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")

@@ -605,6 +605,49 @@ end.
       ("u.pas", "'HIDDEN V3 '", "'HIDDEN V4 '")]),
 ])
 
+# ---------------------------------------------------------------------------- a nested routine of a running frame
+# Run's frame runs across the swap, and calls its nested Show, which reads Run's locals. The
+# save puts locals around them, so the new Show would read the old frame in the wrong
+# places: the old frame must keep the old Show. The main block keeps running too, and ends
+# with the old frame's finally after the swap.
+case("nestedframe", {
+    "main.pas": r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+begin
+  Run(StrToInt(ParamStr(1)), ParamStr(2));
+end.
+""",
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+procedure Run(AMax: Integer; const AStop: string);
+implementation
+uses SysUtils;
+procedure Run(AMax: Integer; const AStop: string);
+var
+  Count, Base: Integer;
+  Text: string;
+  procedure Show;
+  begin
+    WriteLn('tick ', Count, ': ', Text, ' ', Base, ' v1');
+    Flush(Output);
+  end;
+begin
+  Count := 0; Base := 42; Text := 'base';
+  while (Count < AMax) and not FileExists(AStop) do
+  begin
+    Inc(Count); Show; Sleep(300);
+  end;
+end;
+end.
+"""}, [
+    ("locals before and after Run's, another text for Show, and managed temporaries in the main block, while both frames keep running",
+     [("u.pas", "var\n  Count, Base: Integer;\n  Text: string;", "var\n  Before: array[0..31] of Integer;\n  Count, Base: Integer;\n  Text: string;\n  After: array[0..31] of Integer;"),
+      ("u.pas", "' v1'", "' v2'"),
+      ("main.pas", "begin\n  Run(", "begin\n  if ParamStr(3) <> '' then WriteLn('more ' + IntToStr(Length(ParamStr(0))) + ' ' + ParamStr(1) + ' ' + ParamStr(2));\n  Run(")]),
+])
+
 # ---------------------------------------------------------------------------- records
 case("records", {
     "main.pas": MAIN,
