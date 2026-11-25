@@ -67,6 +67,9 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    # Speed, a variable of the implementation section that nothing has written, takes its
+    # new initial value: on Windows with fpc 3.2 the agent knows it only by its section
+    "globals": [re.compile(r"TOTAL \d+ hidden \d+ speed 50 extra \d+")],
     "procvars": [re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V2 \d+, same address: TRUE TRUE"),
                  re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V3 \d+, same address: TRUE TRUE")],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
