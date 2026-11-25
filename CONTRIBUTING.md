@@ -31,7 +31,8 @@ npx --yes markdownlint-cli2@0.24.0           # the Markdown lint
 
 On Windows, `build.bat` takes the same arguments as `build.sh`. The installer's fpc builds
 32-bit programs by default, so give it the 64-bit target, `build.bat -- -Twin64 -Px86_64`,
-and run the scenarios with `HOT_DRIVER_OPTS` set to `-Twin64 -Px86_64`.
+and run the scenarios and the check of the agent with `HOT_DRIVER` set to
+`build/hotfpc.exe` and `HOT_DRIVER_OPTS` to `-Twin64 -Px86_64`, as CI does.
 
 ## When a change is done
 
@@ -63,7 +64,7 @@ reference check fails until it does. A change users can see goes into `CHANGELOG
 ## CI
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to main: the build, the unit
-tests and the scenarios on Linux x86-64, Linux arm64, macOS arm64, macOS x86-64 and Windows
+tests, the scenarios and the check of the agent on Linux x86-64, Linux arm64, macOS arm64, macOS x86-64 and Windows
 x86-64 with
 fpc 3.2.2, and a `docs` job with the reference check and the Markdown lint.
 

@@ -39,14 +39,15 @@ with 1 when a check failed. `./build.sh tests` compiles `source/HotFPC.pas` with
 `tests/agent/check.py` checks what the agent answers to commands that hotfpc doesn't send in
 a scenario, such as an object file it can't read. hotfpc builds a small program with the
 agent in `tests/agent/work/`, which git ignores, and starts it once; the program ends at
-once. The script then starts the program itself, with `HOT_PORT` and `HOT_TOKEN` naming a
-port it listens on, and stands in for hotfpc on the agent's protocol (the comment at the top
+once. The script then starts the program itself, with `HOT_PORT` set to a port it listens
+on and `HOT_TOKEN` to the token it expects in the agent's hello, and stands in for hotfpc on
+the agent's protocol (the comment at the top
 of `source/HotFPC.Agent.pas`): it waits for the agent's hello, sends each case's command and
 checks the reply. The one case so far, `badobject`, loads a file that is no object file and
 expects the error to name the object files of the system the agent runs on, such as
 `is not an x86-64 ELF object`. `HOT_DRIVER` and `HOT_DRIVER_OPTS` pick the hotfpc and its
-options as for the scenarios; for a Windows target on another system the script runs the
-program under Wine, as hotfpc does.
+options as for the scenarios; the script starts the program as hotfpc does, with `--run`'s
+launcher, or under Wine for a Windows target on another system.
 
 ## The scenarios
 
