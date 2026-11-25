@@ -26,9 +26,10 @@ code you change in units.
 
 - **macOS:** `brew install raylib`.
 - **Linux:** download the archive for your processor from raylib's
-  [releases](https://github.com/raysan5/raylib/releases) and unpack it anywhere:
-  `raylib-<version>_linux_amd64.tar.gz` on x86-64, `raylib-<version>_linux_arm64.tar.gz` on
-  arm64. Your distribution's package works too, if it has one.
+  [releases](https://github.com/raysan5/raylib/releases) and unpack it in a directory whose
+  path has no spaces ([Run it](#run-it) says why): `raylib-<version>_linux_amd64.tar.gz` on
+  x86-64, `raylib-<version>_linux_arm64.tar.gz` on arm64. Your distribution's package works
+  too, if it has one.
 - **Windows:** download `raylib-<version>_win64_mingw-w64.zip` from the same page and copy
   `lib/raylib.dll` from it into `examples/raylib`.
 
