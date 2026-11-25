@@ -3416,8 +3416,8 @@ begin
     if not AProgram.Running then
     begin
       { too short for its agent to connect, or it did not start }
-      WriteLn('[hot] the program ended (exit code ', AProgram.ExitCode, ') before hot reloading could start');
-      AExitCode := AProgram.ExitCode;
+      AExitCode := ExitCodeOf(AProgram);
+      WriteLn('[hot] the program ended (exit code ', AExitCode, ') before hot reloading could start');
       Exit(False);
     end;
     if NowSeconds > Deadline then
@@ -6919,6 +6919,49 @@ begin
   Expect(Pos('cannot run ' + Root + 'missing', Problem) = 1, 'and the problem says it cannot be run');
 end;
 
+// ---------------------------------------------------------------- tests: the driver
+{ What the driver says about a program that ends before its agent connects. The program is a
+  shell command that stands in for one. }
+
+{ Starts the shell command as the program and waits for its agent as the driver does; the
+  exit code the driver takes from it. }
+function ExitCodeBeforeConnecting(const AName, ACommand: string): Integer;
+var
+  Options: TOptions;
+  Driver: TDriver;
+  Process: TProcess;
+begin
+  Options := ParseOptions([MakeTestDirectory(AName) + 'demo.pas'], False);
+  Driver := TDriver.Create(Options);
+  Process := TProcess.Create(nil);
+  try
+    Expect(Driver.FLink.Listen, 'the driver listens');
+    {$ifdef windows}
+    Process.Executable := 'cmd.exe';
+    Process.Parameters.Add('/c');
+    {$else}
+    Process.Executable := '/bin/sh';
+    Process.Parameters.Add('-c');
+    {$endif}
+    Process.Parameters.Add(ACommand);
+    Process.Execute;
+    Expect(not Driver.AwaitAgent(Process, Result), 'a program that ends has no agent to connect');
+  finally
+    Process.Free;
+    Driver.Free;
+    Options.Free;
+  end;
+end;
+
+procedure TestEndedBeforeConnecting;
+begin
+  ExpectEqual(ExitCodeBeforeConnecting('ended', 'exit 3'), 3, 'a program that ends before its agent connects gives its exit code');
+  {$ifdef unix}
+  ExpectEqual(ExitCodeBeforeConnecting('killed', 'kill -KILL $$'), -1,
+    'one that a signal ended gives -1, as when it ends later');
+  {$endif}
+end;
+
 // ---------------------------------------------------------------- tests: all tests
 
 { Runs every test and returns the exit code: 1 when a check failed. }
@@ -6996,6 +7039,7 @@ begin
     TestWriteAssembler;
     TestWriteAssemblerAnew;
     TestVerifyVersion;
+    TestEndedBeforeConnecting;
     Result := FinishTests;
   finally
     Directories.Free;
