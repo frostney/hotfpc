@@ -35,6 +35,10 @@ name it with `--run`:
 hotfpc --run /opt/wine-staging/bin/wine -Twin64 -Px86_64 demo.pas
 ```
 
+Use Wine 6.8 or later: an older Wine lacks a call the agent uses to stop the program's
+threads, and a thread that starts while the agent stops them keeps running during the swap
+([how it works](../internals/how-it-works.md#per-system)).
+
 When the launcher's name contains `wine`, hotfpc gives the agent Windows paths (`Z:\...`).
 The agent talks to hotfpc over TCP on 127.0.0.1, which works the same between a program
 under Wine and hotfpc outside it.
