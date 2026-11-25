@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A swap that changes the program's main block prints `note: the main block changed` once.
+  It printed it twice: fpc gives the main block two names, `PASCALMAIN` and `main`.
 - An empty source file in a watched directory, such as an empty `.inc` nothing uses, no
   longer holds back every save. hotfpc took any empty file for a save still being written
   and compiled nothing while one was there. Now only a file that a save has just emptied

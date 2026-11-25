@@ -3191,8 +3191,11 @@ var
   NewInstanceSize, OldInstanceSize: Int64;
   Removed: LongInt;
   HostSymbol: PHostSymbol;
+  MainBlockNoted: Boolean;
 begin
   Previous := AObjectFile^.Previous;
+  // fpc names the main block twice, PASCALMAIN and main: one note
+  MainBlockNoted := False;
   for I := 0 to High(AObjectFile^.Symbols) do
   begin
     Symbol := @AObjectFile^.Symbols[I];
@@ -3269,10 +3272,11 @@ begin
           Say('note the initialization section of ' + AObjectFile^.UnitName + ' changed; it is not run again');
           Inc(ACounts.Notes);
         end;
-        if (Symbol^.Name = MainBlockName) or (Symbol^.Name = MainSymbolName) then
+        if ((Symbol^.Name = MainBlockName) or (Symbol^.Name = MainSymbolName)) and not MainBlockNoted then
         begin
           Say('note the main block changed; the frame that is running keeps its old code');
           Inc(ACounts.Notes);
+          MainBlockNoted := True;
         end;
       end;
       Continue;

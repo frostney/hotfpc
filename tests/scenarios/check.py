@@ -192,6 +192,18 @@ for name in names:
     if name in SWAPPED and not any(text == " " + SWAPPED[name](int(tick)) for tick, text in after):
         stale.append(("", "no tick"))
     ok = ok and not stale
+    # each note of a swap comes once, though fpc may give what it notes two names (the main
+    # block is PASCALMAIN and main); the program's lines may come between the notes
+    repeated, notes = [], set()
+    for line in body.splitlines():
+        note = re.search(r"\[hot\]   note: (.*)", line)
+        if note:
+            if note.group(1) in notes:
+                repeated.append(note.group(1))
+            notes.add(note.group(1))
+        elif "[hot]" in line:
+            notes = set()
+    ok = ok and not repeated
     loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
@@ -203,7 +215,8 @@ for name in names:
                     for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow)
           + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
-                    for tick, text in stale[:1]))
+                    for tick, text in stale[:1])
+          + "".join("; a swap noted %r twice" % text for text in repeated[:1]))
     if not ok:
         failing.append((name, body))
 for name, body in failing:
