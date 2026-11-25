@@ -71,8 +71,8 @@ A swap can be followed by notes:
 
 | Note | What it means |
 | --- | --- |
-| `note: <name> still had its initial value; set to the new one` | A variable with an initial value, or a typed constant, got a new initial value, and the program hadn't changed it: it now has the new value. |
-| `note: the initial value of <name> changed; the running value is kept` | The same, but the program had changed it: it keeps the value it has. |
+| `note: <name> still had its initial value; set to the new one` | A variable with an initial value, or a typed constant, got a new initial value. Its running value was still the old initial value, byte for byte, and neither value holds an address: it now has the new value. A value the program changed and set back counts as unchanged. |
+| `note: the initial value of <name> changed; the running value is kept` | The same, but the running value differs from the old initial value, or one of the two values holds an address (a pointer, a `PChar`, a string): it keeps the value it has. |
 | `note: resource string <name> changed; the running text is kept` | A `resourcestring` changed. The program keeps the text it has. |
 | `note: <name> changed; the running copy is kept` | Other data the program already has, such as a table, changed in a way that doesn't need a restart. The program keeps its copy. |
 | `note: the initialization section of <unit> changed; it is not run again` | The section isn't run again. The new code is in place for the next start. |

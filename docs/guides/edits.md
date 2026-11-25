@@ -34,8 +34,8 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | `Rate = 1.5` becomes `Rate = 2.5` | swap: the new value is used at once | `constants` |
 | A new constant, used before the others | swap | `constants` |
 | A new variable with an initial value | swap | `globals` |
-| `Speed: Integer = 5` becomes `= 50`, and the program never wrote `Speed` | swap: `Speed` is 50, with the note `U.SPEED still had its initial value; set to the new one` | `globals` |
-| `Total: Integer = 0` becomes `= 1000`, and the program has written `Total` | swap: `Total` keeps its value, with the note `the initial value of U.TOTAL changed; the running value is kept` | `globals` |
+| `Speed: Integer = 5` becomes `= 50`, and `Speed` still holds 5 | swap: `Speed` is 50, with the note `U.SPEED still had its initial value; set to the new one` | `globals` |
+| `Total: Integer = 0` becomes `= 1000`, and the program has changed `Total` from 0 | swap: `Total` keeps its value, with the note `the initial value of U.TOTAL changed; the running value is kept` | `globals` |
 | `Hidden: Integer` becomes `Hidden: Int64` | restart: `u.Hidden: the declaration changed its layout or type` | `globals` |
 | `Calls: Integer` in the implementation section becomes `Calls: Single`, the same size | restart: `u.Calls: the declaration changed its layout or type` | `hidden` |
 | `Calls: Integer = 0` in the implementation section becomes `Int64 = 0` | restart: `u.Calls: the declaration changed its layout or type` | `initvar` |

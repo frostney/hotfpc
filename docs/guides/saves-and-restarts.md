@@ -35,9 +35,11 @@ A swap changes code, not state:
   virtual method table are the same ones, updated in place.
 - **Constants and literals are new.** The new code uses its own, so a changed `const`
   takes effect at once.
-- **A changed initial value** (`Speed: Integer = 5` to `= 50`) is applied only if the
-  program never changed the variable; otherwise it keeps its value, and hotfpc notes which
-  it was.
+- **A changed initial value** (`Speed: Integer = 5` to `= 50`) is applied when the
+  variable still holds the old initial value, byte for byte, and neither value holds an
+  address, such as a pointer, a `PChar` or a string. Otherwise it keeps the value it has.
+  hotfpc compares values, not writes: a variable the program changed and then set back to
+  its initial value gets the new one. hotfpc notes which it was.
 - **Threads keep running.** The agent stops the program's other threads for the few
   microseconds the writes take.
 
