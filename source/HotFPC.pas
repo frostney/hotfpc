@@ -3168,6 +3168,10 @@ type
       or one AWait after AStart when that is later. A file that keeps changing is then compiled
       as it is. }
     class function SettleWaitEnd(const AStart, ANow, AWait: Double): Double;
+    { How long Settle sleeps before it looks again when ARemaining seconds of its wait are
+      left: one poll interval at most, and 0, no sleep, once the wait is over. ARemaining
+      comes from one reading of the clock, which may already be past the wait's end. }
+    class function SettlePause(const ARemaining: Double): Integer;
   public
     constructor Create(const AOptions: TOptions);
     destructor Destroy; override;
@@ -3912,7 +3916,8 @@ end;
 function TDriver.Settle(const AStamps: TFileStamps): TFileStamps;
 var
   Again: TFileStamps;
-  Start, Wait, WaitEnd, Remaining: Double;
+  Start, Wait, WaitEnd: Double;
+  Pause: Integer;
 begin
   Result := AStamps;
   Wait := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
@@ -3920,16 +3925,13 @@ begin
   repeat
     WaitEnd := SettleWaitEnd(Start, NowSeconds, Wait);
     { in steps, to see the program end }
-    while NowSeconds < WaitEnd do
-    begin
+    repeat
       if (FProgram <> nil) and not FProgram.Running then
         Exit;
-      Remaining := WaitEnd - NowSeconds;
-      if Remaining * MillisecondsPerSecond > PollIntervalMilliseconds then
-        Sleep(PollIntervalMilliseconds)
-      else
-        Sleep(Trunc(Remaining * MillisecondsPerSecond) + 1);
-    end;
+      Pause := SettlePause(WaitEnd - NowSeconds);
+      if Pause > 0 then
+        Sleep(Pause);
+    until Pause = 0;
     Again := FWatcher.Stamps;
     if TSourceWatcher.SameStamps(Again, Result) then
       Break;
@@ -3947,6 +3949,16 @@ begin
   Result := ANow + AWait;
   if Result > Deadline then
     Result := Deadline;
+end;
+
+class function TDriver.SettlePause(const ARemaining: Double): Integer;
+begin
+  if ARemaining <= 0 then
+    Result := 0
+  else if ARemaining * MillisecondsPerSecond >= PollIntervalMilliseconds then
+    Result := PollIntervalMilliseconds
+  else
+    Result := Trunc(ARemaining * MillisecondsPerSecond) + 1;
 end;
 
 { True when the program has ended and hotfpc ends with it. A program that a restart started
@@ -4383,6 +4395,20 @@ begin
   Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.9995, 0.002) - 11.0) < 1E-9, 'nor a few milliseconds later');
   Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.0, 5.0) - 15.0) < 1E-9, 'a --settle longer than a second waits once');
   Expect(TDriver.SettleWaitEnd(10.0, 15.0, 5.0) <= 15.0, 'and no more after it');
+end;
+
+{ Each pause of a settle wait is a poll interval at most and ends with the wait, also when
+  the clock is read past its end. }
+procedure TestSettlePause;
+begin
+  ExpectEqual(TDriver.SettlePause(1.0), PollIntervalMilliseconds, 'a long wait sleeps one poll interval at a time');
+  ExpectEqual(TDriver.SettlePause(PollIntervalMilliseconds / MillisecondsPerSecond), PollIntervalMilliseconds,
+    'a poll interval left is one poll interval');
+  ExpectEqual(TDriver.SettlePause(0.0034), 4, 'the rest of a wait shorter than that, to the next millisecond');
+  ExpectEqual(TDriver.SettlePause(0.0000001), 1, 'a millisecond for a moment left');
+  ExpectEqual(TDriver.SettlePause(0), 0, 'no sleep once the wait is over');
+  ExpectEqual(TDriver.SettlePause(-0.002), 0, 'nor when the clock was read past its end');
+  ExpectEqual(TDriver.SettlePause(-86400.0), 0, 'by however much');
 end;
 
 procedure TestCompilerOptionsAndProgramArguments;
@@ -6637,6 +6663,7 @@ begin
     TestValues;
     TestSettleFallback;
     TestSettleWaitEnd;
+    TestSettlePause;
     TestCompilerOptionsAndProgramArguments;
     TestMissingValue;
     TestLastSourceWins;
