@@ -24,5 +24,6 @@ That's the game after two saves, one for `Gravity` and one for `DrawPoly`, from 
 Linux. The count of bounces carried on from before them.
 
 The [recording in the main README](../../README.md#with-raylib)
-([GIF](../../docs/raylib-demo.gif), [video](../../docs/raylib-demo.mp4)) shows four saves
-to `scene.pas` swapped into the running game on macOS.
+([GIF](../../docs/raylib-demo.gif), [video](../../docs/raylib-demo.mp4)) shows five saves
+to `scene.pas` on macOS: four swapped into the running game, and one, a bigger `MaxBalls`,
+that starts the game over by itself.

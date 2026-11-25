@@ -31,13 +31,23 @@ reference for these steps.
 
 ## The raylib demo
 
-`docs/raylib-demo.gif` and `docs/raylib-demo.mp4` were recorded on macOS arm64 with
-[Knips](https://github.com/frostney/knips) on 14 Nov 2026. Knips captured the terminal
-(Ghostty, with tmux and vim) and the game window separately; the two were put side by side
-and trimmed to the four swaps. The run was `hotfpc -Fl/opt/homebrew/lib game.pas` in
-`examples/raylib`, with Homebrew's fpc 3.2.2 and raylib, and hotfpc 1.0.0.
+`docs/raylib-demo.gif` and `docs/raylib-demo.mp4` were recorded on macOS arm64 on
+25 Nov 2026, with Homebrew's fpc 3.2.2 and raylib and hotfpc built from commit `0cbf4ea`
+([pull request #24](https://github.com/frostney/hotfpc/pull/24)), which reports version 1.1.0.
+The run was `hotfpc -Fl/opt/homebrew/lib game.pas` in a copy of `examples/raylib`, and the
+five edits the README describes were typed into vim one key at a time through
+`tmux send-keys`, five seconds apart. The terminal (tmux with vim and the shell, 84 by 30)
+was recorded by asciinema and drawn by agg; the game window was recorded by
+[Knips](https://github.com/frostney/knips). The two were put side by side with ffmpeg,
+lined up by the frame where the background turns purple and the `[hot] v4` line, and cut
+to the time the game was recorded.
 
-To record it again, run the example the same way, make the four edits the README describes
-in `scene.pas`, and keep each `[hot]` line in view. Commit the GIF for the README and the
+So that nothing appeared on the screens in use, the game ran on a virtual display, which
+only the recording used. The copy's `game.pas` opened its window hidden, without a frame,
+and moved it there; `scene.pas` was as it is in the repository.
+
+The virtual display was only a choice for the capture. To record it again, run
+`examples/raylib` as it is, with its ordinary window on any display, make the five edits
+the README describes in `scene.pas`, and keep each `[hot]` line in view. Commit the GIF for the README and the
 MP4, which the website's home page plays with the browser's controls, under the same names:
 the README, the guides and the site pick up the new files as they are.

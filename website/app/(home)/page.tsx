@@ -123,15 +123,17 @@ export default async function HomePage() {
           controls
           playsInline
           preload="metadata"
-          aria-label="hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes each save without losing its balls"
+          aria-label="hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes four saves without losing its balls, then starts over by itself after a fifth"
           className="w-full h-auto rounded-lg border"
         >
           <source src={`${basePath}/docs-assets/raylib-demo.mp4`} type="video/mp4" />
           <a href={`${basePath}/docs-assets/raylib-demo.mp4`}>The recording of the raylib example</a>
         </video>
         <p className="mt-3 text-sm text-fd-muted-foreground text-center">
-          A real run of the raylib example on macOS: four saves to{' '}
-          <code>scene.pas</code>, each swapped into the running game in about 100 ms.{' '}
+          A real run of the raylib example on macOS: five saves to{' '}
+          <code>scene.pas</code>. The first four are each swapped into the running game about
+          100 ms after hotfpc sees the save; the fifth grows a variable, and the game starts over
+          with it by itself.{' '}
           <Link href="/docs/guides/raylib" className="underline">
             With raylib →
           </Link>

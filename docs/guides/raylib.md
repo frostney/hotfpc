@@ -5,7 +5,7 @@ game runs, and the balls carry on from where they were.
 [`examples/raylib`](../../examples/raylib) is a small [raylib](https://www.raylib.com)
 program to play with: balls that fall, bounce and change colour.
 
-![hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes each save without losing its balls](../raylib-demo.gif)
+![hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes four saves without losing its balls, then starts over by itself after a fifth](../raylib-demo.gif)
 
 The [README](../../README.md#with-raylib) describes this recording ([video](../raylib-demo.mp4)).
 

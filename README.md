@@ -74,15 +74,17 @@ See [with lwpt](docs/guides/lwpt.md) and [`examples/lwpt`](examples/lwpt).
 
 ### With raylib
 
-![hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes each save without losing its balls](docs/raylib-demo.gif)
+![hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes four saves without losing its balls, then starts over by itself after a fifth](docs/raylib-demo.gif)
 
 This is a real run of [`examples/raylib`](examples/raylib) on macOS arm64 with Homebrew's
-fpc 3.2.2 and raylib ([video](docs/raylib-demo.mp4)), recorded with hotfpc 1.0.0. The
-terminal on the left runs tmux, with `scene.pas` open in vim above and a shell below that
-runs `hotfpc -Fl/opt/homebrew/lib game.pas`. The game window is on the right: balls that
-fall, bounce and change colour, with a count of bounces at the top.
+fpc 3.2.2 and raylib ([video](docs/raylib-demo.mp4)), recorded on 25 Nov 2026 with hotfpc
+built from commit `0cbf4ea` ([pull request #24](https://github.com/frostney/hotfpc/pull/24)),
+which reports version 1.1.0. The terminal on the left runs tmux, with `scene.pas` open in
+vim above and a shell below that runs `hotfpc -Fl/opt/homebrew/lib game.pas`. The game
+window is on the right: balls that fall, bounce and change colour, with a count of bounces
+at the top.
 
-Four edits to `scene.pas` get saved while the game runs:
+Five edits to `scene.pas` get saved while the game runs:
 
 1. `Bounce = 0.9` to `1.0`: the balls keep all their speed when they hit a wall.
 2. `Gravity = 900.0` to `500.0`: they fall more slowly and rise higher.
@@ -91,10 +93,14 @@ Four edits to `scene.pas` get saved while the game runs:
 4. `DrawCircleV(Balls[I].Position, Radius, ...)` to
    `DrawPoly(Balls[I].Position, 6, Radius, Balls[I].Hue, ...)`: the balls become hexagons,
    turned by their hue, so they spin as their colour changes.
+5. `MaxBalls = 64` to `128`: room for more balls.
 
-Each one is swapped in 99 to 107 ms after the save (`v2` to `v5`). The balls carry on from
-where they were, and the count of bounces keeps going. The current hotfpc prints the same
-`[hot]` lines as the 1.0.0 that made this recording.
+The first four are swapped in 96 to 109 ms after hotfpc saw the save (`v2` to `v5`). The
+balls carry on from where they were, and the count of bounces keeps going. The fifth
+changes the size of `Balls`, which a swap can't do to a variable the program already has,
+so hotfpc prints `restart needed: scene.Balls` and starts the game over with the new code.
+It reports `v6 restarted` 479 ms after it saw that save. The game begins again with its
+first balls, with all five edits in it.
 
 [With raylib](docs/guides/raylib.md) shows how to get raylib, run the example and lay out a
 game for hot reloading.
