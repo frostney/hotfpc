@@ -42,6 +42,10 @@ PRINTS = {
 # the save: Tick passes the new second argument, and the main block keeps its old code
 SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, 100 * n)
            for name in ("signature", "slowsave")}
+# and what it printed before: the tick that runs while the swap is written may print this
+# once after the swap's line, as its Tick ran the old code or had its result already
+UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
+             for name in ("signature", "slowsave")}
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
 # so every tick prints it and the two numbers stay equal
@@ -103,12 +107,14 @@ for name in names:
         if not count or count.group(1) != tick:
             drift.append((tick, count and count.group(1)))
     ok = ok and not drift
-    # every tick after the last swap's line ran its code, and there is one
+    # every tick after the last swap's line ran its code, but the first, which may have been
+    # running when the swap was written; and one of them did
     swaps = list(re.finditer(r"\] v\d+ swapped", body))
     swapped = body[swaps[-1].end():] if swaps else ""
-    stale = [(tick, text) for tick, text in re.findall(r"tick (\d+): (.*)", swapped)
-             if text != SWAPPED[name](int(tick))] if name in SWAPPED else []
-    if name in SWAPPED and not re.search(r"tick \d+: ", swapped):
+    after = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", swapped, re.M) if name in SWAPPED else []
+    stale = [(tick, text.strip()) for i, (tick, text) in enumerate(after)
+             if text != " " + SWAPPED[name](int(tick)) and not (i == 0 and text == " " + UNSWAPPED[name](int(tick)))]
+    if name in SWAPPED and not any(text == " " + SWAPPED[name](int(tick)) for tick, text in after):
         stale.append(("", "no tick"))
     ok = ok and not stale
     loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
@@ -120,7 +126,7 @@ for name in names:
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow)
-          + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap"
+          + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
                     for tick, text in stale[:1]))
     if not ok:
         failing.append((name, body))
