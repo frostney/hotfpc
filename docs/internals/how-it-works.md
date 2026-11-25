@@ -114,8 +114,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    write has no size rather than an earlier one. The driver counts each one's bytes there and
    compares them with the running program's: a COFF object doesn't show one that grows (see
    [Per system](#per-system)). The running program's sizes come from a compile to assembler
-   before the first build's check of the sources, or before the link of a restart, so the
-   same check covers it: they come from the sources the program was built from. A swap adds
+   after the first build, or after the link of a restart, and before the check of the
+   sources that covers both: they come from the sources the program was built from, and
+   cover a unit the link adds to the program. A swap adds
    the sizes of the variables it brings. A variable keeps its first size until the program
    starts over, also when a save removed it: the agent keeps it at its first address, so
    bringing it back larger needs a restart. When fpc can't write the assembler at the start,

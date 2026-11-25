@@ -3770,8 +3770,9 @@ end;
 
 { Compiles the program to assembler for the sizes of the program that is about to start, from
   the sources it is built or linked from, unless this save already did or no unit has
-  initialised data. Before the build or link, so that the same check of the sources covers
-  both (SourcesChangedDuringCompile). False when fpc failed; AProblem then says why. }
+  initialised data. After the build or link, which may add the object file of a unit new to
+  the program, and before the check of the sources that covers both
+  (SourcesChangedDuringCompile). False when fpc failed; AProblem then says why. }
 function TDriver.WriteLiveAssembly(out AProblem: string): Boolean;
 var
   Objects: TStringList;
@@ -4100,8 +4101,8 @@ var
 begin
   RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.NextDirectory));
   ForceDirectories(FWorkspace.NextDirectory);
-  SizesKnown := not FCheckSizes or WriteLiveAssembly(Problem);
   Linked := FCompiler.Compile(True, Errors, LinkSeconds, FWorkspace.NextExecutable);
+  SizesKnown := not Linked or not FCheckSizes or WriteLiveAssembly(Problem);
   try
     { the program keeps running; the next compile decides again. This covers the compile to
       assembler too. }

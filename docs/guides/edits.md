@@ -101,6 +101,8 @@ These scenarios let hotfpc start the program over; the others pass `--no-restart
 | One save whose second file is written while fpc compiles the first | compiled again once the files settle, then swapped once | `slowsave` |
 | `Calls: Integer = 0` in the program file becomes `Int64 = 0`, with another text, saved while hotfpc builds the program to start it, after fpc has read the file | built again before the program starts: the program runs the save from its first tick | `startsave` |
 | Another text, after that start | swap | `startsave` |
+| A unit the program uses gets a new unit with a typed constant, `Limit: Integer = 7` | restart: `unit w is not part of the running program` | `newconst` |
+| That constant becomes `Limit: Int64 = 8` | restart: `variable W.LIMIT changed size from 4 to 8 bytes` | `newconst` |
 
 ## Running one yourself
 

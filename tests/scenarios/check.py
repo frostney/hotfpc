@@ -39,9 +39,13 @@ EXPECT = {
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
+    # a typed constant in a unit new to the program, which a restart adds, then grows: a
+    # restart again
+    "newconst": (0, 2, 0),
 }
 # case: restarts; every other case passes --no-restart and expects none
-RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1, "sighandler": 1, "sigmasked": 1}
+RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1,
+            "sighandler": 1, "sigmasked": 1, "newconst": 2}
 # case: lines the program must print, so that a swap shows its new values
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
@@ -56,6 +60,7 @@ PRINTS = {
     "sighandler": ["entry 2, resumed"], "sigmasked": ["entry 2, resumed"],
     # the program runs the save made during the start from its first tick
     "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
+    "newconst": ["n 1 limit 7", "n 1 limit 8"],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code

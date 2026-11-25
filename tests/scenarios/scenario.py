@@ -924,6 +924,50 @@ case("startsave", {
     ("another text", [("main.pas", "' main two", "' main three")]),
 ])
 
+# ---------------------------------------------------------------------------- a new unit's typed constant
+# The program has no variable with an initial value of its own until u uses a new unit, w,
+# which has a typed constant: the restart that adds w must take its size, so that the save
+# that grows it starts the program over again
+NEWCONST_MAIN = r'''program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+var
+  Count: Integer;
+begin
+  Count := 0;
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Tick(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+'''
+
+W_LIMIT = r'''unit w;
+{$mode objfpc}{$H+}
+interface
+function WText: string;
+implementation
+uses SysUtils;
+const
+  Limit: Integer = 7;
+function WText: string;
+begin
+  Result := Format(' limit %d', [Limit]);
+end;
+end.
+'''
+
+case("newconst", {"main.pas": NEWCONST_MAIN, "u.pas": PROGVAR_U}, [
+    ("u uses a new unit, w, with the typed constant Limit: Integer = 7: the program starts over",
+     [("w.pas", None, W_LIMIT), ("u.pas", "uses SysUtils;", "uses SysUtils, w;"),
+      ("u.pas", "Format('n %d', [n])", "Format('n %d', [n]) + WText")]),
+    ("Limit: Integer = 7 becomes Limit: Int64 = 8: the program starts over again",
+     [("w.pas", "Limit: Integer = 7;", "Limit: Int64 = 8;")]),
+], restart=True)
+
 # ---------------------------------------------------------------------------- a routine's typed constant
 # like typedconst, but declared in a routine, which no unit file has with any fpc
 case("localconst", {
