@@ -3193,7 +3193,7 @@ type
   TCounts = record Functions, Changed, Added, Kept, NewData, Notes: LongInt; end;
 
 // The restart for data of the program whose new version has another size than its storage.
-procedure RestartForSize(AObjectFile: PObjectFile; AOld, ANew: PObjectSymbol);
+procedure RestartForSize(const AObjectFile: PObjectFile; const AOld, ANew: PObjectSymbol);
 begin
   if StartsWith(ANew^.Name, PrefixVariable) or StartsWith(ANew^.Name, PrefixTypedConstant) then
     Restart('variable ' + Pretty(ANew^.Name) + ' changed size ' + SizeChange(AOld, ANew))
@@ -3202,9 +3202,9 @@ begin
 end;
 
 // Keeps a copy of each named datum of AOld, the version a load replaces, that ANew no longer
-// has: the program keeps its storage, at its address and size, and a later version that
-// brings it back is bound to it.
-procedure KeepGoneData(AOld, ANew: PObjectFile);
+// has, thread variables included: the program keeps its storage, at its address or offset and
+// its size, and a later version that brings it back is bound to it.
+procedure KeepGoneData(const AOld, ANew: PObjectFile);
 var
   I: SizeInt;
   Symbol, Gone: PObjectSymbol;
@@ -3212,7 +3212,7 @@ begin
   for I := 0 to High(AOld^.Symbols) do
   begin
     Symbol := @AOld^.Symbols[I];
-    if not Symbol^.Defined or not Symbol^.External or (Symbol^.Kind <> KindData) or IsAnonymous(Symbol^.Name)
+    if not Symbol^.Defined or not Symbol^.External or not (Symbol^.Kind in [KindData, KindTLS]) or IsAnonymous(Symbol^.Name)
       or IsUnwindSection(AOld^.Sections[Symbol^.Section].Name) or (MapGet(ANew^.ByName, Symbol^.Name) <> nil) then Continue;
     Gone := MapGet(GoneData, Symbol^.Name);
     if Gone = nil then
@@ -3264,6 +3264,8 @@ begin
       // The system lays out every thread's copy when the thread starts: a thread variable
       // keeps its offset, and a new one cannot be given room.
       HostSymbol := MapGet(HostSymbols, Symbol^.Name);
+      // one a save removed has the size it had then
+      if PreviousSymbol = nil then PreviousSymbol := MapGet(GoneData, Symbol^.Name);
       if (HostSymbol = nil) or not HostSymbol^.IsTLS then Restart('unit ' + AObjectFile^.UnitName + ' gained the thread variable ' + Pretty(Symbol^.Name))
       else if (PreviousSymbol <> nil) and SizeChanged(PreviousSymbol, Symbol) then Restart('the thread variable ' + Pretty(Symbol^.Name) + ' changed size ' + SizeChange(PreviousSymbol, Symbol))
       else

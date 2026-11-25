@@ -7,8 +7,9 @@
   its first address, and the agent swapped the new code in with the note `kept without a
   check`, so it used the old storage as the new type: a larger one ran past it. Only for a
   Windows program did hotfpc already find a variable with an initial value that came back
-  larger. The agent now keeps the sizes of what a save removes, and the check of layouts in
-  units the types of the variables a save removes. A variable that comes back as it was is
+  larger. The agent now keeps the sizes of what a save removes, thread variables included,
+  and the check of layouts in units the declarations a save removes, so a type that comes
+  back with another layout needs a restart too. A variable that comes back as it was is
   swapped, with the note `<name> is back after a save removed it; it keeps its running
   value`.
 - A swap that changes the program's main block prints `note: the main block changed` once.

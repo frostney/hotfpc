@@ -1149,9 +1149,9 @@ type
       list. }
     function Differences(const APPUName: string): TStringList;
     { The swap happened: the new layout of the unit is the running one. It keeps the
-      variables of the layout before it that the new one doesn't have: the program keeps
-      them, at their addresses, and a save that brings one back with another type needs a
-      restart. }
+      declarations of the layout before it that the new one doesn't have: the program keeps
+      a variable a save removed at its address, and the types it names, so a save that brings
+      one back with another type or layout needs a restart, as when it changes in place. }
     procedure Accept(const APPUName: string);
     { The declarations (names as in a layout) that ANew has with other text than AOld. A
       declaration only one of them has is not a difference: adding one is a restart only
@@ -1976,7 +1976,7 @@ begin
     Old := TLayout(FLive.Objects[Live]);
     Fresh := TLayout(FPending.Objects[Pending]);
     for I := 0 to Old.Count - 1 do
-      if StartsWith(Old.Names[I], VariablePrefix) and (Fresh.IndexOfName(Old.Names[I]) < 0) then
+      if Fresh.IndexOfName(Old.Names[I]) < 0 then
         Fresh.Add(Old[I]);
     FLive.Objects[Live].Free;
     FLive.Objects[Live] := FPending.Objects[Pending];
@@ -5698,6 +5698,20 @@ begin
   Result := Result + ']}]';
 end;
 
+{ A unit with the record TPos (fields AFirst and ASecond) and the variable P of it, or with
+  neither. }
+function PosJSON(const AFirst, ASecond: string; const AWithDeclarations: Boolean): string;
+begin
+  Result := '[{"Type":"unit","Name":"d","Units":["system"],"Interface":[';
+  if AWithDeclarations then
+    Result := Result
+      + '{"Type":"rec","Name":"TPos","Id":0,"Size":8,"Fields":['
+      + '{"Type":"field","Name":"' + AFirst + '","VarType":{"Unit":0,"Id":10}},'
+      + '{"Type":"field","Name":"' + ASecond + '","VarType":{"Unit":0,"Id":10}}]},'
+      + '{"Type":"var","Name":"P","Id":1,"VarType":{"Id":0}}';
+  Result := Result + ']}]';
+end;
+
 { A unit with a variable of a type of another unit of the program, which numbers that type
   AOtherId. }
 function ReferringJSON(const AOtherId: Integer): string;
@@ -6215,6 +6229,17 @@ begin
     Reader.Register(Units + 'a.ppu', UnitJSON('X', 'Y', 10, 11));
     Differing := History.Differences('a.ppu');
     ExpectEqual(Differing.CommaText, '"variable Counter"', 'once back, it is compared as before');
+    Differing.Free;
+    { a variable and its type that a swap removed: the type keeps its layout too }
+    Reader.Register(Live + 'd.ppu', PosJSON('X', 'Y', True));
+    Reader.Register(Units + 'd.ppu', PosJSON('X', 'Y', False));
+    Differing := History.Differences('d.ppu');
+    ExpectEqual(Differing.Count, 0, 'a variable and its type removed');
+    Differing.Free;
+    History.Accept('d.ppu');
+    Reader.Register(Units + 'd.ppu', PosJSON('Y', 'X', True));
+    Differing := History.Differences('d.ppu');
+    ExpectEqual(Differing.CommaText, '"type TPos"', 'back, with the fields of the type swapped');
     Differing.Free;
   finally
     History.Free;

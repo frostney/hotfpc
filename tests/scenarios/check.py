@@ -112,6 +112,11 @@ SAYS = {
 # is a variable of the unit's implementation section, which every swap must leave in place,
 # so every tick prints it and the two numbers stay equal
 COUNTERS = {"globals": "hidden", "hidden": "calls"}
+# case: a variable that a save removed and a later one brought back keeps its value. Two
+# patterns of what a tick prints: the first numbers the second prints are the last numbers
+# the first printed, each one more, as the new code counts on from the value
+RESUMES = {"readdvar": (r"n \d+ main one (\d+)", r"n \d+ main three (\d+)"),
+           "readdtype": (r"one calls (\d+) hits (\d+)", r"four calls (\d+) hits (\d+)")}
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
 LOAD_LIMITS = {"signals": 1000}
@@ -204,6 +209,13 @@ for name in names:
         if not count or count.group(1) != tick:
             drift.append((tick, count and count.group(1)))
     ok = ok and not drift
+    resumed = None
+    if name in RESUMES:
+        before = [m.groups() for m in (re.match(RESUMES[name][0] + "$", text.strip()) for _, text in records) if m]
+        after = [m.groups() for m in (re.match(RESUMES[name][1] + "$", text.strip()) for _, text in records) if m]
+        if not before or not after or [int(x) for x in after[0]] != [int(x) + 1 for x in before[-1]]:
+            resumed = (before[-1] if before else None, after[0] if after else None)
+    ok = ok and resumed is None
     # the driver's records of its swaps, by their place among the lines
     swapped = [i for i, line in enumerate(lines) if re.match(r"\[hot\] v\d+ swapped: ", line)]
     # every tick after the last swap's record ran its code, but the first, which may have been
@@ -241,6 +253,7 @@ for name in names:
           + "".join("; hotfpc never said %r" % pattern for pattern in unsaid)
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
+          + ("; counted on from %s with %s" % resumed if resumed else "")
           + "".join("; a load took %s ms in the program" % x for x in slow)
           + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
                     for tick, text in stale[:1])
