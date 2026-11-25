@@ -10,7 +10,10 @@ This page is for people using hotfpc. Changing hotfpc itself is covered in
 
 hotfpc needs Free Pascal 3.2.2 or later. It also uses the `ppudump` that comes with fpc.
 
-- **macOS:** `brew install fpc`.
+- **macOS on Apple silicon:** `brew install fpc`.
+- **macOS on Intel:** the installer from
+  [freepascal.org](https://www.freepascal.org/download.html), for Intel and Apple silicon
+  in one. Homebrew has no prebuilt fpc for Intel Macs any more.
 - **Debian and Ubuntu:** `sudo apt-get install fpc`.
 - **Windows:** the win32 and win64 installer from
   [freepascal.org](https://www.freepascal.org/download.html).
@@ -27,7 +30,8 @@ brew install fpc frostney/tap/hotfpc
 
 **From a release.** Release 1.1.0 has an archive for macOS arm64, Linux x86-64 and Windows
 x86-64, and a checksum file; [Platforms](../reference/platforms.md#getting-hotfpc) says
-what each system has. On Linux arm64, build hotfpc from source (below). On Linux x86-64,
+what each system has. On an Intel Mac and on Linux arm64, build hotfpc from source
+(below). On Linux x86-64,
 download the archive and the checksum file, check the archive, and copy `hotfpc` into a
 directory on your `PATH`, here `~/.local/bin`:
 
@@ -41,10 +45,11 @@ cp hotfpc-1.1.0-linux-x64/hotfpc ~/.local/bin/
 export PATH="$HOME/.local/bin:$PATH"    # this shell only; add it to your shell's profile
 ```
 
-On macOS, take `macos-arm64` instead of `linux-x64`, and `shasum -a 256 -c` instead of
-`sha256sum -c`. On Windows, download `hotfpc-1.1.0-windows-x64.zip`, compare the hash that
-PowerShell's `Get-FileHash hotfpc-1.1.0-windows-x64.zip` prints with the archive's line in
-the checksum file, unpack it, and put the folder with `hotfpc.exe` on your `PATH`.
+On a Mac with Apple silicon, take `macos-arm64` instead of `linux-x64`, and
+`shasum -a 256 -c` instead of `sha256sum -c`. On Windows, download
+`hotfpc-1.1.0-windows-x64.zip`, compare the hash that PowerShell's
+`Get-FileHash hotfpc-1.1.0-windows-x64.zip` prints with the archive's line in the checksum
+file, unpack it, and put the folder with `hotfpc.exe` on your `PATH`.
 
 **From source.** hotfpc is plain Pascal and needs nothing beyond what ships with fpc. Build
 it in a clone and put `build/` on your `PATH`:

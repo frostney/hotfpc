@@ -68,8 +68,8 @@ uses
   sockets;
 {$endif}
 
-{$if not (defined(darwin) and defined(cpuaarch64)) and not (defined(linux) and (defined(cpuaarch64) or defined(cpux86_64))) and not (defined(win64) and defined(cpux86_64))}
-  {$error HotFPC.Agent: Darwin on aarch64, Linux on aarch64 or x86-64, Windows on x86-64 so far}
+{$if not ((defined(darwin) or defined(linux)) and (defined(cpuaarch64) or defined(cpux86_64))) and not (defined(win64) and defined(cpux86_64))}
+  {$error HotFPC.Agent: Darwin and Linux on aarch64 or x86-64, Windows on x86-64 so far}
 {$endif}
 
 const
@@ -124,6 +124,10 @@ const
   ParkTimeoutFailure = 'a thread of the program did not stop';
   BlockerRunningFailure = 'a thread that blocks signals kept running';
   TooManyThreadsFailure = 'the program has more threads than the agent can stop';
+  ThreadListFailure = 'the threads of the program could not be listed';
+  ThreadSuspendFailure = 'a thread of the program could not be suspended';
+  ThreadStateFailure = 'the agent could not read where a thread of the program stopped';
+  StackUnknownFailure = 'the agent could not find the stack of a thread of the program';
   SplitEntryFailure = 'an entry to rewrite could not be written in one store while a thread that blocks signals sleeps';
   StoreSize = 8;
   ParkTimeoutMilliseconds = 2000;
@@ -145,6 +149,8 @@ const
   LoopbackAddress = $7f000001;
   UContextRegistersOffset = 40;     // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers
   UContextRIPIndex = 16;
+  UContextRSPIndex = 15;
+  SignalStackActive = 1;       // SS_ONSTACK: the thread runs on its alternate signal stack
   IndirectSuffix = '$indirect';
   IndirectSuffixLength = Length(IndirectSuffix);
   AnonymousDefinitionMarker = '_$$_def0';
@@ -194,16 +200,34 @@ const
   X86ModRMJumpRIP = $25;
   X86OpcodeJumpRel32 = $e9;
   X86OpcodeCallRel32 = $e8;
+  X86OperandSizePrefix = $66;     // before e8: a call with a 16-bit offset (AMD)
+  X86CallNear = 2;                // ff /2: call through a register or memory
+  X86CallFar = 3;                 // ff /3
+  X86ModRMNoOffset = 0;           // ModRM mode: memory, with no displacement but for X86ModRMNoBase
+  X86ModRMByteOffset = 1;         // mode: an 8-bit displacement follows
+  X86ModRMLongOffset = 2;         // mode: a 32-bit displacement follows
+  X86ModRMRegister = 3;           // mode: a register, nothing follows
+  X86ModRMSIB = 4;                // r/m: a SIB byte follows
+  X86ModRMNoBase = 5;             // r/m in mode 0 (rip + disp32), or a SIB's base: a 32-bit displacement follows
   X86OpcodeTwoByte = $0f;
   X86OpcodeJccFirst = $80;
   X86OpcodeJccLast = $8f;
+{$ifdef cpuaarch64}
+  RedirectSize = 4;                   // what a redirect writes at an entry: b
+{$else}
+  RedirectSize = X86JumpRel32Size;    // jmp rel32
+{$endif}
   ProtectRead = 1;
   ProtectWrite = 2;
   ProtectExecute = 4;
   MapPrivate = 2;
 {$if defined(darwin)}
   MapAnonymous = $1000;
-  MapJIT = $800;
+{$ifdef cpuaarch64}
+  MapJIT = $800;     // Apple silicon: memory that is writable and executable must be MAP_JIT
+{$else}
+  MapJIT = 0;
+{$endif}
   LowBound = QWord(4) shl 30;     // __PAGEZERO
   ClockMonotonic = 6;
   SignalBlockHow = 1;
@@ -269,6 +293,10 @@ const
   ContextAlignment = 16;
   ContextFlagsOffset = $30;
   ContextRIPOffset = $f8;
+  ContextRSPOffset = $98;
+  MEM_COMMIT_STATE = $1000;   // MEMORY_BASIC_INFORMATION.State of committed memory
+  PAGE_NOACCESS = $01;
+  PAGE_GUARD = $100;
   SuspendFailed = LongWord(-1);
   RuntimeFunctionSize = 12;
   RuntimeFunctionWords = 3;
@@ -277,6 +305,14 @@ const
 function VirtualAlloc(AAddress: Pointer; ASize: PtrUInt; AAllocationType, AProtection: LongWord): Pointer; stdcall; external 'kernel32' name 'VirtualAlloc';
 function VirtualProtect(AAddress: Pointer; ASize: PtrUInt; AProtection: LongWord; out AOldProtection: LongWord): LongBool; stdcall; external 'kernel32' name 'VirtualProtect';
 function FlushInstructionCache(AProcess: TWindowsHandle; AAddress: Pointer; ASize: PtrUInt): LongBool; stdcall; external 'kernel32' name 'FlushInstructionCache';
+type
+  TMemoryBasicInformation = record
+    BaseAddress, AllocationBase: QWord;
+    AllocationProtect, PartitionId: LongWord;   // PartitionId: a 16-bit field and padding
+    RegionSize: QWord;
+    State, Protect, MemoryType, Padding: LongWord;
+  end;
+function VirtualQuery(AAddress: Pointer; out ABuffer: TMemoryBasicInformation; ALength: PtrUInt): PtrUInt; stdcall; external 'kernel32' name 'VirtualQuery';
 function GetCurrentProcess: TWindowsHandle; stdcall; external 'kernel32' name 'GetCurrentProcess';
 function GetCurrentProcessId: LongWord; stdcall; external 'kernel32' name 'GetCurrentProcessId';
 function GetCurrentThreadId: LongWord; stdcall; external 'kernel32' name 'GetCurrentThreadId';
@@ -325,7 +361,13 @@ function MachPortDeallocate(ATask, AName: TMachPort): TKernelReturn; cdecl; exte
 function VMDeallocate(ATask: TMachPort; AAddress, ASize: PtrUInt): TKernelReturn; cdecl; external 'c' name 'vm_deallocate';
 function MachErrorString(AKernelResult: TKernelReturn): PChar; cdecl; external 'c' name 'mach_error_string';
 procedure SysICacheInvalidate(AStart: Pointer; ASize: PtrUInt); cdecl; external 'c' name 'sys_icache_invalidate';
+{$ifdef cpuaarch64}
 procedure PThreadJITWriteProtectNP(AEnabled: LongInt); cdecl; external 'c' name 'pthread_jit_write_protect_np';
+{$else}
+function ThreadGetState(AThread: TMachPort; AFlavor: LongInt; AState: Pointer; var ACount: LongWord): TKernelReturn; cdecl; external 'c' name 'thread_get_state';
+function ThreadInfo(AThread: TMachPort; AFlavor: LongInt; AInfo: Pointer; var ACount: LongWord): TKernelReturn; cdecl; external 'c' name 'thread_info';
+function MachVMRegion(ATask: TMachPort; var AAddress, ASize: QWord; AFlavor: LongInt; AInfo: Pointer; var ACount: LongWord; var AObjectName: TMachPort): TKernelReturn; cdecl; external 'c' name 'mach_vm_region';
+{$endif}
 function DyldImageCount: LongWord; cdecl; external 'c' name '_dyld_image_count';
 function DyldGetImageHeader(AIndex: LongWord): Pointer; cdecl; external 'c' name '_dyld_get_image_header';
 function DyldGetImageVMAddrSlide(AIndex: LongWord): PtrInt; cdecl; external 'c' name '_dyld_get_image_vmaddr_slide';
@@ -339,10 +381,29 @@ const
   VM_FLAGS_ANYWHERE = 1;
   VM_FLAGS_OVERWRITE = $4000;
   VM_INHERIT_NONE = 2;
+  KERN_TERMINATED = 37;                  // the thread is ending in the kernel
+  MACH_SEND_INVALID_DEST = $10000003;    // the thread has ended: its port is a dead name
+  X86ThreadState64 = 4;          // x86_THREAD_STATE64
+  X86ThreadStateCount = 42;      // x86_THREAD_STATE64_COUNT: 21 registers of 8 bytes, in 4-byte words
+  X86ThreadStateRIPIndex = 16;   // rax rbx rcx rdx rdi rsi rbp rsp r8..r15, then rip
+  X86ThreadStateRSPIndex = 7;
+  ThreadIdentifierInfo = 4;          // THREAD_IDENTIFIER_INFO
+  ThreadIdentifierInfoCount = 6;     // thread_id, thread_handle, dispatch_qaddr: 8 bytes each, in 4-byte words
+  ThreadHandleIndex = 1;             // thread_handle: the thread's pthread data, at the top of its stack but for the main thread's
+  VMRegionBasicInfo64 = 9;           // VM_REGION_BASIC_INFO_64
+  VMRegionBasicInfoCount64 = 9;      // vm_region_basic_info_data_64_t in 4-byte words; protection first
 {$endif}
 {$ifdef linux}
 function LibCGetTID: LongInt; cdecl; external 'c' name 'gettid';
 function LibCTGKill(AThreadGroupID, AThreadID, ASignal: LongInt): LongInt; cdecl; external 'c' name 'tgkill';
+type
+  TSignalStack = packed record
+    Base: Pointer;
+    Flags, Padding: LongInt;
+    Size: PtrUInt;
+  end;
+function LibCSigAltStack(ANew, AOld: Pointer): LongInt; cdecl; external 'c' name 'sigaltstack';
+function LibCPThreadSelf: PtrUInt; cdecl; external 'c' name 'pthread_self';
 const
   RTLD_DEFAULT = nil;
 {$endif}
@@ -834,6 +895,14 @@ const
   MH_OBJECT = 1;
   MH_EXECUTE = 2;
   CPU_TYPE_ARM64 = $0100000C;
+  CPU_TYPE_X86_64 = $01000007;
+{$ifdef cpuaarch64}
+  MachHostCPU = CPU_TYPE_ARM64;
+  MachHostName = 'arm64';
+{$else}
+  MachHostCPU = CPU_TYPE_X86_64;
+  MachHostName = 'x86-64';
+{$endif}
   LC_SEGMENT_64 = $19;
   LC_SYMTAB = 2;
   N_STAB = $e0;
@@ -856,6 +925,16 @@ const
   ARM64_RELOC_GOT_LOAD_PAGEOFF12 = 6;
   ARM64_RELOC_POINTER_TO_GOT = 7;
   ARM64_RELOC_ADDEND = 10;
+  X86_64_RELOC_UNSIGNED = 0;
+  X86_64_RELOC_SIGNED = 1;
+  X86_64_RELOC_BRANCH = 2;
+  X86_64_RELOC_GOT_LOAD = 3;
+  X86_64_RELOC_GOT = 4;
+  X86_64_RELOC_SUBTRACTOR = 5;
+  X86_64_RELOC_SIGNED_1 = 6;
+  X86_64_RELOC_SIGNED_2 = 7;
+  X86_64_RELOC_SIGNED_4 = 8;
+  X86PCRelativeFieldSize = 4;
   MachRelocSymbolMask = $ffffff;
   MachRelocPCRelativeShift = 24;
   MachRelocLengthShift = 25;
@@ -878,6 +957,181 @@ begin
   Result := AName;
 end;
 
+// The relocations of one section, into the neutral form. ASectionAddresses: each section's
+// address in the object file, which a reference without a symbol holds.
+{$ifdef cpuaarch64}
+function ReadMachRelocations(AObjectFile: PObjectFile; ASection: PSection; ASectionAddress: QWord; ARaw: PMachRelocation; ACount: LongWord; const ASectionAddresses: array of QWord): Boolean;
+var
+  RelocationIndex, Bits, SymbolNumber, LengthCode, IsExternal, RelocationType: LongWord;
+  PendingAddend, StoredAddend: Int64;
+  Relocation: TRelocation;
+begin
+  Result := False;
+  PendingAddend := 0;
+  RelocationIndex := 0;
+  while RelocationIndex < ACount do
+  begin
+    Bits := ARaw[RelocationIndex].Bits;
+    SymbolNumber := Bits and MachRelocSymbolMask;
+    LengthCode := (Bits shr MachRelocLengthShift) and MachRelocLengthMask;
+    IsExternal := (Bits shr MachRelocExternalShift) and 1;
+    RelocationType := Bits shr MachRelocTypeShift;
+    FillChar(Relocation, SizeOf(Relocation), 0);
+    Relocation.Offset := LongWord(ARaw[RelocationIndex].r_address);
+    Relocation.Symbol := -1;
+    Relocation.Section := -1;
+    if RelocationType = ARM64_RELOC_ADDEND then   // for the relocation that follows
+    begin
+      PendingAddend := SarLongint(LongInt(SymbolNumber shl MachRelocAddendShift), MachRelocAddendShift);
+      Inc(RelocationIndex);
+      Continue;
+    end;
+    if IsExternal = 1 then Relocation.Symbol := SymbolNumber else Relocation.Section := LongInt(SymbolNumber) - 1;
+    case RelocationType of
+      ARM64_RELOC_UNSIGNED, ARM64_RELOC_SUBTRACTOR:   // the addend is in the bytes
+        begin
+          if ASection^.ZeroFill then StoredAddend := 0
+          else if LengthCode = MachRelocLengthQuad then StoredAddend := PInt64(ASection^.Data + Relocation.Offset)^
+          else StoredAddend := PLongInt(ASection^.Data + Relocation.Offset)^;
+          if RelocationType = ARM64_RELOC_UNSIGNED then
+          begin
+            if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkAbsolute64 else Relocation.Kind := rkAbsolute32;
+            if IsExternal = 1 then Relocation.Addend := StoredAddend
+            else if (Relocation.Section >= 0) and (Relocation.Section < Length(ASectionAddresses)) then
+            begin
+              Relocation.Addend := StoredAddend - Int64(ASectionAddresses[Relocation.Section]);
+              Relocation.TargetOffset := Relocation.Addend;
+              Relocation.HasTargetOffset := True;
+            end
+            else Relocation.Kind := rkUnsupported;
+          end
+          else
+          begin
+            if (RelocationIndex + 1 >= ACount) or ((ARaw[RelocationIndex + 1].Bits shr MachRelocTypeShift) <> ARM64_RELOC_UNSIGNED) or (((ARaw[RelocationIndex + 1].Bits shr MachRelocExternalShift) and 1) = 0) or (IsExternal = 0) then
+            begin
+              Say('error ' + AObjectFile^.UnitName + ': malformed subtractor relocation');
+              Exit;
+            end;
+            if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkSubtract64 else Relocation.Kind := rkSubtract32;
+            Relocation.SecondarySymbol := ARaw[RelocationIndex + 1].Bits and MachRelocSymbolMask;
+            Relocation.Addend := StoredAddend;
+            Inc(RelocationIndex);
+          end;
+        end;
+      ARM64_RELOC_BRANCH26: Relocation.Kind := rkBranch26;
+      ARM64_RELOC_PAGE21: Relocation.Kind := rkPage21;
+      ARM64_RELOC_PAGEOFF12: Relocation.Kind := rkPageOffset12;
+      ARM64_RELOC_GOT_LOAD_PAGE21: Relocation.Kind := rkGOTPage21;
+      ARM64_RELOC_GOT_LOAD_PAGEOFF12: Relocation.Kind := rkGOTPageOffset12;
+      ARM64_RELOC_POINTER_TO_GOT: if ((Bits shr MachRelocPCRelativeShift) and 1) = 1 then Relocation.Kind := rkGOTPCRelative32 else Relocation.Kind := rkGOTAbsolute64;
+    else
+      Relocation.Kind := rkUnsupported;
+    end;
+    if (RelocationType >= ARM64_RELOC_BRANCH26) then
+    begin
+      Relocation.Addend := PendingAddend;
+      if IsExternal = 0 then Relocation.Kind := rkUnsupported;
+    end;
+    if Relocation.Kind = rkUnsupported then Relocation.SecondarySymbol := RelocationType;
+    PendingAddend := 0;
+    AddRelocation(ASection^, Relocation);
+    Inc(RelocationIndex);
+  end;
+  Result := True;
+end;
+{$else}
+// x86-64 keeps every addend in the bytes. A pc-relative field counts from the end of its
+// instruction: 4 bytes after the field, plus an immediate that follows it, which SIGNED_1,
+// SIGNED_2 and SIGNED_4 name. With a symbol, the stored addend already allows for that
+// immediate. Without one, the bytes hold the distance from the end of the instruction to the
+// target, which gives the target's offset in its section.
+function ReadMachRelocations(AObjectFile: PObjectFile; ASection: PSection; ASectionAddress: QWord; ARaw: PMachRelocation; ACount: LongWord; const ASectionAddresses: array of QWord): Boolean;
+var
+  RelocationIndex, Bits, SymbolNumber, LengthCode, IsExternal, IsPCRelative, RelocationType: LongWord;
+  StoredAddend: Int64;
+  ImmediateSize: LongInt;
+  Relocation: TRelocation;
+begin
+  Result := False;
+  RelocationIndex := 0;
+  while RelocationIndex < ACount do
+  begin
+    Bits := ARaw[RelocationIndex].Bits;
+    SymbolNumber := Bits and MachRelocSymbolMask;
+    IsPCRelative := (Bits shr MachRelocPCRelativeShift) and 1;
+    LengthCode := (Bits shr MachRelocLengthShift) and MachRelocLengthMask;
+    IsExternal := (Bits shr MachRelocExternalShift) and 1;
+    RelocationType := Bits shr MachRelocTypeShift;
+    FillChar(Relocation, SizeOf(Relocation), 0);
+    Relocation.Offset := LongWord(ARaw[RelocationIndex].r_address);
+    Relocation.Symbol := -1;
+    Relocation.Section := -1;
+    if IsExternal = 1 then Relocation.Symbol := SymbolNumber else Relocation.Section := LongInt(SymbolNumber) - 1;
+    if ASection^.ZeroFill then StoredAddend := 0
+    else if LengthCode = MachRelocLengthQuad then StoredAddend := PInt64(ASection^.Data + Relocation.Offset)^
+    else StoredAddend := PLongInt(ASection^.Data + Relocation.Offset)^;
+    case RelocationType of
+      X86_64_RELOC_UNSIGNED:
+        begin
+          if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkAbsolute64 else Relocation.Kind := rkAbsolute32;
+          if IsExternal = 1 then Relocation.Addend := StoredAddend
+          else if (Relocation.Section >= 0) and (Relocation.Section < Length(ASectionAddresses)) then
+          begin
+            Relocation.Addend := StoredAddend - Int64(ASectionAddresses[Relocation.Section]);
+            Relocation.TargetOffset := Relocation.Addend;
+            Relocation.HasTargetOffset := True;
+          end
+          else Relocation.Kind := rkUnsupported;
+        end;
+      X86_64_RELOC_SUBTRACTOR:   // with the UNSIGNED that follows: that target minus this one
+        begin
+          if (RelocationIndex + 1 >= ACount) or ((ARaw[RelocationIndex + 1].Bits shr MachRelocTypeShift) <> X86_64_RELOC_UNSIGNED) or (((ARaw[RelocationIndex + 1].Bits shr MachRelocExternalShift) and 1) = 0) or (IsExternal = 0) then
+          begin
+            Say('error ' + AObjectFile^.UnitName + ': malformed subtractor relocation');
+            Exit;
+          end;
+          if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkSubtract64 else Relocation.Kind := rkSubtract32;
+          Relocation.SecondarySymbol := ARaw[RelocationIndex + 1].Bits and MachRelocSymbolMask;
+          Relocation.Addend := StoredAddend;
+          Inc(RelocationIndex);
+        end;
+      X86_64_RELOC_SIGNED, X86_64_RELOC_SIGNED_1, X86_64_RELOC_SIGNED_2, X86_64_RELOC_SIGNED_4, X86_64_RELOC_BRANCH:
+        begin
+          if RelocationType = X86_64_RELOC_BRANCH then Relocation.Kind := rkBranch32 else Relocation.Kind := rkPCRelative32;
+          case RelocationType of
+            X86_64_RELOC_SIGNED_1: ImmediateSize := 1;
+            X86_64_RELOC_SIGNED_2: ImmediateSize := 2;
+            X86_64_RELOC_SIGNED_4: ImmediateSize := 4;
+          else
+            ImmediateSize := 0;
+          end;
+          if IsExternal = 1 then Relocation.Addend := StoredAddend - X86PCRelativeFieldSize
+          else if (Relocation.Section >= 0) and (Relocation.Section < Length(ASectionAddresses)) then
+          begin
+            Relocation.TargetOffset := Int64(ASectionAddress + Relocation.Offset) + X86PCRelativeFieldSize + ImmediateSize + StoredAddend - Int64(ASectionAddresses[Relocation.Section]);
+            Relocation.HasTargetOffset := True;
+            Relocation.Addend := Relocation.TargetOffset - X86PCRelativeFieldSize - ImmediateSize;
+          end
+          else Relocation.Kind := rkUnsupported;
+        end;
+      X86_64_RELOC_GOT_LOAD, X86_64_RELOC_GOT:
+        if (IsExternal = 1) and (IsPCRelative = 1) then
+        begin
+          Relocation.Kind := rkGOTPCRelative32;
+          Relocation.Addend := StoredAddend - X86PCRelativeFieldSize;
+        end
+        else Relocation.Kind := rkUnsupported;
+    else
+      Relocation.Kind := rkUnsupported;   // TLV: fpc gives Darwin thread variables its own scheme
+    end;
+    if Relocation.Kind = rkUnsupported then Relocation.SecondarySymbol := RelocationType;
+    AddRelocation(ASection^, Relocation);
+    Inc(RelocationIndex);
+  end;
+  Result := True;
+end;
+{$endif}
+
 function ParseMachO(AObjectFile: PObjectFile): Boolean;
 var
   Header: PMachHeader64;
@@ -887,23 +1141,18 @@ var
   SymtabCommand: PMachSymtabCommand;
   NameList: PMachSymbol64;
   Strings: PChar;
-  I, J, RelocationIndex, RawCount: LongWord;
+  I, J: LongWord;
   SectionAddresses: array of QWord;
   RelocationInfo: array of record Offset, Count: LongWord; end;
   Section: PSection;
   SectionType: LongWord;
-  RawRelocations: PMachRelocation;
-  Bits, SymbolNumber, LengthCode, IsExternal, RelocationType: LongWord;
-  PendingAddend: Int64;
-  Relocation: TRelocation;
-  StoredAddend: Int64;
   Symbol: PObjectSymbol;
 begin
   Result := False;
   Header := PMachHeader64(AObjectFile^.Buffer);
-  if (AObjectFile^.BufferSize < SizeOf(TMachHeader64)) or (Header^.magic <> MH_MAGIC_64) or (Header^.filetype <> MH_OBJECT) or (Header^.cputype <> CPU_TYPE_ARM64) then
+  if (AObjectFile^.BufferSize < SizeOf(TMachHeader64)) or (Header^.magic <> MH_MAGIC_64) or (Header^.filetype <> MH_OBJECT) or (Header^.cputype <> MachHostCPU) then
   begin
-    Say('error ' + AObjectFile^.Path + ' is not an arm64 Mach-O object');
+    Say('error ' + AObjectFile^.Path + ' is not an ' + MachHostName + ' Mach-O object');
     Exit;
   end;
   SymtabCommand := nil;
@@ -966,78 +1215,7 @@ begin
   begin
     Section := @AObjectFile^.Sections[I];
     if (Section^.Kind = 0) or (RelocationInfo[I].Count = 0) then Continue;
-    RawRelocations := PMachRelocation(AObjectFile^.Buffer + RelocationInfo[I].Offset);
-    RawCount := RelocationInfo[I].Count;
-    PendingAddend := 0;
-    RelocationIndex := 0;
-    while RelocationIndex < RawCount do
-    begin
-      Bits := RawRelocations[RelocationIndex].Bits;
-      SymbolNumber := Bits and MachRelocSymbolMask;
-      LengthCode := (Bits shr MachRelocLengthShift) and MachRelocLengthMask;
-      IsExternal := (Bits shr MachRelocExternalShift) and 1;
-      RelocationType := Bits shr MachRelocTypeShift;
-      FillChar(Relocation, SizeOf(Relocation), 0);
-      Relocation.Offset := LongWord(RawRelocations[RelocationIndex].r_address);
-      Relocation.Symbol := -1;
-      Relocation.Section := -1;
-      if RelocationType = ARM64_RELOC_ADDEND then   // for the relocation that follows
-      begin
-        PendingAddend := SarLongint(LongInt(SymbolNumber shl MachRelocAddendShift), MachRelocAddendShift);
-        Inc(RelocationIndex);
-        Continue;
-      end;
-      if IsExternal = 1 then Relocation.Symbol := SymbolNumber else Relocation.Section := LongInt(SymbolNumber) - 1;
-      case RelocationType of
-        ARM64_RELOC_UNSIGNED, ARM64_RELOC_SUBTRACTOR:   // the addend is in the bytes
-          begin
-            if Section^.ZeroFill then StoredAddend := 0
-            else if LengthCode = MachRelocLengthQuad then StoredAddend := PInt64(Section^.Data + Relocation.Offset)^
-            else StoredAddend := PLongInt(Section^.Data + Relocation.Offset)^;
-            if RelocationType = ARM64_RELOC_UNSIGNED then
-            begin
-              if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkAbsolute64 else Relocation.Kind := rkAbsolute32;
-              if IsExternal = 1 then Relocation.Addend := StoredAddend
-              else if (Relocation.Section >= 0) and (Relocation.Section < Length(SectionAddresses)) then
-              begin
-                Relocation.Addend := StoredAddend - Int64(SectionAddresses[Relocation.Section]);
-                Relocation.TargetOffset := Relocation.Addend;
-                Relocation.HasTargetOffset := True;
-              end
-              else Relocation.Kind := rkUnsupported;
-            end
-            else
-            begin
-              if (RelocationIndex + 1 >= RawCount) or ((RawRelocations[RelocationIndex + 1].Bits shr MachRelocTypeShift) <> ARM64_RELOC_UNSIGNED) or (((RawRelocations[RelocationIndex + 1].Bits shr MachRelocExternalShift) and 1) = 0) or (IsExternal = 0) then
-              begin
-                Say('error ' + AObjectFile^.UnitName + ': malformed subtractor relocation');
-                Exit;
-              end;
-              if LengthCode = MachRelocLengthQuad then Relocation.Kind := rkSubtract64 else Relocation.Kind := rkSubtract32;
-              Relocation.SecondarySymbol := RawRelocations[RelocationIndex + 1].Bits and MachRelocSymbolMask;
-              Relocation.Addend := StoredAddend;
-              Inc(RelocationIndex);
-            end;
-          end;
-        ARM64_RELOC_BRANCH26: Relocation.Kind := rkBranch26;
-        ARM64_RELOC_PAGE21: Relocation.Kind := rkPage21;
-        ARM64_RELOC_PAGEOFF12: Relocation.Kind := rkPageOffset12;
-        ARM64_RELOC_GOT_LOAD_PAGE21: Relocation.Kind := rkGOTPage21;
-        ARM64_RELOC_GOT_LOAD_PAGEOFF12: Relocation.Kind := rkGOTPageOffset12;
-        ARM64_RELOC_POINTER_TO_GOT: if ((Bits shr MachRelocPCRelativeShift) and 1) = 1 then Relocation.Kind := rkGOTPCRelative32 else Relocation.Kind := rkGOTAbsolute64;
-      else
-        Relocation.Kind := rkUnsupported;
-      end;
-      if (RelocationType >= ARM64_RELOC_BRANCH26) then
-      begin
-        Relocation.Addend := PendingAddend;
-        if IsExternal = 0 then Relocation.Kind := rkUnsupported;
-      end;
-      if Relocation.Kind = rkUnsupported then Relocation.SecondarySymbol := RelocationType;
-      PendingAddend := 0;
-      AddRelocation(Section^, Relocation);
-      Inc(RelocationIndex);
-    end;
+    if not ReadMachRelocations(AObjectFile, Section, SectionAddresses[I], PMachRelocation(AObjectFile^.Buffer + RelocationInfo[I].Offset), RelocationInfo[I].Count, SectionAddresses) then Exit;
   end;
   FinishObjectFile(AObjectFile);
   Result := True;
@@ -1934,6 +2112,84 @@ var
   HostMilliseconds: Double;
   TLSMemorySize, TLSAlignment: QWord;   // the executable's TLS segment
   PageSize: QWord;
+  HostBoundaries: array of QWord;   // where each symbol and section of the program starts, and each section ends; sorted
+  HostBoundaryCount: SizeInt;
+
+procedure AddHostBoundary(AAddress: QWord);
+begin
+  if HostBoundaryCount = Length(HostBoundaries) then SetLength(HostBoundaries, ListGrowthLarge + 2 * Length(HostBoundaries));
+  HostBoundaries[HostBoundaryCount] := AAddress;
+  Inc(HostBoundaryCount);
+end;
+
+// Sorted, each address once.
+procedure FinishHostBoundaries;
+  procedure QuickSort(ALow, AHigh: SizeInt);
+  var
+    I, J: SizeInt;
+    Pivot, Temporary: QWord;
+  begin
+    while ALow < AHigh do
+    begin
+      I := ALow;
+      J := AHigh;
+      Pivot := HostBoundaries[(ALow + AHigh) shr 1];
+      repeat
+        while HostBoundaries[I] < Pivot do Inc(I);
+        while Pivot < HostBoundaries[J] do Dec(J);
+        if I <= J then
+        begin
+          Temporary := HostBoundaries[I];
+          HostBoundaries[I] := HostBoundaries[J];
+          HostBoundaries[J] := Temporary;
+          Inc(I);
+          Dec(J);
+        end;
+      until I > J;
+      if J - ALow < AHigh - I then
+      begin
+        QuickSort(ALow, J);
+        ALow := I;
+      end
+      else
+      begin
+        QuickSort(I, AHigh);
+        AHigh := J;
+      end;
+    end;
+  end;
+var
+  I, Count: SizeInt;
+begin
+  if HostBoundaryCount = 0 then Exit;
+  QuickSort(0, HostBoundaryCount - 1);
+  Count := 1;
+  for I := 1 to HostBoundaryCount - 1 do
+    if HostBoundaries[I] <> HostBoundaries[Count - 1] then
+    begin
+      HostBoundaries[Count] := HostBoundaries[I];
+      Inc(Count);
+    end;
+  HostBoundaryCount := Count;
+end;
+
+// The bytes a routine of the program has at its entry: up to the next symbol or the end of
+// its section. Without symbol sizes on every system, that is the most a jump written there
+// may cover. 0 when nothing follows the address.
+function HostEntryRoom(AAddress: QWord): QWord;
+var
+  Lower, Upper, Middle: SizeInt;
+begin
+  Lower := 0;
+  Upper := HostBoundaryCount;
+  while Lower < Upper do
+  begin
+    Middle := (Lower + Upper) shr 1;
+    if HostBoundaries[Middle] <= AAddress then Lower := Middle + 1 else Upper := Middle;
+  end;
+  if Lower = HostBoundaryCount then Exit(0);
+  Result := HostBoundaries[Lower] - AAddress;
+end;
 
 {$if defined(darwin)}
 var
@@ -2019,6 +2275,8 @@ begin
       begin
         Inc(SectionCount);
         if SectionCount < MachSectionLimit then SectionIsCode[SectionCount] := (SectionHeader^.flags and S_ATTR_PURE_INSTRUCTIONS) <> 0;
+        AddHostBoundary(SectionHeader^.Address + QWord(Slide));
+        AddHostBoundary(SectionHeader^.Address + SectionHeader^.size + QWord(Slide));
         Inc(SectionHeader);
       end;
     end;
@@ -2039,8 +2297,10 @@ begin
       HostPool[I].Address := NameList[I].n_value + QWord(Slide);
       HostPool[I].IsCode := SectionIsCode[NameList[I].n_sect];
       MapPut(HostSymbols, Name, @HostPool[I]);
+      AddHostBoundary(HostPool[I].Address);
     end;
   end;
+  FinishHostBoundaries;
   HostBuilt := True;
   HostMilliseconds := NowMilliseconds - StartTime;
 end;
@@ -2116,6 +2376,12 @@ begin
     Header := PELFHeader(Executable.Buffer);
     SectionHeaders := PELFSectionHeader(Executable.Buffer + Header^.e_shoff);
     for I := 0 to Header^.e_shnum - 1 do
+      if (SectionHeaders[I].sh_flags and SHF_ALLOC) <> 0 then
+      begin
+        AddHostBoundary(SectionHeaders[I].sh_addr + QWord(Slide));
+        AddHostBoundary(SectionHeaders[I].sh_addr + SectionHeaders[I].sh_size + QWord(Slide));
+      end;
+    for I := 0 to Header^.e_shnum - 1 do
     begin
       if SectionHeaders[I].sh_type <> SHT_SYMTAB then Continue;
       Symbols := PELFSymbol(Executable.Buffer + SectionHeaders[I].sh_offset);
@@ -2131,13 +2397,15 @@ begin
         HostPool[J].Address := Symbols[J].st_value + QWord(Slide);
         HostPool[J].IsCode := (SectionHeaders[Symbols[J].st_shndx].sh_flags and SHF_EXECINSTR) <> 0;
         HostPool[J].IsTLS := (SectionHeaders[Symbols[J].st_shndx].sh_flags and SHF_TLS) <> 0;
-        if HostPool[J].IsTLS then HostPool[J].Address := Symbols[J].st_value;   // an offset, not an address
+        if HostPool[J].IsTLS then HostPool[J].Address := Symbols[J].st_value   // an offset, not an address
+        else AddHostBoundary(HostPool[J].Address);
         MapPut(HostSymbols, Name, @HostPool[J]);
       end;
     end;
     FreeMem(Executable.Buffer);
     Executable.Buffer := nil;
   end;
+  FinishHostBoundaries;
   HostBuilt := True;
   HostMilliseconds := NowMilliseconds - StartTime;
 end;
@@ -2316,6 +2584,11 @@ begin
     PEOffset := PLongWord(Buffer + PEHeaderOffsetField)^;
     FileHeader := PCOFFHeader(Buffer + PEOffset + PESignatureSize);
     SectionHeaders := PCOFFSection(Buffer + PEOffset + PEOptionalHeaderOffset + FileHeader^.SizeOfOptionalHeader);
+    for I := 0 to FileHeader^.NumberOfSections - 1 do
+    begin
+      AddHostBoundary(ImageBase + SectionHeaders[I].VirtualAddress);
+      AddHostBoundary(ImageBase + SectionHeaders[I].VirtualAddress + SectionHeaders[I].VirtualSize);
+    end;
     if (FileHeader^.PointerToSymbolTable <> 0) and (FileHeader^.NumberOfSymbols > 0) then
     begin
       Symbols := PCOFFSymbol(Buffer + FileHeader^.PointerToSymbolTable);
@@ -2336,6 +2609,7 @@ begin
             HostPool[I].IsCode := (SectionHeaders[SymbolEntry^.SectionNumber - 1].Characteristics and IMAGE_SCN_MEM_EXECUTE) <> 0;
             // an external name wins over a local one of another unit
             if (SymbolEntry^.StorageClass = IMAGE_SYM_CLASS_EXTERNAL) or (MapGet(HostSymbols, Name) = nil) then MapPut(HostSymbols, Name, @HostPool[I]);
+            AddHostBoundary(HostPool[I].Address);
           end;
         end;
         Inc(I, 1 + SymbolEntry^.NumberOfAuxSymbols);
@@ -2344,6 +2618,7 @@ begin
     FreeMem(Buffer);
   end;
   ReadMapFile(AnsiString(PChar(@Path[0])));
+  FinishHostBoundaries;
   HostBuilt := True;
   HostMilliseconds := NowMilliseconds - StartTime;
 end;
@@ -2352,7 +2627,7 @@ end;
 // ================================================================ the system: memory and code
 procedure JITWritable(AEnabled: Boolean);
 begin
-{$ifdef darwin}
+{$if defined(darwin) and defined(cpuaarch64)}
   if AEnabled then PThreadJITWriteProtectNP(0) else PThreadJITWriteProtectNP(1);
 {$endif}
 end;
@@ -2533,7 +2808,7 @@ begin
 {$ifdef cpux86_64}
   // One block for islands, code and data: an island reaches its slot, and new code the
   // program's variables, through 32-bit offsets, so everything must be within 2 GiB of
-  // everything else. (Linux does not stop a mapping from being writable and executable.)
+  // everything else. (Linux and macOS on Intel let a mapping be writable and executable.)
   Islands := ReserveNear(IslandAreaSize + JITSize + DataAreaSize, RegionKindCode, RegionReach);
   Code := nil;
   Data := nil;
@@ -2595,6 +2870,8 @@ type
     Address: QWord;
     ByteCount: LongInt;
     Bytes: array[0..7] of Byte;
+    Owner: Pointer;   // the PRegistrySymbol redirected
+    Target: QWord;    // the new code the jump leads to, through its island
   end;
 
 {$ifdef cpuaarch64}
@@ -2620,9 +2897,17 @@ var
   Instruction: LongWord;
 begin
   Instruction := ARM64Branch or (LongWord(SarInt64(Int64(ATarget - AFrom), 2)) and ARM64Imm26Mask);
+  FillChar(Result, SizeOf(Result), 0);
   Result.Address := AFrom;
-  Result.ByteCount := 4;
-  Move(Instruction, Result.Bytes[0], 4);
+  Result.ByteCount := RedirectSize;
+  Move(Instruction, Result.Bytes[0], RedirectSize);
+end;
+
+// An A64 instruction is as long as the branch a redirect writes, so a call at the entry
+// returns after it.
+function CallReturnsInsideRedirect(const AEntry: PByte): Boolean;
+begin
+  Result := False;
 end;
 {$else}
 // An island: jmp qword ptr [rip + slot]. The slot is ordinary memory within 2 GiB.
@@ -2645,10 +2930,51 @@ end;
 // The entry of a function, overwritten: jmp rel32 island (5 bytes).
 function RedirectPatch(AFrom, ATarget: QWord): TPatch;
 begin
+  FillChar(Result, SizeOf(Result), 0);
   Result.Address := AFrom;
-  Result.ByteCount := X86JumpRel32Size;
+  Result.ByteCount := RedirectSize;
   Result.Bytes[0] := X86OpcodeJumpRel32;
   PLongInt(@Result.Bytes[1])^ := LongInt(Int64(ATarget - (AFrom + X86JumpRel32Size)));
+end;
+
+// Whether a call in the bytes a redirect replaces ends before them: a thread stopped in the
+// routine it called would return into the middle of the jump. Where the instructions of the
+// entry begin isn't known, so every byte is taken as the opcode of a call in turn: e8 with a
+// 16-bit offset after an operand-size prefix (with 32 bits, it ends at the jump's end or
+// after it), and ff /2 or /3 through a register or memory. Other prefixes come before the
+// opcode, so they don't move where the call ends.
+function CallReturnsInsideRedirect(const AEntry: PByte): Boolean;
+var
+  Opcode, CallLength: LongInt;
+  ModRM, Mode, Memory: Byte;
+begin
+  Result := False;
+  for Opcode := 0 to RedirectSize - 2 do
+  begin
+    CallLength := 0;
+    if (AEntry[Opcode] = X86OpcodeCallRel32) and (Opcode > 0) and (AEntry[Opcode - 1] = X86OperandSizePrefix) then
+      CallLength := 1 + SizeOf(SmallInt)
+    else if AEntry[Opcode] = X86OpcodeGroup5 then
+    begin
+      ModRM := AEntry[Opcode + 1];
+      Mode := ModRM shr 6;
+      Memory := ModRM and 7;
+      if ((ModRM shr 3) and 7) in [X86CallNear, X86CallFar] then
+      begin
+        CallLength := 2;   // the opcode and ModRM
+        if (Mode <> X86ModRMRegister) and (Memory = X86ModRMSIB) then Inc(CallLength);
+        case Mode of
+          X86ModRMNoOffset:
+            // a SIB byte past the jump's end: the call ends after it either way
+            if (Memory = X86ModRMNoBase) or ((Memory = X86ModRMSIB) and ((Opcode + 2 >= RedirectSize) or ((AEntry[Opcode + 2] and 7) = X86ModRMNoBase))) then
+              Inc(CallLength, SizeOf(LongInt));
+          X86ModRMByteOffset: Inc(CallLength, SizeOf(ShortInt));
+          X86ModRMLongOffset: Inc(CallLength, SizeOf(LongInt));
+        end;
+      end;
+    end;
+    if (CallLength > 0) and (Opcode + CallLength < RedirectSize) then Exit(True);
+  end;
 end;
 {$endif}
 
@@ -2683,8 +3009,9 @@ type
     Slot: PQWord;       // functions: what the islands jump through
     Island: QWord;      // next to the program: for the entry in the program's text
     FarIsland: QWord;   // next to the new code: for entries of superseded versions there
+    EntryRoom: QWord;   // the bytes at CurrentAddress up to the next symbol or section
     Pending: Boolean;
-    PendingCanonicalAddress, PendingCurrentAddress: QWord;
+    PendingCanonicalAddress, PendingCurrentAddress, PendingEntryRoom: QWord;
   end;
   TStore = record Destination: PQWord; Value: QWord; end;
   TVMTUpdate = record ObjectFile: PObjectFile; Symbol: PObjectSymbol; OldAddress: QWord; end;
@@ -2753,6 +3080,7 @@ begin
     Symbol^.Pending := True;
     Symbol^.PendingCanonicalAddress := Symbol^.CanonicalAddress;
     Symbol^.PendingCurrentAddress := Symbol^.CurrentAddress;
+    Symbol^.PendingEntryRoom := Symbol^.EntryRoom;
     if PendingCount = Length(PendingSymbols) then SetLength(PendingSymbols, ListGrowthLarge + 2 * Length(PendingSymbols));
     PendingSymbols[PendingCount] := Symbol;
     Inc(PendingCount);
@@ -2785,6 +3113,17 @@ end;
 function PlacedAddress(AObjectFile: PObjectFile; ASymbol: PObjectSymbol): QWord; inline;
 begin
   Result := QWord(PtrUInt(AObjectFile^.Sections[ASymbol^.Section].Base)) + ASymbol^.Value;
+end;
+
+// The bytes a placed routine has at its entry: up to the next symbol of its section, or the
+// padding after the section's end, since the next code section starts CodeAlignment-aligned.
+function PlacedEntryRoom(AObjectFile: PObjectFile; ASymbol: PObjectSymbol): QWord;
+var
+  SectionSize: QWord;
+begin
+  SectionSize := AObjectFile^.Sections[ASymbol^.Section].Size;
+  if ASymbol^.Value + ASymbol^.Size < SectionSize then Result := ASymbol^.Size
+  else Result := ((SectionSize + CodeAlignment - 1) and not QWord(CodeAlignment - 1)) - ASymbol^.Value;
 end;
 
 function KindName(AKind: Byte): AnsiString; inline;
@@ -2913,6 +3252,7 @@ begin
       end
       else Registered^.PendingCanonicalAddress := NewAddress;
       Registered^.PendingCurrentAddress := NewAddress;
+      Registered^.PendingEntryRoom := PlacedEntryRoom(AObjectFile, Symbol);
       Symbol^.ResolvedAddress := Registered^.PendingCanonicalAddress;
       Symbol^.CallAddress := NewAddress;
       Symbol^.Resolved := True;
@@ -3557,17 +3897,76 @@ var
   PatchError: AnsiString;   // set while other threads are stopped (a constant: no allocation), reported after
   StopFailure: AnsiString;  // set by WorldStop when not every other thread stopped (a constant), '' otherwise
   PatchKernelResult: LongInt;
+  ResumeHit: SizeInt;       // the patch a stopped thread is to resume inside (ResumesInsidePatch), -1 for none
+
+{$ifdef cpux86_64}
+// The patch whose bytes after the first hold AAddress, or -1. The patches are sorted by
+// address and don't overlap.
+function PatchHolding(AAddress: QWord): SizeInt;
+var
+  Low, High, Middle: SizeInt;
+begin
+  Result := -1;
+  Low := 0;
+  High := PatchCount - 1;
+  while Low <= High do
+  begin
+    Middle := (Low + High) div 2;
+    if Patches[Middle].Address < AAddress then
+    begin
+      Result := Middle;
+      Low := Middle + 1;
+    end
+    else High := Middle - 1;
+  end;
+  if (Result >= 0) and (AAddress >= Patches[Result].Address + QWord(Patches[Result].ByteCount)) then Result := -1;
+end;
+
+// Whether an aligned word in [ALow, AHigh), memory of a stopped thread's stack, is an
+// address inside a patch after its first byte. A signal or an exception saves where the
+// thread it interrupted is to resume in its handler's frame, and a call saves where it
+// returns to: a thread that resumes there after the patch runs the middle of the jump. Any
+// word counts, so a value that only looks like such an address refuses the patch too.
+// Sets ResumeHit.
+function HoldsResumeInsidePatch(ALow, AHigh: QWord): Boolean;
+var
+  Cell: PQWord;
+  First, Last: QWord;
+  Hit: SizeInt;
+begin
+  Result := False;
+  if PatchCount = 0 then Exit;
+  First := Patches[0].Address;
+  Last := Patches[PatchCount - 1].Address + QWord(Patches[PatchCount - 1].ByteCount);
+  Cell := PQWord(PtrUInt((ALow + (SizeOf(QWord) - 1)) and not QWord(SizeOf(QWord) - 1)));
+  while QWord(PtrUInt(Cell)) + SizeOf(QWord) <= AHigh do
+  begin
+    if (Cell^ > First) and (Cell^ < Last) then
+    begin
+      Hit := PatchHolding(Cell^);
+      if Hit >= 0 then
+      begin
+        ResumeHit := Hit;
+        Exit(True);
+      end;
+    end;
+    Inc(Cell);
+  end;
+end;
+{$endif}
 
 // Overwrite one instruction each at a set of addresses, with the other threads stopped
 // and without allocating.
 {$if defined(darwin)}
-// Pages of the program's __TEXT are replaced atomically: copy the page elsewhere, write the
+// Pages of the program's __TEXT are replaced atomically: copy the pages elsewhere, write the
 // copy, map it back over the original. The copy with VM_PROT_COPY is what code signing allows.
+// An x86-64 entry's jump is 5 bytes and may cross into the next page, so a copy covers every
+// page the patches that start in it reach.
 function ApplyPatches: Boolean;
 var
   Task: TMachPort;
-  Index, First: SizeInt;
-  Address, Page, PageCopy, Destination: QWord;
+  Index, First, K: SizeInt;
+  Address, Page, PageEnd, SpanSize, PageCopy, Destination: QWord;
   CurrentProtection, MaximumProtection: LongInt;
   KernelResult: TKernelReturn;
 begin
@@ -3587,33 +3986,44 @@ begin
       Continue;
     end;
     Page := Address and not (PageSize - 1);
+    PageEnd := Page + PageSize;
     First := Index;
+    // the patches sorted by address: those that start before the span ends, and the pages they reach
+    while (Index < PatchCount) and (Patches[Index].Address < PageEnd) and not InJIT(Patches[Index].Address) do
+    begin
+      if Patches[Index].Address + QWord(Patches[Index].ByteCount) > PageEnd then
+        PageEnd := (Patches[Index].Address + QWord(Patches[Index].ByteCount) + PageSize - 1) and not (PageSize - 1);
+      Inc(Index);
+    end;
+    SpanSize := PageEnd - Page;
     PageCopy := 0;
-    KernelResult := MachVMRemap(Task, PageCopy, PageSize, 0, VM_FLAGS_ANYWHERE, Task, Page, 1, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
-    if KernelResult = 0 then KernelResult := MachVMProtect(Task, PageCopy, PageSize, 0, VM_PROT_READ or VM_PROT_WRITE or VM_PROT_COPY);
+    KernelResult := MachVMRemap(Task, PageCopy, SpanSize, 0, VM_FLAGS_ANYWHERE, Task, Page, 1, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
+    if KernelResult = 0 then
+    begin
+      KernelResult := MachVMProtect(Task, PageCopy, SpanSize, 0, VM_PROT_READ or VM_PROT_WRITE or VM_PROT_COPY);
+      if KernelResult <> 0 then MachVMDeallocate(Task, PageCopy, SpanSize);
+    end;
     if KernelResult <> 0 then
     begin
       PatchKernelResult := KernelResult;
       PatchError := 'cannot copy a code page of the program';
       Exit(False);
     end;
-    while (Index < PatchCount) and ((Patches[Index].Address and not (PageSize - 1)) = Page) do
-    begin
-      Move(Patches[Index].Bytes[0], PByte(PtrUInt(PageCopy + (Patches[Index].Address - Page)))^, Patches[Index].ByteCount);
-      Inc(Index);
-    end;
-    KernelResult := MachVMProtect(Task, PageCopy, PageSize, 0, VM_PROT_READ or VM_PROT_EXECUTE);
+    for K := First to Index - 1 do
+      Move(Patches[K].Bytes[0], PByte(PtrUInt(PageCopy + (Patches[K].Address - Page)))^, Patches[K].ByteCount);
+    KernelResult := MachVMProtect(Task, PageCopy, SpanSize, 0, VM_PROT_READ or VM_PROT_EXECUTE);
     Destination := Page;
-    if KernelResult = 0 then KernelResult := MachVMRemap(Task, Destination, PageSize, 0, VM_FLAGS_FIXED or VM_FLAGS_OVERWRITE, Task, PageCopy, 0, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
+    if KernelResult = 0 then KernelResult := MachVMRemap(Task, Destination, SpanSize, 0, VM_FLAGS_FIXED or VM_FLAGS_OVERWRITE, Task, PageCopy, 0, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
     if KernelResult <> 0 then
     begin
+      MachVMDeallocate(Task, PageCopy, SpanSize);   // the copy, which never replaced the program's pages
       PatchKernelResult := KernelResult;
       PatchError := 'cannot replace a code page of the program';
       Exit(False);
     end;
     Inc(PatchedCount, Index - First);
-    MachVMDeallocate(Task, PageCopy, PageSize);
-    ClearCache(Pointer(PtrUInt(Page)), PageSize);
+    MachVMDeallocate(Task, PageCopy, SpanSize);
+    ClearCache(Pointer(PtrUInt(Page)), SpanSize);
   end;
 end;
 
@@ -3622,52 +4032,208 @@ begin
   MachVMProtect(mach_task_self_, AAddress and not (PageSize - 1), PageSize, 0, VM_PROT_READ or VM_PROT_WRITE);
 end;
 
+// thread_suspend for every other thread of the task. A thread that runs until it is
+// suspended can start another after the list was taken, so the agent lists the threads
+// again until a list has none it hasn't suspended. On x86-64, thread_get_state then says
+// where each one stopped (StoppedInsidePatch) and where its stack is (ResumesInsidePatch);
+// it waits until the thread has stopped. A thread that can't be suspended or whose state
+// can't be read fails the stop: the commit lets the others run and tries again. Only the
+// threads the agent suspended are resumed.
 var
-  Threads: PLongWord;
-  ThreadCount: LongWord;
+  SuspendedThreads: array[0..MaxThreads - 1] of TMachPort;   // with a send right each, until WorldStart
+  SuspendedCount: LongInt;
+{$ifdef cpux86_64}
+  ProgramCounters: array[0..MaxThreads - 1] of QWord;   // where SuspendedThreads[I] stopped
+  StackPointers: array[0..MaxThreads - 1] of QWord;     // and its stack pointer
+  ThreadState: array[0..X86ThreadStateCount - 1] of LongWord;   // x86_thread_state64_t
+  MainThread: TMachPort;   // the thread that started the agent, the program's first
+{$endif}
+
+function IsSuspended(AThread: TMachPort): Boolean;
+var
+  I: LongInt;
+begin
+  Result := False;
+  for I := 0 to SuspendedCount - 1 do
+    if SuspendedThreads[I] = AThread then Exit(True);
+end;
+
+// Suspends one listed thread. True when the agent now holds it (and its send right). A
+// thread that ended after the list was taken runs no more code: it is left out.
+function SuspendListedThread(AThread: TMachPort): Boolean;
+var
+  KernelResult: TKernelReturn;
+{$ifdef cpux86_64}
+  StateCount: LongWord;
+{$endif}
+begin
+  Result := False;
+  if SuspendedCount > High(SuspendedThreads) then
+  begin
+    StopFailure := TooManyThreadsFailure;
+    Exit;
+  end;
+  KernelResult := ThreadSuspend(AThread);
+  if (KernelResult = KERN_TERMINATED) or (KernelResult = MACH_SEND_INVALID_DEST) then Exit;
+  if KernelResult <> 0 then
+  begin
+    StopFailure := ThreadSuspendFailure;
+    PatchKernelResult := KernelResult;
+    Exit;
+  end;
+  SuspendedThreads[SuspendedCount] := AThread;
+  Inc(SuspendedCount);
+  Result := True;
+{$ifdef cpux86_64}
+  StateCount := X86ThreadStateCount;
+  KernelResult := ThreadGetState(AThread, X86ThreadState64, @ThreadState[0], StateCount);
+  if KernelResult <> 0 then
+  begin
+    StopFailure := ThreadStateFailure;
+    PatchKernelResult := KernelResult;
+  end
+  else
+  begin
+    ProgramCounters[SuspendedCount - 1] := PQWord(@ThreadState[X86ThreadStateRIPIndex * 2])^;
+    StackPointers[SuspendedCount - 1] := PQWord(@ThreadState[X86ThreadStateRSPIndex * 2])^;
+  end;
+{$endif}
+end;
 
 procedure WorldStop;
 var
   CurrentThread: TMachPort;
-  I: LongWord;
+  List: PLongWord;
+  Count: LongWord;
+  I, Added: LongInt;
+  KernelResult: TKernelReturn;
 begin
+  StopFailure := '';
+  PatchKernelResult := 0;
+  SuspendedCount := 0;
   if not SuspendThreads then Exit;
-  CurrentThread := MachThreadSelf;
-  if TaskThreads(mach_task_self_, Threads, ThreadCount) <> 0 then
-  begin
-    ThreadCount := 0;
-    Exit;
-  end;
-  for I := 0 to ThreadCount - 1 do
-    if Threads[I] <> CurrentThread then ThreadSuspend(Threads[I]);
+  CurrentThread := MachThreadSelf;   // a send right, given back below
+  repeat
+    Added := 0;
+    List := nil;
+    Count := 0;
+    KernelResult := TaskThreads(mach_task_self_, List, Count);
+    if KernelResult <> 0 then
+    begin
+      StopFailure := ThreadListFailure;   // the threads not suspended yet would run on: write nothing
+      PatchKernelResult := KernelResult;
+      Break;
+    end;
+    for I := 0 to LongInt(Count) - 1 do
+    begin
+      // each entry of the list is a send right: kept for a thread suspended now, given back otherwise
+      if (StopFailure = '') and (List[I] <> CurrentThread) and not IsSuspended(List[I]) and SuspendListedThread(List[I]) then
+      begin
+        Inc(Added);
+        Continue;
+      end;
+      MachPortDeallocate(mach_task_self_, List[I]);
+    end;
+    VMDeallocate(mach_task_self_, PtrUInt(List), Count * SizeOf(TMachPort));
+  until (StopFailure <> '') or (Added = 0);
   MachPortDeallocate(mach_task_self_, CurrentThread);
 end;
 
 procedure WorldStart;
 var
-  CurrentThread: TMachPort;
-  I: LongWord;
+  I: LongInt;
 begin
-  if not SuspendThreads or (ThreadCount = 0) then Exit;
-  CurrentThread := MachThreadSelf;
-  for I := 0 to ThreadCount - 1 do
+  for I := 0 to SuspendedCount - 1 do
   begin
-    if Threads[I] <> CurrentThread then ThreadResume(Threads[I]);
-    MachPortDeallocate(mach_task_self_, Threads[I]);
+    ThreadResume(SuspendedThreads[I]);
+    MachPortDeallocate(mach_task_self_, SuspendedThreads[I]);
   end;
-  MachPortDeallocate(mach_task_self_, CurrentThread);
-  VMDeallocate(mach_task_self_, PtrUInt(Threads), ThreadCount * SizeOf(LongWord));
-  ThreadCount := 0;
+  SuspendedCount := 0;
 end;
 
 procedure SetupWorldStop;
 begin
 end;
 
+// A thread stopped after the first byte of an entry about to be overwritten would resume in
+// the middle of the new jump. On aarch64 a patch is one instruction.
 function StoppedInsidePatch: Boolean;
+{$ifdef cpux86_64}
+var
+  K: LongInt;
+  I: SizeInt;
 begin
-  Result := False;   // aarch64: a patch is one instruction
+  Result := False;
+  for K := 0 to SuspendedCount - 1 do
+    for I := 0 to PatchCount - 1 do
+      if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
 end;
+{$else}
+begin
+  Result := False;
+end;
+{$endif}
+
+{$ifdef cpux86_64}
+// The memory region that holds AAddress, when it is readable.
+function FindRegion(AAddress: QWord; out AStart, AEnd: QWord): Boolean;
+var
+  Address, Size: QWord;
+  Info: array[0..VMRegionBasicInfoCount64 - 1] of LongWord;
+  Count: LongWord;
+  ObjectName: TMachPort;
+begin
+  AStart := 0;
+  AEnd := 0;
+  Address := AAddress;
+  Size := 0;
+  Count := VMRegionBasicInfoCount64;
+  ObjectName := 0;
+  Result := (MachVMRegion(mach_task_self_, Address, Size, VMRegionBasicInfo64, @Info[0], Count, ObjectName) = 0)
+    and (Address <= AAddress) and ((Info[0] and VM_PROT_READ) <> 0);
+  if Result then
+  begin
+    AStart := Address;
+    AEnd := Address + Size;
+  end;
+end;
+{$endif}
+
+// Whether a stopped thread is to resume inside a patch after its first byte (HoldsResumeInsidePatch):
+// its stack from its stack pointer to the end of the region that holds it. A handler that
+// runs on an alternate signal stack keeps where it returns to there, and the frame of a
+// handler it interrupted is on the thread's own stack, which is then read whole: the region
+// with the thread's pthread data, or argv's for the main thread.
+function ResumesInsidePatch: Boolean;
+{$ifdef cpux86_64}
+var
+  K: LongInt;
+  Start, Finish, OwnStart, OwnFinish, Hint: QWord;
+  Info: array[0..ThreadIdentifierInfoCount - 1] of LongWord;
+  Count: LongWord;
+begin
+  Result := False;
+  for K := 0 to SuspendedCount - 1 do
+  begin
+    if not FindRegion(StackPointers[K], Start, Finish) then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    Hint := 0;
+    Count := ThreadIdentifierInfoCount;
+    if SuspendedThreads[K] = MainThread then Hint := QWord(PtrUInt(argv))
+    else if ThreadInfo(SuspendedThreads[K], ThreadIdentifierInfo, @Info[0], Count) = 0 then Hint := PQWord(@Info[ThreadHandleIndex * 2])^;
+    if (Hint <> 0) and FindRegion(Hint, OwnStart, OwnFinish) and ((StackPointers[K] < OwnStart) or (StackPointers[K] >= OwnFinish))
+      and HoldsResumeInsidePatch(OwnStart, OwnFinish) then Exit(True);
+    if HoldsResumeInsidePatch(StackPointers[K], Finish) then Exit(True);
+  end;
+end;
+{$else}
+begin
+  Result := False;
+end;
+{$endif}
 {$elseif defined(linux)}
 var
   SleepingBlockers: Boolean;   // WorldStop let threads that block the park signal sleep on
@@ -3751,15 +4317,39 @@ var
   BlockerIDs: array[0..MaxThreads - 1] of LongInt;   // threads that blocked the park signal
   BlockerCount: LongInt;
   ProgramCounters: array[0..MaxThreads - 1] of QWord;   // where each stopped thread was
+{$ifdef cpux86_64}
+  StackPointers: array[0..MaxThreads - 1] of QWord;     // and its stack pointer
+  AlternateEnds: array[0..MaxThreads - 1] of QWord;     // the end of the alternate signal stack it ran on, 0 if none
+  OwnStackHints: array[0..MaxThreads - 1] of QWord;     // then an address in its own stack
+  SleeperIDs: array[0..MaxThreads - 1] of LongInt;      // threads that block the park signal and sleep
+  SleeperStacks: array[0..MaxThreads - 1] of QWord;     // the stack pointer of each, 0 for one that ended
+  SleeperCount: LongInt;
+{$endif}
 
 procedure ParkHandler(ASignal: LongInt; AInfo: PSigInfo; AContext: PSigContext); cdecl;
 var
   ArrivalIndex: LongInt;
+{$ifdef cpux86_64}
+  Stack: TSignalStack;
+{$endif}
 begin
   ArrivalIndex := InterLockedIncrement(Arrived) - 1;
 {$ifdef cpux86_64}
-  // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers; rip is the 17th
-  if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ProgramCounters)) and (AContext <> nil) then ProgramCounters[ArrivalIndex] := PQWord(PByte(AContext) + UContextRegistersOffset + UContextRIPIndex * SizeOf(QWord))^;
+  // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers; rsp is the 16th, rip the 17th
+  if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ProgramCounters)) and (AContext <> nil) then
+  begin
+    ProgramCounters[ArrivalIndex] := PQWord(PByte(AContext) + UContextRegistersOffset + UContextRIPIndex * SizeOf(QWord))^;
+    StackPointers[ArrivalIndex] := PQWord(PByte(AContext) + UContextRegistersOffset + UContextRSPIndex * SizeOf(QWord))^;
+    AlternateEnds[ArrivalIndex] := 0;
+    // this handler runs on the stack the thread was on
+    if (LibCSigAltStack(nil, @Stack) = 0) and ((Stack.Flags and SignalStackActive) <> 0) then
+    begin
+      AlternateEnds[ArrivalIndex] := QWord(PtrUInt(Stack.Base)) + Stack.Size;
+      // glibc keeps a thread's own data at the top of its stack; the main thread's arguments are on its stack
+      if LibCGetTID = FpGetpid then OwnStackHints[ArrivalIndex] := QWord(PtrUInt(argv))
+      else OwnStackHints[ArrivalIndex] := QWord(LibCPThreadSelf);
+    end;
+  end;
 {$endif}
   InterLockedIncrement(Parked);
   while InterlockedCompareExchange(Hold, 0, 0) <> 0 do ;
@@ -3782,6 +4372,14 @@ begin
       if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
 {$endif}
 end;
+
+{$ifdef cpux86_64}
+const
+  MaxRegionQueries = 3 * MaxThreads;
+var
+  RegionQueries, RegionStarts, RegionEnds: array[0..MaxRegionQueries - 1] of QWord;
+  RegionQueryCount: LongInt;
+{$endif}
 
 procedure SetupWorldStop;
 var
@@ -3919,6 +4517,9 @@ var
 begin
   StopFailure := '';
   SleepingBlockers := False;
+{$ifdef cpux86_64}
+  SleeperCount := 0;
+{$endif}
   if not SuspendThreads then Exit;
   if not ListThreads then
   begin
@@ -3943,7 +4544,14 @@ begin
       begin
         if LibCTGKill(ProcessID, BlockerIDs[I], ParkSignal) = 0 then Inc(Sent);
       end
-      else if WaitsInKernel(BlockerIDs[I]) then SleepingBlockers := True
+      else if WaitsInKernel(BlockerIDs[I]) then
+      begin
+        SleepingBlockers := True;
+{$ifdef cpux86_64}
+        SleeperIDs[SleeperCount] := BlockerIDs[I];
+        Inc(SleeperCount);
+{$endif}
+      end
       else StopFailure := BlockerRunningFailure;
   while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
   if InterlockedCompareExchange(Parked, 0, 0) < Sent then StopFailure := ParkTimeoutFailure;
@@ -3958,6 +4566,211 @@ begin
   StartTime := NowMilliseconds;
   while (InterlockedCompareExchange(Parked, 0, 0) > 0) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
 end;
+
+{$ifdef cpux86_64}
+// The readable regions of /proc/self/maps that hold RegionQueries[0..RegionQueryCount - 1],
+// into RegionStarts and RegionEnds (0 for an address none holds). Read with nothing
+// allocated, as ReadTaskFile.
+procedure FindRegions;
+const
+  HexBase = 16;
+  HexLetterBase = 10;   // the value of 'a'
+  StateStart = 0;       // the start address, then the end, in hexadecimal
+  StateEnd = 1;
+  StateReadable = 2;    // the first letter of the permissions
+  StateRest = 3;        // up to the end of the line
+var
+  Buffer: TStatusBuffer;
+  FileDescriptor: cint;
+  Count, Index: TSsize;
+  State, K: LongInt;
+  Start, Finish, Digit: QWord;
+  Character: AnsiChar;
+begin
+  for K := 0 to RegionQueryCount - 1 do
+  begin
+    RegionStarts[K] := 0;
+    RegionEnds[K] := 0;
+  end;
+  FileDescriptor := FpOpen(PChar('/proc/self/maps'), O_RDONLY);
+  if FileDescriptor < 0 then Exit;
+  State := StateStart;
+  Start := 0;
+  Finish := 0;
+  repeat
+    Count := FpRead(FileDescriptor, Buffer[0], SizeOf(Buffer));
+    for Index := 0 to Count - 1 do
+    begin
+      Character := Buffer[Index];
+      case State of
+        StateStart, StateEnd:
+          if Character in ['0'..'9', 'a'..'f'] then
+          begin
+            if Character <= '9' then Digit := QWord(Ord(Character) - Ord('0')) else Digit := QWord(Ord(Character) - Ord('a') + HexLetterBase);
+            if State = StateStart then Start := Start * HexBase + Digit else Finish := Finish * HexBase + Digit;
+          end
+          else if State = StateStart then State := StateEnd   // the '-'
+          else State := StateReadable;                         // the space
+        StateReadable:
+          begin
+            if Character = 'r' then
+              for K := 0 to RegionQueryCount - 1 do
+                if (RegionQueries[K] >= Start) and (RegionQueries[K] < Finish) then
+                begin
+                  RegionStarts[K] := Start;
+                  RegionEnds[K] := Finish;
+                end;
+            State := StateRest;
+          end;
+        StateRest:
+          if Character = #10 then
+          begin
+            State := StateStart;
+            Start := 0;
+            Finish := 0;
+          end;
+      end;
+    end;
+  until Count <= 0;
+  FpClose(FileDescriptor);
+end;
+
+type
+  TSleeperState = (SleeperEnded, SleeperRunning, SleeperUnknown, SleeperAsleep);
+
+// Where a thread that sleeps in the kernel has its stack and will resume, from
+// /proc/self/task/<thread>/syscall: the number of the call, its six arguments, then the
+// stack pointer and the program counter; or -1 and the two when it waits outside a call.
+function ReadSleeper(AThreadID: LongInt; out AStackPointer, AProgramCounter: QWord): TSleeperState;
+const
+  HexBase = 16;
+  HexLetterBase = 10;
+  FieldsInCall = 9;
+  FieldsOutsideCall = 3;
+var
+  Buffer: TStatusBuffer;
+  Count, Index: TSsize;
+  Fields: LongInt;
+  Value, Previous: QWord;
+  Character: AnsiChar;
+begin
+  AStackPointer := 0;
+  AProgramCounter := 0;
+  Count := ReadTaskFile(AThreadID, 'syscall', Buffer);
+  if Count <= 0 then Exit(SleeperEnded);
+  if not (Buffer[0] in ['0'..'9', '-']) then Exit(SleeperRunning);   // "running"
+  Fields := 0;
+  Value := 0;
+  Previous := 0;
+  Index := 0;
+  while Index < Count do
+  begin
+    while (Index < Count) and (Buffer[Index] in [' ', #10]) do Inc(Index);
+    if Index >= Count then Break;
+    Previous := Value;
+    Value := 0;
+    if (Index + 1 < Count) and (Buffer[Index] = '0') and (Buffer[Index + 1] = 'x') then Inc(Index, 2);
+    while (Index < Count) and not (Buffer[Index] in [' ', #10]) do
+    begin
+      Character := Buffer[Index];
+      if Character in ['0'..'9'] then Value := Value * HexBase + QWord(Ord(Character) - Ord('0'))
+      else if Character in ['a'..'f'] then Value := Value * HexBase + QWord(Ord(Character) - Ord('a') + HexLetterBase);
+      Inc(Index);
+    end;
+    Inc(Fields);
+  end;
+  if (Fields <> FieldsInCall) and (Fields <> FieldsOutsideCall) then Exit(SleeperUnknown);
+  AStackPointer := Previous;
+  AProgramCounter := Value;
+  Result := SleeperAsleep;
+end;
+{$endif}
+
+// Whether a stopped thread is to resume inside a patch after its first byte (HoldsResumeInsidePatch):
+// its stack from its stack pointer to the end of the region that holds it. A thread that
+// blocks the park signal and sleeps is read the same way, from where it sleeps. A handler
+// that runs on an alternate signal stack keeps where it returns to there, and the frame of
+// a handler it interrupted is on the thread's own stack, which is then read whole.
+function ResumesInsidePatch: Boolean;
+{$ifdef cpux86_64}
+var
+  Count, K, Query: LongInt;
+  ProgramCounter: QWord;
+begin
+  Result := False;
+  Count := InterlockedCompareExchange(Arrived, 0, 0);
+  if Count > Length(StackPointers) then Count := Length(StackPointers);
+  RegionQueryCount := 0;
+  for K := 0 to Count - 1 do
+  begin
+    RegionQueries[RegionQueryCount] := StackPointers[K];
+    Inc(RegionQueryCount);
+    if AlternateEnds[K] <> 0 then
+    begin
+      RegionQueries[RegionQueryCount] := OwnStackHints[K];
+      Inc(RegionQueryCount);
+    end;
+  end;
+  for K := 0 to SleeperCount - 1 do
+    case ReadSleeper(SleeperIDs[K], SleeperStacks[K], ProgramCounter) of
+      SleeperEnded: ;
+      SleeperRunning:
+        begin
+          StopFailure := BlockerRunningFailure;
+          Exit(True);
+        end;
+      SleeperUnknown:
+        begin
+          StopFailure := StackUnknownFailure;
+          Exit(True);
+        end;
+      SleeperAsleep:
+        begin
+          if PatchHolding(ProgramCounter) >= 0 then
+          begin
+            ResumeHit := PatchHolding(ProgramCounter);
+            Exit(True);
+          end;
+          RegionQueries[RegionQueryCount] := SleeperStacks[K];
+          Inc(RegionQueryCount);
+        end;
+    end;
+  FindRegions;
+  Query := 0;
+  for K := 0 to Count - 1 do
+  begin
+    if AlternateEnds[K] <> 0 then
+    begin
+      if HoldsResumeInsidePatch(StackPointers[K], AlternateEnds[K]) then Exit(True);
+      if (RegionEnds[Query + 1] <> 0) and HoldsResumeInsidePatch(RegionStarts[Query + 1], RegionEnds[Query + 1]) then Exit(True);
+      Inc(Query, 2);
+      Continue;
+    end;
+    if RegionEnds[Query] = 0 then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    if HoldsResumeInsidePatch(StackPointers[K], RegionEnds[Query]) then Exit(True);
+    Inc(Query);
+  end;
+  for K := 0 to SleeperCount - 1 do
+  begin
+    if SleeperStacks[K] = 0 then Continue;
+    if RegionEnds[Query] = 0 then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    if HoldsResumeInsidePatch(SleeperStacks[K], RegionEnds[Query]) then Exit(True);
+    Inc(Query);
+  end;
+end;
+{$else}
+begin
+  Result := False;
+end;
+{$endif}
 {$else}
 // Windows: VirtualProtect around each write. The other threads are stopped, and none of
 // them is inside the bytes written (StoppedInsidePatch).
@@ -3997,12 +4810,14 @@ begin
 end;
 
 // SuspendThread for every other thread of the process; GetThreadContext waits until a
-// thread has really stopped and says where. The list and handles are made first, so that
-// nothing is allocated while a stopped thread may hold a lock.
+// thread has really stopped and says where, and where its stack is. A suspended thread
+// whose context can't be read fails the stop. The list and handles are made first, so
+// that nothing is allocated while a stopped thread may hold a lock.
 var
   ThreadHandles: array[0..MaxThreads - 1] of TWindowsHandle;
   ThreadHandleCount: LongInt;
   ProgramCounters: array[0..MaxThreads - 1] of QWord;
+  StackPointers: array[0..MaxThreads - 1] of QWord;
   ProgramCounterCount: LongInt;
   ContextBuffer: array[0..ContextSize + ContextSlack] of Byte;   // CONTEXT, aligned inside
 
@@ -4048,8 +4863,10 @@ begin
       if GetThreadContext(ThreadHandles[I], Context) and (ProgramCounterCount <= High(ProgramCounters)) then
       begin
         ProgramCounters[ProgramCounterCount] := PQWord(Context + ContextRIPOffset)^;
+        StackPointers[ProgramCounterCount] := PQWord(Context + ContextRSPOffset)^;
         Inc(ProgramCounterCount);
-      end;
+      end
+      else StopFailure := ThreadStateFailure;
     end;
 end;
 
@@ -4080,6 +4897,28 @@ begin
   for K := 0 to ProgramCounterCount - 1 do
     for I := 0 to PatchCount - 1 do
       if (ProgramCounters[K] > Patches[I].Address) and (ProgramCounters[K] < Patches[I].Address + QWord(Patches[I].ByteCount)) then Exit(True);
+end;
+
+// Whether a stopped thread is to resume inside a patch after its first byte (HoldsResumeInsidePatch):
+// its stack from its stack pointer to the end of the committed memory that holds it. An
+// exception handler runs on the stack of the thread it interrupted, below the context the
+// thread resumes from.
+function ResumesInsidePatch: Boolean;
+var
+  K: LongInt;
+  Info: TMemoryBasicInformation;
+begin
+  Result := False;
+  for K := 0 to ProgramCounterCount - 1 do
+  begin
+    if (VirtualQuery(Pointer(PtrUInt(StackPointers[K])), Info, SizeOf(Info)) = 0) or (Info.State <> MEM_COMMIT_STATE)
+      or ((Info.Protect and (PAGE_NOACCESS or PAGE_GUARD)) <> 0) then
+    begin
+      StopFailure := StackUnknownFailure;
+      Exit(True);
+    end;
+    if HoldsResumeInsidePatch(StackPointers[K], Info.BaseAddress + Info.RegionSize) then Exit(True);
+  end;
 end;
 {$endif}
 
@@ -4141,7 +4980,9 @@ var
   Bytes: QWord;
   VMTWords, RedirectCount: LongInt;
   Symbol: PRegistrySymbol;
-  OldCurrentAddress, ViaAddress: QWord;
+  OldCurrentAddress, ViaAddress, Room: QWord;
+  Patch: TPatch;
+  Kept: SizeInt;
   Distance: Int64;
   NewWords, OldWords: PQWord;
   OldObject: PObjectFile;
@@ -4235,6 +5076,24 @@ begin
       else if Symbol^.PendingCanonicalAddress <> Symbol^.PendingCurrentAddress then OldCurrentAddress := Symbol^.PendingCanonicalAddress
       else OldCurrentAddress := 0;
       if OldCurrentAddress = 0 then Continue;   // a new function: nothing to redirect
+      // A jump longer than the routine at the entry would overwrite the routine after it:
+      // with {$codealign proc=1} fpc packs routines, and an assembler one can be shorter
+      // than the jump.
+      if InJIT(OldCurrentAddress) then Room := Symbol^.EntryRoom else Room := HostEntryRoom(OldCurrentAddress);
+      if Room < RedirectSize then
+      begin
+        Restart(Pretty(Symbol^.Name) + ' is ' + UnsignedToString(Room) + ' bytes from the next routine, too close for the ' + SignedToString(RedirectSize) + '-byte jump to its new code');
+        Succeeded := False;
+        Break;
+      end;
+      // A thread can wait in a routine this one called from its first bytes, on any system
+      // and whether or not the agent can stop it; it would return into the jump.
+      if CallReturnsInsideRedirect(PByte(PtrUInt(OldCurrentAddress))) then
+      begin
+        Restart(Pretty(Symbol^.Name) + ' may call a routine within its first ' + SignedToString(RedirectSize) + ' bytes, and a thread could return from it into the middle of the jump to its new code');
+        Succeeded := False;
+        Break;
+      end;
       if Symbol^.Slot = nil then
       begin
         Symbol^.Slot := NewSlot(Symbol^.PendingCurrentAddress);
@@ -4268,11 +5127,35 @@ begin
         Succeeded := False;
         Break;
       end;
-      AddPatch(RedirectPatch(OldCurrentAddress, ViaAddress));
+      Patch := RedirectPatch(OldCurrentAddress, ViaAddress);
+      Patch.Owner := Symbol;
+      Patch.Target := Symbol^.PendingCurrentAddress;
+      AddPatch(Patch);
       Inc(RedirectCount);
     end;
     if IslandNext > SavedIslandNext then ClearCache(SavedIslandNext, IslandNext - SavedIslandNext);
     if VeneerNext > SavedVeneerNext then ClearCache(SavedVeneerNext, VeneerNext - SavedVeneerNext);
+  end;
+  if Succeeded then
+  begin
+    // Two names of one routine (main and PASCALMAIN) give two jumps at one entry that lead
+    // to the same new code: one is enough. Jumps that overlap otherwise would break each
+    // other.
+    SortPatches;
+    Kept := 0;
+    for I := 0 to PatchCount - 1 do
+    begin
+      if (Kept > 0) and (Patches[I].Address < Patches[Kept - 1].Address + QWord(Patches[Kept - 1].ByteCount)) then
+      begin
+        if (Patches[I].Address = Patches[Kept - 1].Address) and (Patches[I].Target = Patches[Kept - 1].Target) then Continue;
+        Restart(Pretty(PRegistrySymbol(Patches[Kept - 1].Owner)^.Name) + ' and ' + Pretty(PRegistrySymbol(Patches[I].Owner)^.Name) + ' have overlapping entries');
+        Succeeded := False;
+        Break;
+      end;
+      Patches[Kept] := Patches[I];
+      Inc(Kept);
+    end;
+    PatchCount := Kept;
   end;
   if Succeeded then
   begin
@@ -4296,13 +5179,16 @@ begin
       Address := QWord(PtrUInt(Stores[I].Destination));
       if (Address < QWord(PtrUInt(DataRegion))) or (Address >= QWord(PtrUInt(DataRegion)) + DataAreaSize) then MakeWritable(Address);
     end;
-    SortPatches;
     PatchedCount := 0;
     Cleared := False;
+    // A thread can be about to resume inside an entry without being there: a signal or an
+    // exception that interrupted it there saved where in its handler's frame. While the
+    // handler runs, the commit waits; one that keeps running makes the save a restart.
     for Attempt := 1 to StopAttempts do
     begin
       WorldStop;
-      if (StopFailure = '') and not StoppedInsidePatch then
+      ResumeHit := -1;
+      if (StopFailure = '') and not StoppedInsidePatch and not ResumesInsidePatch then
       begin
         Cleared := True;
         Break;
@@ -4314,7 +5200,7 @@ begin
     if not Cleared then
     begin
       if StopFailure <> '' then PatchError := StopFailure
-      else PatchError := 'a thread stayed inside the first bytes of a function being redirected';
+      else if ResumeHit < 0 then PatchError := 'a thread stayed inside the first bytes of a function being redirected';
       Applied := False;   // nothing written; the threads already run again
     end
     else Applied := ApplyPatches;
@@ -4324,7 +5210,13 @@ begin
       for I := 0 to DataCopyCount - 1 do Move(DataCopies[I].Source^, PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Size);
     end;
     WorldStart;
-    if not Applied then
+    if not Cleared and (StopFailure = '') and (ResumeHit >= 0) then
+    begin
+      Restart('a thread may resume within the first ' + SignedToString(RedirectSize) + ' bytes of ' + Pretty(PRegistrySymbol(Patches[ResumeHit].Owner)^.Name)
+        + ', in the middle of the jump to its new code, such as one a signal or an exception interrupted there');
+      Succeeded := False;
+    end
+    else if not Applied then
     begin
       Succeeded := False;
 {$ifdef darwin}
@@ -4351,6 +5243,7 @@ begin
       Symbol := PendingSymbols[I];
       Symbol^.CanonicalAddress := Symbol^.PendingCanonicalAddress;
       Symbol^.CurrentAddress := Symbol^.PendingCurrentAddress;
+      Symbol^.EntryRoom := Symbol^.PendingEntryRoom;
       Symbol^.Pending := False;
     end;
     for I := 0 to High(ObjectFiles) do
@@ -4603,6 +5496,9 @@ begin
   if Count > 0 then Move(Value[1], AgentToken[0], Count);
   AgentToken[Count] := #0;
   if TryGetEnvironmentVariable('HOT_NOSUSPEND', Value) then SuspendThreads := False;
+{$if defined(darwin) and defined(cpux86_64)}
+  MainThread := MachThreadSelf;   // a send right, kept: the name the thread lists have for it
+{$endif}
 {$ifdef unix}
   PageSize := PtrUInt(LibCGetPageSize);
 {$else}

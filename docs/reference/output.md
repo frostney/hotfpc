@@ -122,6 +122,10 @@ restart needed: the sizes of variables with initial values are unknown: <why> (n
 | `the thread variable <name> changed size from <n> to <n> bytes` | A `threadvar` changed size. | |
 | `the thread variables of unit <unit> changed` | The unit's `threadvar` block changed. | `threadvars` |
 | `<unit> uses <name>, which the running program does not contain` | The new code calls a routine that isn't in the program, such as one of a runtime unit it wasn't linked with. On Windows, also a runtime routine the program never called: fpc's Windows linker leaves those out. | `newunit`, `interfaces` on Windows |
+| `<name> is <n> bytes from the next routine, too close for the <n>-byte jump to its new code` | A swap writes a jump at the entry of each routine of the changed units, 5 bytes on x86-64, and the routine is shorter and followed right away by another. fpc packs routines that way with `{$codealign proc=1}` where the assembler doesn't pad them: on macOS, and on Linux with `-Aas`. Every save of that unit needs a restart. | `shortentry` |
+| `<name> may call a routine within its first <n> bytes, and a thread could return from it into the middle of the jump to its new code` | On x86-64, the 5 bytes the jump at the routine's entry replaces hold a call through a register or memory, such as an assembler routine's `call rdi`: a thread waiting in the routine it called would return inside the jump. The agent can't tell where the instructions there begin, so bytes that could be such a call count too. Every save of that unit needs a restart. | `shortcall` |
+| `a thread may resume within the first <n> bytes of <name>, in the middle of the jump to its new code, such as one a signal or an exception interrupted there` | On x86-64, a stopped thread's stack holds an address within the 5 bytes the jump at the routine's entry replaces, and kept holding one while the agent tried again. A signal handler, or on Windows an exception handler, keeps where the thread it interrupted resumes in its frame, so a handler that waits, such as one that sleeps, does this. A value on a stack that only looks like such an address counts too. | `sighandler`, `sigmasked` |
+| `<name> and <name> have overlapping entries` | The jumps at two entries would overlap, such as two names of one routine that now lead to different code. | |
 | `no room left for new code or data` | The memory near the program that new code and data go into is used up. | |
 | `no room left for call islands` | The same, for the jumps the agent puts between old and new code. | |
 | `no room left for data` | The same, for the addresses new code loads through. | |
@@ -194,15 +198,20 @@ applied:
 | --- | --- | --- |
 | `a thread of the program did not stop` | Linux | A thread didn't stop within 2 s. |
 | `a thread that blocks signals kept running` | Linux | A thread that blocks every signal, as some libraries start, was running, not waiting in the kernel. |
-| `the program has more threads than the agent can stop` | Linux, Windows | The agent's list of threads to stop is full. |
+| `the program has more threads than the agent can stop` | any | The agent's list of threads to stop is full. |
+| `the threads of the program could not be listed` | macOS | `task_threads` kept failing, so the agent wrote nothing. |
+| `a thread of the program could not be suspended` | macOS | `thread_suspend` kept failing for a thread, so the agent wrote nothing. |
+| `the agent could not read where a thread of the program stopped` | macOS x86-64, Windows | `thread_get_state` or `GetThreadContext` kept failing for a thread, so the agent couldn't check that it was outside the entries it rewrites, and wrote nothing. |
+| `the agent could not find the stack of a thread of the program` | x86-64 | The memory a thread's stack pointer points into kept not being found, or on Linux where a thread that blocks signals sleeps couldn't be read, so the agent couldn't check that the thread won't resume inside the entries it rewrites, and wrote nothing. |
 | `an entry to rewrite could not be written in one store while a thread that blocks signals sleeps` | Linux | A function's entry wasn't aligned for the one 8-byte store that keeps such a thread safe. |
 | `a thread stayed inside the first bytes of a function being redirected` | x86-64 | A thread kept stopping inside an entry the jump overwrites. |
 | `cannot copy a code page of the program` | macOS | The system refused the copy of a signed code page. |
 | `cannot replace a code page of the program` | macOS | The same, for mapping the copy back. |
 | `cannot make a code page of the program writable` | Linux, Windows | `mprotect` or `VirtualProtect` failed. |
 
-On macOS, the system's reason follows, after a colon. When this happens after some
-functions were already redirected, the line is followed by:
+On macOS, an error from a call to the system ends with the system's reason, after a colon.
+When one of these happens after some functions were already redirected, the line is
+followed by:
 
 ```text
 error: the reload stopped halfway: <n> functions are redirected and the rest are not; restart the program (nothing changed)
@@ -217,7 +226,7 @@ say that hotfpc can't load it; please report them with the unit that causes them
 
 | Error | Where |
 | --- | --- |
-| `<file> is not an arm64 Mach-O object` | macOS |
+| `<file> is not an <arm64 or x86-64> Mach-O object` | macOS |
 | `<file> is not an aarch64 ELF object` | Linux arm64 |
 | `<file> is not an x86-64 COFF object` | Windows |
 | `<file> has no symbol table` | any |
@@ -231,7 +240,7 @@ say that hotfpc can't load it; please report them with the unit that causes them
 | `<unit>: <symbol> is out of reach of a 32-bit offset from the image base` | Windows |
 | `<unit>: a branch into the middle of <symbol> is out of reach` | x86-64 |
 | `<unit>: <symbol> is out of reach of adrp` | arm64 |
-| `<unit>: a GOT relocation without a symbol` | arm64, Linux x86-64 |
+| `<unit>: a GOT relocation without a symbol` | macOS, Linux |
 | `<unit>: misaligned load of <symbol>` | arm64 |
 | `<unit>: a thread-variable relocation to <symbol>, which is not a thread variable of the program` | Linux |
 | `<unit>: thread variable <symbol> out of reach` | Linux |

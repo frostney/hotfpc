@@ -4,7 +4,7 @@
   scenario.py                 run every case
   scenario.py classes heap    run the named cases
 """
-import os, shlex, re, shutil, subprocess, sys, threading, time
+import os, platform, shlex, re, shutil, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOTRUN = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc")
@@ -975,6 +975,298 @@ case("crash", {"main.pas": MAIN, "u.pas": U_COUNTED}, [
     ("the initialization no longer ends it: the next save starts the program again",
      [("u.pas", "initialization\n  Halt(3);\n", ""), ("u.pas", "'two calls", "'three calls")]),
 ], restart=True)
+
+# ---------------------------------------------------------------------------- a short entry
+# A swap writes a jump at the entry of every routine of the unit, 5 bytes on x86-64. With
+# {$codealign proc=1} fpc packs routines where the assembler doesn't pad their sections (on
+# macOS, and on Linux with the external assembler, -Aas): Small is 3 bytes long and Next
+# starts right after it. The jump at Small would overwrite Next, so on x86-64 the save needs
+# a restart. Tick calls both through their first addresses, as old code and pointers do.
+SHORT_ENTRY_OPTS = ("-Aas",) if sys.platform.startswith("linux") and platform.machine() == "x86_64" \
+    and "-Twin" not in os.environ.get("HOT_DRIVER_OPTS", "") else ()
+case("shortentry", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+{$codealign proc=1}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+type
+  TValue = function: LongInt;
+{$if defined(cpux86_64)}
+{$asmmode intel}
+function Small: LongInt; assembler; nostackframe;
+asm
+  xor eax, eax
+end;
+function Next: LongInt; assembler; nostackframe;
+asm
+  mov eax, 7
+end;
+{$else}
+function Small: LongInt;
+begin
+  Result := 0;
+end;
+function Next: LongInt;
+begin
+  Result := 7;
+end;
+{$endif}
+function Tick(n: Integer): string;
+var
+  First, Second: TValue;
+begin
+  First := @Small;
+  Second := @Next;
+  Result := Format('small %d next %d', [First(), Second()]);
+end;
+end.
+'''}, [
+    ("Small returns 3", [("u.pas", "  xor eax, eax\n", "  mov eax, 3\n"), ("u.pas", "Result := 0;", "Result := 3;")]),
+], opts=SHORT_ENTRY_OPTS, restart=True)
+
+# ---------------------------------------------------------------------------- a call at the entry
+# A thread waits in a routine that Relay calls with its first instruction. On x86-64 that
+# call is 2 bytes long, so the return address is inside the 5 bytes of the jump a swap
+# writes at Relay's entry, and the thread would return into the middle of it: the save needs
+# a restart. On arm64 the call is one instruction, as long as the branch a swap writes, so
+# the thread returns after it, into the old code, and the save is swapped. Through calls Wait
+# with the stack aligned for it; on arm64, Enter passes Relay where to return in x3, since
+# Relay's call overwrites x30. Relay is in the interface: fpc 3.2 gives a routine of the
+# implementation section no symbol in a Windows object, so a swap there would not redirect it.
+case("shortcall", {
+    "main.pas": MAIN.replace("uses SysUtils, u;", "uses {$ifdef unix}cthreads,{$endif} SysUtils, u;"),
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+function Relay(AThrough, ATarget: Pointer): LongInt;
+implementation
+uses Classes, SysUtils;
+type
+  TWaiter = class(TThread)
+    procedure Execute; override;
+  end;
+var
+  Waiter: TWaiter;
+  Seen: LongInt;
+procedure Wait;
+begin
+  Sleep(100);
+end;
+{$if defined(cpux86_64)}
+{$asmmode intel}
+function Relay(AThrough, ATarget: Pointer): LongInt; assembler; nostackframe;
+asm
+{$ifdef windows}
+  call rcx
+{$else}
+  call rdi
+{$endif}
+  mov eax, 1
+end;
+procedure Through; assembler; nostackframe;
+asm
+{$ifdef windows}
+  sub rsp, 32
+  call rdx
+  add rsp, 32
+{$else}
+  call rsi
+{$endif}
+end;
+function Outer(AThrough, ATarget: Pointer): LongInt;
+begin
+  Result := Relay(AThrough, ATarget);
+end;
+{$else}
+function Relay(AThrough, ATarget: Pointer): LongInt; assembler; nostackframe;
+asm
+  blr x0
+  mov w0, #1
+  br x3
+end;
+procedure Enter; assembler; nostackframe;
+asm
+  mov x3, x30
+  b Relay
+end;
+function Outer(AThrough, ATarget: Pointer): LongInt; assembler; nostackframe;
+asm
+  stp x29, x30, [sp, #-16]!
+  mov x29, sp
+  bl Enter
+  ldp x29, x30, [sp], #16
+end;
+procedure Through; assembler; nostackframe;
+asm
+  stp x29, x30, [sp, #-32]!
+  str x3, [sp, #16]
+  mov x29, sp
+  blr x1
+  ldr x3, [sp, #16]
+  ldp x29, x30, [sp], #32
+end;
+{$endif}
+procedure TWaiter.Execute;
+begin
+  while not Terminated do Seen := Outer(@Through, @Wait);
+end;
+function Tick(n: Integer): string;
+begin
+  Result := Format('relay %d', [Seen]);
+  if Waiter.FatalException <> nil then Result := Result + ', the waiting thread failed: ' + Exception(Waiter.FatalException).Message;
+end;
+initialization
+  Waiter := TWaiter.Create(False);
+finalization
+  Waiter.Terminate;
+  Waiter.WaitFor;
+  Waiter.Free;
+end.
+'''}, [
+    ("Relay returns 2", [("u.pas", "  mov eax, 1\n", "  mov eax, 2\n"), ("u.pas", "  mov w0, #1\n", "  mov w0, #2\n")]),
+], restart=True)
+
+# ---------------------------------------------------------------------------- a signal handler at the entry
+# A thread traps in Entry's first bytes, and its handler waits until the new code of a save
+# has run. The system keeps where the thread is to resume in the handler's frame: on x86-64
+# at Entry + 3, inside the 5 bytes of the jump a swap writes there, so the save needs a
+# restart. The thread itself is in the handler, and on Linux so it is when the signal that
+# stops it arrives. In sigmasked the handler blocks every signal, so on Linux the agent can't
+# stop the thread and finds it asleep. On arm64 the trap is the second instruction, after
+# the one-instruction branch, and the save is swapped: the thread resumes in the old code,
+# and its next call runs the new code. The handler is in a unit of its own, which no save
+# changes: on Windows new code can't call a routine of a library the program never called
+# from code of its own, as AddVectoredExceptionHandler is.
+SIG_TRAP_UNIT = r'''unit trap;
+{$mode objfpc}{$H+}
+interface
+var
+  Resume: LongInt = 0;
+procedure Install;
+implementation
+uses {$ifdef unix}BaseUnix,{$endif} SysUtils;
+procedure Await;
+begin
+  while InterLockedCompareExchange(Resume, 0, 0) = 0 do Sleep(10);
+end;
+{$ifdef windows}
+const
+  BreakpointCode = LongWord($80000003);
+  ContextRIPOffset = $f8;
+type
+  TExceptionPointers = record
+    ExceptionRecord: PLongWord;   // the exception code comes first
+    ContextRecord: PByte;
+  end;
+  PExceptionPointers = ^TExceptionPointers;
+function AddVectoredExceptionHandler(AFirst: LongWord; AHandler: Pointer): Pointer; stdcall; external 'kernel32' name 'AddVectoredExceptionHandler';
+// Windows reports a breakpoint at the int3: the thread resumes after it
+function Trapped(AInfo: PExceptionPointers): LongInt; stdcall;
+var
+  RIP: PQWord;
+begin
+  if AInfo^.ExceptionRecord^ <> BreakpointCode then Exit(0);   // EXCEPTION_CONTINUE_SEARCH
+  Await;
+  RIP := PQWord(AInfo^.ContextRecord + ContextRIPOffset);
+  if PByte(PtrUInt(RIP^))^ = $cc then Inc(RIP^);
+  Result := -1;   // EXCEPTION_CONTINUE_EXECUTION
+end;
+procedure Install;
+begin
+  AddVectoredExceptionHandler(1, @Trapped);
+end;
+{$else}
+// x86-64 resumes after the int3; on arm64 the handler moves the thread past the brk
+procedure Trapped(ASignal: cint; AInfo: PSigInfo; AContext: Pointer); cdecl;
+begin
+  Await;
+{$if defined(cpuaarch64) and defined(darwin)}
+  Inc(PQWord(PPointer(PByte(AContext) + 48)^ + 272)^, 4);   // uc_mcontext^.__ss.__pc
+{$elseif defined(cpuaarch64)}
+  Inc(PQWord(PByte(AContext) + 440)^, 4);   // uc_mcontext.pc
+{$endif}
+end;
+procedure Install;
+var
+  Action: SigActionRec;
+begin
+  FillChar(Action, SizeOf(Action), 0);
+  Action.sa_handler := SigActionHandler(@Trapped);
+  Action.sa_flags := SA_SIGINFO;
+  BLOCK_ALL
+  FpSigAction(SIGTRAP, @Action, nil);
+end;
+{$endif}
+end.
+'''
+SIG_HANDLER_UNIT = r'''unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+function Entry: LongInt;
+implementation
+uses Classes, SysUtils, trap;
+type
+  TCaller = class(TThread)
+    procedure Execute; override;
+  end;
+var
+  Caller: TCaller;
+  Seen: LongInt;
+{$if defined(cpux86_64)}
+{$asmmode intel}
+function Entry: LongInt; assembler; nostackframe;
+asm
+  xor eax, eax
+  int3
+  mov eax, 1
+end;
+{$else}
+function Entry: LongInt; assembler; nostackframe;
+asm
+  mov w0, #0
+  brk #0
+  mov w0, #1
+end;
+{$endif}
+procedure TCaller.Execute;
+begin
+  while not Terminated do
+  begin
+    Seen := Entry;
+    Sleep(20);
+  end;
+end;
+function Tick(n: Integer): string;
+begin
+  Result := Format('entry %d', [Seen]);
+  if Caller.FatalException <> nil then Result := Result + ', the trapped thread failed: ' + Exception(Caller.FatalException).Message;
+end;
+initialization
+  Install;
+  Caller := TCaller.Create(False);
+finalization
+  InterLockedExchange(Resume, 1);
+  Caller.Terminate;
+  Caller.WaitFor;
+  Caller.Free;
+end.
+'''
+SIG_HANDLER_STEPS = [
+    ("the new Tick lets the handler return, and Entry returns 2",
+     [("u.pas", "  Result := Format('entry %d', [Seen]);", "  InterLockedExchange(Resume, 1);\n  Result := Format('entry %d, resumed', [Seen]);"),
+      ("u.pas", "  mov eax, 1\n", "  mov eax, 2\n"), ("u.pas", "  mov w0, #1\n", "  mov w0, #2\n")]),
+]
+SIG_HANDLER_MAIN = MAIN.replace("uses SysUtils, u;", "uses {$ifdef unix}cthreads,{$endif} SysUtils, u;")
+case("sighandler", {"main.pas": SIG_HANDLER_MAIN, "u.pas": SIG_HANDLER_UNIT,
+                    "trap.pas": SIG_TRAP_UNIT.replace("  BLOCK_ALL\n", "")}, SIG_HANDLER_STEPS, restart=True)
+case("sigmasked", {"main.pas": SIG_HANDLER_MAIN, "u.pas": SIG_HANDLER_UNIT,
+                   "trap.pas": SIG_TRAP_UNIT.replace("  BLOCK_ALL\n", "  FpSigFillSet(Action.sa_mask);\n")}, SIG_HANDLER_STEPS, restart=True)
 
 
 # The driver's line that ends its work on a save: the swap, the code that came out the same, a

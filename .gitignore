@@ -9,3 +9,5 @@
 /examples/lwpt/build/
 # written by build.sh and build.bat from source/HotFPC.rc
 /source/HotFPC.res
+# Python bytecode of the test scripts
+__pycache__/

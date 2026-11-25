@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- macOS x86-64 (Intel Macs): the agent hot-reloads programs built for it, the releases have
+  a `macos-x64` archive, and CI builds hotfpc, runs the unit tests and runs the scenarios
+  on GitHub's Intel macOS runner.
+- On x86-64, a swap no longer writes the jump at a routine's entry over the routine after
+  it: with `{$codealign proc=1}`, fpc can pack an assembler routine shorter than the 5-byte
+  jump right before the next one, on macOS and on Linux with `-Aas`, and the program then
+  crashed when it called one of them through its old address. Such a save now needs a
+  restart.
+- On x86-64, a swap no longer writes the jump at a routine's entry over a call in its
+  first 5 bytes, such as an assembler routine's `call rdi`. A thread waiting in the routine
+  it called returned into the middle of the jump: in the `shortcall` scenario, it failed
+  with an access violation. Such a save now needs a restart.
+- On x86-64, a swap no longer writes the jump at a routine's entry while a thread is to
+  resume within its first 5 bytes. A signal handler, or on Windows an exception handler,
+  keeps where the thread it interrupted resumes in its frame, and a thread whose handler
+  waited past the swap resumed in the middle of the jump: in the `sighandler` and
+  `sigmasked` scenarios, it failed with an access violation. The agent now reads each
+  stopped thread's stack for such an address, and on Linux the stack of a thread that
+  blocks signals and sleeps; it tries again while there is one, and when one stays the save
+  needs a restart. On Windows, a thread whose context can't be read now fails the stop
+  instead of going unchecked.
+- On macOS, a swap now also stops a thread that another thread started while the agent was
+  stopping them, and a thread that can't be suspended makes the agent let the others run
+  and try again. Such a thread used to run on while the agent rewrote code. The agent
+  resumes only the threads it suspended.
 - hotfpc no longer crashes, or corrupts its memory, when a source file grows while it reads
   it, as when a save or a generator writes the file during the twice-a-second look at the
   contents. It read the file's size twice and could read more than it had room for.

@@ -7,9 +7,9 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
 ## Toolchain
 
 - **Free Pascal 3.2.2**, the release hotfpc is built and tested with:
-  `sudo apt-get install fpc`, `brew install fpc`, or the win32 and win64 installer from
-  [freepascal.org](https://www.freepascal.org/download.html). fpcres and ppudump come with
-  it.
+  `sudo apt-get install fpc`, `brew install fpc` on a Mac with Apple silicon, or the
+  installer from [freepascal.org](https://www.freepascal.org/download.html) for an Intel Mac
+  and for Windows (win32 and win64). fpcres and ppudump come with it.
 - **Python 3.9 or later**, for the scenarios and the reference check.
 - **Lefthook**: `lefthook install` once per clone sets up the pre-commit hook.
 - **Node.js**, only for the Markdown lint, in the version [Tooling](docs/internals/tooling.md)
@@ -23,7 +23,7 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
 ./build.sh                                   # build/hotfpc and the unit tests
-python3 tests/scenarios/check.py             # the 27 scenarios, about 2 minutes
+python3 tests/scenarios/check.py             # the 31 scenarios, about 2 minutes
 python3 scripts/check-reference-docs.py      # docs/reference/ against the source
 npx --yes markdownlint-cli2@0.24.0           # the Markdown lint
 ```
@@ -34,8 +34,9 @@ and run the scenarios with `HOT_DRIVER_OPTS` set to `-Twin64 -Px86_64`.
 
 ## When a change is done
 
-The unit tests pass, and `check.py` prints "27 of 27 cases as expected" on every system
-the change can affect: macOS arm64, Linux x86-64, Linux arm64, and Windows x86-64. Changes
+The unit tests pass, and `check.py` prints "31 of 31 cases as expected" on every system
+the change can affect: macOS arm64, macOS x86-64, Linux x86-64, Linux arm64, and Windows
+x86-64. Changes
 to the agent, or to the checks of layouts and sizes, are tested with fpc 3.2.2 and 3.3.1.
 [Testing](docs/internals/testing.md) explains the tests and how to add a scenario.
 
@@ -60,7 +61,8 @@ reference check fails until it does. A change users can see goes into `CHANGELOG
 ## CI
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to main: the build, the unit
-tests and the scenarios on Linux x86-64, Linux arm64, macOS arm64 and Windows x86-64 with
+tests and the scenarios on Linux x86-64, Linux arm64, macOS arm64, macOS x86-64 and Windows
+x86-64 with
 fpc 3.2.2, and a `docs` job with the reference check and the Markdown lint.
 
 ## Contributor docs

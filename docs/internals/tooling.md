@@ -63,7 +63,8 @@ out.
 ## CI
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to main. On Linux x86-64,
-Linux arm64 (GitHub's `ubuntu-24.04-arm` runner) and macOS arm64 with fpc 3.2.2 it builds
+Linux arm64 (GitHub's `ubuntu-24.04-arm` runner), macOS arm64 and macOS x86-64 (GitHub's
+`macos-15-intel` runner) with fpc 3.2.2 it builds
 hotfpc, runs the unit tests and runs the scenarios. On Windows it builds `hotfpc.exe` with `build.bat`,
 runs the unit tests and runs the scenarios with `hotfpc.exe`. The `docs` job runs the
 reference check and the Markdown lint.
