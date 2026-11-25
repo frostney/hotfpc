@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression check for the scenarios: runs scenario.py (all cases, or those named) and
-compares each case's closing line with the outcome established for it. Writes the full
+compares each case's closing line with the outcome established for it. Prints the run of
+each case that failed after the summary lines, so a CI log shows why. Writes the full
 transcript to $HOT_TRANSCRIPT when set. $HOT_DRIVER picks the driver (default: build/hotfpc),
 $HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
 
@@ -62,18 +63,23 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     if fpc_version().startswith("3.2"):
         EXPECT["typedconst"] = (2, 0, 0)
 names = sys.argv[1:] or list(EXPECT)
-out = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True).stdout
+run = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True)
+out = run.stdout
 if os.environ.get("HOT_TRANSCRIPT"):
     with open(os.environ["HOT_TRANSCRIPT"], "w") as f:
         f.write(out)
-bad = 0
+# each case's section of the transcript, in the order the cases ran: a case named twice has
+# two sections, and a case that never started has none
+sections = re.findall(r"^=== (\S+)\n(.*?)(?=\n=== |\Z)", out, re.S | re.M)
+# the cases that failed, with their section (None when the case never started); the runs
+# that printed anything are shown at the end, so a CI log shows why
+failing = []
 for name in names:
-    m = re.search(r"=== %s\n(.*?)(?=\n=== |\Z)" % re.escape(name), out, re.S)
-    body = m.group(1) if m else ""
-    end = re.search(r"ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts", body)
+    body = sections.pop(0)[1] if sections and sections[0][0] == name else None
+    end = re.search(r"ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts", body or "")
     if not end:
-        print("%-11s FAIL  no closing line" % name)
-        bad += 1
+        print("%-11s FAIL  %s" % (name, "no closing line" if body is not None else "did not run"))
+        failing.append((name, body))
         continue
     rc, applied, refused, failed, unchanged, restarts = map(int, end.groups())
     ea, er, ef = EXPECT[name]
@@ -94,6 +100,14 @@ for name in names:
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
           + "".join("; never printed %r" % text for text in missing)
           + "".join("; a load took %s ms in the program" % x for x in slow))
-    bad += 0 if ok else 1
-print("%d of %d cases as expected" % (len(names) - bad, len(names)))
-sys.exit(1 if bad else 0)
+    if not ok:
+        failing.append((name, body))
+for name, body in failing:
+    if body and body.strip():
+        print("\n=== %s, as it ran\n%s" % (name, body.rstrip()))
+# scenario.py's own failure, such as a traceback that cut the run short, fails the check
+# even when every case that ran was as expected
+if run.returncode != 0:
+    print("\n=== scenario.py ended with %d\n%s" % (run.returncode, run.stderr.rstrip()))
+print("%d of %d cases as expected" % (len(names) - len(failing), len(names)))
+sys.exit(1 if failing or run.returncode != 0 else 0)
