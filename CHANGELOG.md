@@ -8,7 +8,9 @@
   Such a thread used to run on while the agent rewrote code, and on Linux no thread was
   stopped at all when `/proc/self/task` couldn't be read, nor on Windows when the list of
   threads couldn't be made. On Windows the agent resumes only the threads it suspended.
-  Under Wine before 6.8 a thread started while the agent stops the others still runs on.
+  Under Wine before 6.8 a thread started while the agent stops the others still runs on,
+  and on Linux a thread that blocks the agent's signal and sleeps isn't stopped
+  ([limits](docs/reference/limits.md)).
 - A swap that changes the program's main block prints `note: the main block changed` once.
   It printed it twice: fpc gives the main block two names, `PASCALMAIN` and `main`.
 - An empty source file in a watched directory, such as an empty `.inc` nothing uses, no

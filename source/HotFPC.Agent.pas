@@ -4348,8 +4348,8 @@ end;
 // waits until the agent lets it go. A thread that runs until it parks, or until it ends,
 // can start another after the list was read, so the agent reads /proc/self/task again until
 // a list has none it hasn't met before. A list read while a thread ends can leave out
-// another, so a list counts as complete only when it has as many threads as the process's
-// status says. The list is read with getdents64 into a buffer of its own, so that nothing
+// another, so a list counts as complete only when the process's status counts no more
+// threads than it holds. The list is read with getdents64 into a buffer of its own, so that nothing
 // is allocated while a parked thread may hold a lock.
 var
   Hold, Parked, Arrived: LongInt;
@@ -4471,7 +4471,8 @@ end;
 // that block every signal, such as the workers of Mesa's software renderer. Such a thread
 // never parks, and sending it the signal each time would queue real-time signals until
 // the process may queue no more.
-// Where the value of a field of /proc/self/task/<thread>/status starts, or -1.
+// Where the value of a field of /proc/self/task/<thread>/status starts, or -1. A field's name
+// starts a line: the thread's name, on the first line, may hold the same text.
 function FindStatusField(const ABuffer: TStatusBuffer; const ACount: TSsize; const AField: ShortString): TSsize;
 var
   K: TSsize;
@@ -4479,9 +4480,12 @@ begin
   Result := 0;
   while Result + Length(AField) <= ACount do
   begin
-    K := 0;
-    while (K < Length(AField)) and (ABuffer[Result + K] = AField[K + 1]) do Inc(K);
-    if K = Length(AField) then Break;
+    if (Result = 0) or (ABuffer[Result - 1] = #10) then
+    begin
+      K := 0;
+      while (K < Length(AField)) and (ABuffer[Result + K] = AField[K + 1]) do Inc(K);
+      if K = Length(AField) then Break;
+    end;
     Inc(Result);
   end;
   if Result + Length(AField) > ACount then Exit(-1);
@@ -5237,14 +5241,15 @@ begin
 end;
 
 // After the passes, with the other threads stopped: every thread of the census that hasn't
-// terminated was met by a pass. One the passes never met ran after them, such as one
+// terminated is one the agent suspended. Another ran after the passes, such as one
 // NtGetNextThread couldn't open, even if it has ended since: it may have started another.
+// A thread a pass found ended doesn't count: its ID may now name a new thread.
 procedure CheckCensus;
 var
   I: LongInt;
 begin
   for I := 0 to CensusCount - 1 do
-    if (CensusIDs[I] <> GetCurrentThreadId) and not IsSuspended(CensusIDs[I]) and not IsEnded(CensusIDs[I])
+    if (CensusIDs[I] <> GetCurrentThreadId) and not IsSuspended(CensusIDs[I])
       and (CensusStates[I] <> ThreadStateTerminated) then
     begin
       StopFailure := ThreadSuspendFailure;

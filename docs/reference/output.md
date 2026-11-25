@@ -197,7 +197,7 @@ applied:
 | Error | Where | What it means |
 | --- | --- | --- |
 | `a thread of the program did not stop` | Linux, Windows | On Linux a thread didn't stop within 2 s; on both, new threads kept starting for 2 s while the agent stopped them. |
-| `a thread that blocks signals kept running` | Linux | A thread that blocks every signal, as some libraries start, was running, not waiting in the kernel. |
+| `a thread that blocks signals kept running` | Linux | A thread that blocks the signal the agent stops threads with, as the threads some libraries start that block every signal do, was running, not waiting in the kernel. |
 | `the program has more threads than the agent can stop` | any | The agent's list of threads to stop is full. |
 | `the threads of the program could not be listed` | any | `task_threads`, reading `/proc/self/task`, or `NtQuerySystemInformation`, `NtGetNextThread` or `NtQueryInformationThread` kept failing, so the agent wrote nothing. |
 | `a thread of the program could not be suspended` | any | `thread_suspend`, the signal that stops a thread on Linux, or `SuspendThread` kept failing for a thread that hadn't ended, or on Windows a running thread couldn't be opened, so the agent wrote nothing. |

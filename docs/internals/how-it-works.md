@@ -219,12 +219,13 @@ after its agent connected, and the first program in every case, end hotfpc.
   `getdents64` into a buffer of its own, so that nothing is allocated while a stopped
   thread may hold a lock, and reads them again until a list has none it hasn't met before,
   as on macOS; a thread that has ended may have started another before it did. A list read
-  while a thread ends can leave out another, so a list counts as complete only when it has
-  as many threads as the `Threads:` line of the status file. A thread that ended before its
-  signal is left out. When the list can't be read, or the signal
+  while a thread ends can leave out another, so the agent reads the list again while the
+  `Threads:` line of the status file counts more threads than the list holds. A thread
+  that ended before its signal is left out. When the list can't be read, or the signal
   can't be sent for another reason, the agent lets everything run and tries again; when
-  new threads keep coming for 2 s, the swap is refused. Libraries start threads that block every signal (Mesa's
-  software renderer starts one per core). The agent doesn't send those the signal, because
+  new threads keep coming for 2 s, the swap is refused. Libraries start threads that block
+  every signal (Mesa's software renderer starts one per core), and so the signal the agent
+  stops threads with. The agent doesn't send a thread that blocks it the signal, because
   real-time signals queue and would pile up. It checks again once the others have stopped:
   a thread that has unblocked the signal since gets it and is waited for, and one that
   still blocks it has to be waiting in the kernel, or the agent lets everything run and

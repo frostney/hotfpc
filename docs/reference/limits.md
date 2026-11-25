@@ -27,12 +27,14 @@ the edits that need a restart; these are the limits around them.
   stopped thread's stack, so rarely a value that only looks like one restarts a save too.
   A handler that moves where its thread resumes to within a routine's first bytes after
   the swap isn't caught.
-- **On Linux, a thread that blocks every signal and sleeps isn't stopped.** The agent
-  stops threads with a signal, which such a thread, as some libraries start, never takes.
-  It can wake while the agent writes, and run, or start a thread, during the swap; the
-  agent writes each entry in one 8-byte store for it
-  ([how it works](../internals/how-it-works.md#per-system)). A thread that blocks signals
-  and runs makes the agent try again.
+- **On Linux, a thread that blocks the agent's signal and sleeps isn't stopped.** The
+  agent stops threads with a signal (signal 40), which a thread that blocks it, such as
+  one of the threads some libraries start that block every signal, never takes. When the
+  agent finds such a thread asleep in the kernel, it goes on without it: the thread can
+  wake while the agent writes, and run, or start a thread, during the swap; the agent
+  writes each entry in one 8-byte store for it
+  ([how it works](../internals/how-it-works.md#per-system)). When it finds one running, it
+  lets everything run and tries again.
 - **The main program's block keeps its old code.** It is already running. Code you want to
   change belongs in routines and units; the main block can call them.
 - **In the program file, hotfpc checks sizes, not types.** It finds a type that changed
