@@ -597,6 +597,12 @@ end.
 '''}, [
     ("three bodies; the main block holds procedure variables and a method pointer taken before the reload, one of a routine of the implementation section",
      [("u.pas", "'plain v1 '", "'PLAIN V2 '"), ("u.pas", "'method v1 '", "'METHOD V2 '"), ("u.pas", "'hidden v1 '", "'HIDDEN V2 '")]),
+    ("the routine of the implementation section is declared in the interface too, with another body",
+     [("u.pas", "function HiddenRoutine: TPlain;\nimplementation", "function HiddenRoutine: TPlain;\nfunction OnHidden(n: Integer): string;\nimplementation"),
+      ("u.pas", "'HIDDEN V2 '", "'HIDDEN V3 '")]),
+    ("its declaration in the interface is removed again, with another body",
+     [("u.pas", "function HiddenRoutine: TPlain;\nfunction OnHidden(n: Integer): string;\nimplementation", "function HiddenRoutine: TPlain;\nimplementation"),
+      ("u.pas", "'HIDDEN V3 '", "'HIDDEN V4 '")]),
 ])
 
 # ---------------------------------------------------------------------------- records

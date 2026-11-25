@@ -1580,15 +1580,20 @@ const
   COFFAlignmentMask = $f;
   COFFDefaultAlignment = 16;
 
-// The name a section without symbols stands under (see ParseCOFF), in objects and in the map.
-function SectionSymbolName(const ASection: AnsiString): AnsiString;
+function LowerCaseName(const AName: AnsiString): AnsiString;
 var
   I: SizeInt;
 begin
-  Result := ASection;
+  Result := AName;
+  UniqueString(Result);
   for I := 1 to Length(Result) do
     if Result[I] in ['A'..'Z'] then Result[I] := Chr(Ord(Result[I]) + 32);
-  Result := SectionSymbolPrefix + Result;
+end;
+
+// The name a section without symbols stands under (see ParseCOFF), in objects and in the map.
+function SectionSymbolName(const ASection: AnsiString): AnsiString;
+begin
+  Result := SectionSymbolPrefix + LowerCaseName(ASection);
 end;
 
 // A name of 8 characters or fewer is in place; a longer one is in the string table.
@@ -3129,6 +3134,33 @@ begin
   Result := Symbol;
 end;
 
+{$ifdef windows}
+// fpc 3.2 names a routine of a unit's implementation section after its section (a stand-in,
+// see ParseCOFF), and the same routine in the interface by its symbol; fpc names the
+// section after the symbol in lower case. When a save moves a routine from one section to
+// the other, both names must share one record: its first entry then follows every later
+// version, not the one the other name had last. The section's stand-in name is the name
+// both forms have in common.
+function RoutineSectionName(AObjectFile: PObjectFile; ASymbol: PObjectSymbol): AnsiString;
+begin
+  Result := '';
+  if ASymbol^.Value <> 0 then Exit;
+  Result := SectionSymbolName(AObjectFile^.Sections[ASymbol^.Section].Name);
+  if (Result <> ASymbol^.Name) and not EndsWith(Result, SectionNameInfix + LowerCaseName(ASymbol^.Name)) then Result := '';
+end;
+
+// Before a routine's name is bound: a name with no record of its own takes the record of
+// its section's stand-in name, if a save made one.
+procedure ShareRoutineRecord(const ASectionName, AName: AnsiString);
+var
+  Shared: PRegistrySymbol;
+begin
+  if (ASectionName = '') or (ASectionName = AName) or (RegistryGet(AName) <> nil) then Exit;
+  Shared := RegistryGet(ASectionName);
+  if (Shared <> nil) and (Shared^.Kind = KindCode) then MapPut(Registry, AName, Shared);
+end;
+{$endif}
+
 // The address a name has in the process before this transaction: 0 when it has none.
 function ExistingAddressOf(const AName: AnsiString; out AKind: Byte): QWord;
 var
@@ -3233,6 +3265,9 @@ var
   Removed: LongInt;
   HostSymbol: PHostSymbol;
   MainBlockNoted: Boolean;
+{$ifdef windows}
+  SectionName: AnsiString;
+{$endif}
 begin
   Previous := AObjectFile^.Previous;
   // fpc names the main block twice, PASCALMAIN and main: one note
@@ -3269,6 +3304,13 @@ begin
       end;
       Continue;
     end;
+{$ifdef windows}
+    if Symbol^.Kind = KindCode then
+    begin
+      SectionName := RoutineSectionName(AObjectFile, Symbol);
+      ShareRoutineRecord(SectionName, Symbol^.Name);
+    end;
+{$endif}
     ExistingAddress := ExistingAddressOf(Symbol^.Name, ExistingKind);
     if (ExistingAddress <> 0) and (ExistingKind <> Symbol^.Kind) then
     begin
@@ -3285,6 +3327,9 @@ begin
         Continue;
       end;
       Registered := RegistryStage(Symbol^.Name, KindCode);
+{$ifdef windows}
+      if (SectionName <> '') and (RegistryGet(SectionName) = nil) then MapPut(Registry, SectionName, Registered);
+{$endif}
       Symbol^.BoundToExisting := ExistingAddress <> 0;   // the program has it: it will be redirected
       if ExistingAddress <> 0 then
       begin
