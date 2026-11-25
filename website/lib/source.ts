@@ -105,11 +105,12 @@ export function absoluteUrl(path: string): string {
 
 // The links remark-repo-links writes are site paths: a page as /docs/..., which Next
 // prefixes with the basePath in the HTML, and a file as /hotfpc/docs-assets/.... Read
-// outside the site, both need the origin, and a page also the basePath. Code blocks are
-// left as they are.
+// outside the site, both need the origin, and a page also the basePath. A link to a section
+// of the same page (#section) needs the page's own URL. Code blocks are left as they are.
 const siteOrigin = new URL(siteUrl).origin;
 
-function absoluteSitePath(target: string): string {
+function absoluteSitePath(target: string, pageUrl: string): string {
+  if (target.startsWith('#')) return `${pageUrl}${target}`;
   if (target.startsWith(`${basePath}/`)) return `${siteOrigin}${target}`;
   if (target === docsRoute || target.startsWith(`${docsRoute}/`) || target.startsWith(`${docsRoute}#`)) {
     return absoluteUrl(target);
@@ -117,7 +118,7 @@ function absoluteSitePath(target: string): string {
   return target;
 }
 
-export function absoluteLinks(markdown: string): string {
+export function absoluteLinks(markdown: string, pageUrl: string): string {
   const fence = /^ {0,3}(`{3,}|~{3,})/;
   let open: string | undefined;
   return markdown
@@ -133,8 +134,8 @@ export function absoluteLinks(markdown: string): string {
         return line;
       }
       return line
-        .replace(/(\]\(\s*<?)(\/[^\s)>]*)/g, (_, before: string, target: string) => before + absoluteSitePath(target))
-        .replace(/^(\s*\[[^\]]+\]:\s*<?)(\/\S*?)(>?)$/, (_, before: string, target: string, after: string) => before + absoluteSitePath(target) + after);
+        .replace(/(\]\(\s*<?)([/#][^\s)>]*)/g, (_, before: string, target: string) => before + absoluteSitePath(target, pageUrl))
+        .replace(/^(\s*\[[^\]]+\]:\s*<?)([/#]\S*?)(>?)$/, (_, before: string, target: string, after: string) => before + absoluteSitePath(target, pageUrl) + after);
     })
     .join('\n');
 }
@@ -147,7 +148,8 @@ export function canonicalUrl(page: DocsPage): string {
 
 export async function getLLMText(page: DocsPage) {
   const processed = await page.data.getText('processed');
-  return `URL: ${canonicalUrl(page)}
+  const url = canonicalUrl(page);
+  return `URL: ${url}
 
-${absoluteLinks(processed)}`;
+${absoluteLinks(processed, url)}`;
 }
