@@ -25,9 +25,11 @@ hotfpc needs Free Pascal 3.2.2 or later. It also uses the `ppudump` that comes w
 brew install fpc frostney/tap/hotfpc
 ```
 
-**From a release.** The [releases](https://github.com/frostney/hotfpc/releases) have an
-archive for each system and a checksum file. On Linux x86-64, download both, check the
-archive, and copy `hotfpc` into a directory on your `PATH`, here `~/.local/bin`:
+**From a release.** Release 1.1.0 has an archive for macOS arm64, Linux x86-64 and Windows
+x86-64, and a checksum file; [Platforms](../reference/platforms.md#getting-hotfpc) says
+what each system has. On Linux arm64, build hotfpc from source (below). On Linux x86-64,
+download the archive and the checksum file, check the archive, and copy `hotfpc` into a
+directory on your `PATH`, here `~/.local/bin`:
 
 ```sh
 curl -LO https://github.com/frostney/hotfpc/releases/download/1.1.0/hotfpc-1.1.0-linux-x64.tar.gz
@@ -43,7 +45,6 @@ On macOS, take `macos-arm64` instead of `linux-x64`, and `shasum -a 256 -c` inst
 `sha256sum -c`. On Windows, download `hotfpc-1.1.0-windows-x64.zip`, compare the hash that
 PowerShell's `Get-FileHash hotfpc-1.1.0-windows-x64.zip` prints with the archive's line in
 the checksum file, unpack it, and put the folder with `hotfpc.exe` on your `PATH`.
-[Platforms](../reference/platforms.md) lists which archive each system has.
 
 **From source.** hotfpc is plain Pascal and needs nothing beyond what ships with fpc. Build
 it in a clone and put `build/` on your `PATH`:
@@ -55,9 +56,24 @@ cd hotfpc
 export PATH="$PWD/build:$PATH"
 ```
 
-On Windows, `build.bat hotfpc -- -Twin64 -Px86_64` builds a 64-bit `build\hotfpc.exe`; the
-options after `--` go to fpc, whose default from the installer is a 32-bit program. To build
-it in your own tree without the scripts, see [Building hotfpc](../internals/build-system.md).
+On Windows, `build.bat` builds `build\hotfpc.exe`. The options after `--` go to fpc and make
+it a 64-bit program, where the installer's fpc builds 32-bit ones by default. In `cmd.exe`:
+
+```bat
+git clone https://github.com/frostney/hotfpc
+cd hotfpc
+.\build.bat hotfpc -- -Twin64 -Px86_64
+set "PATH=%CD%\build;%PATH%"
+```
+
+In PowerShell, the first three lines are the same, and the last is:
+
+```powershell
+$env:Path = "$PWD\build;$env:Path"
+```
+
+Both change the `PATH` of that window only. To build hotfpc in your own tree without the
+scripts, see [Building hotfpc](../internals/build-system.md).
 
 `hotfpc --version` prints the version.
 
