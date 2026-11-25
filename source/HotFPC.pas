@@ -3096,6 +3096,10 @@ type
     { Compiles, links and compiles to assembler in a row that were not acted on (FStale);
       Watch sets it back once a save has been handled. }
     FUnusedCompiles: Integer;
+    { A compile, link or compile to assembler of this save was acted on although the sources
+      changed while fpc read them (after MaximumUnusedCompiles), so it and the others may come
+      from different sources. }
+    FUnsettled: Boolean;
     FBased: TStringList;
     { The check of sizes of initialised data is on (a Windows program). }
     FCheckSizes: Boolean;
@@ -3321,7 +3325,8 @@ end;
   were in, and acting on it would apply, refuse or report a state nobody saved. The units of
   the changed files, and of units the running program does not have, are then compiled again
   by the next compile, which Watch starts once the sources have settled (FStale). After
-  MaximumUnusedCompiles such compiles in a row, the next one is acted on all the same. }
+  MaximumUnusedCompiles such compiles in a row, the next one is acted on all the same
+  (FUnsettled). }
 function TDriver.SourcesChangedDuringCompile: Boolean;
 var
   Changed: TStringList;
@@ -3329,6 +3334,8 @@ begin
   Changed := FWatcher.ChangedSince(FSettled, FDigests);
   try
     Result := (Changed.Count > 0) and (FUnusedCompiles < MaximumUnusedCompiles);
+    if (Changed.Count > 0) and not Result then
+      FUnsettled := True;
     if Result then
     begin
       Inc(FUnusedCompiles);
@@ -3569,8 +3576,8 @@ end;
   fpc's assembler: on Windows the object file does not show one that grows inside the
   padding of its section. Compiles to assembler only when a changed unit has such data. A
   save whose sizes cannot be compared, because fpc did not write the assembler, the running
-  program's sizes are unknown, or either has no size for a datum a changed object file
-  names, needs a restart too. }
+  program's sizes are unknown, either has no size for a datum a changed object file names,
+  or the sources kept changing during the compiles (FUnsettled), needs a restart too. }
 function TDriver.SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
   var AInterfaceSeconds: Double): Boolean;
 var
@@ -3597,6 +3604,13 @@ begin
   if not FAssemblyWritten then
   begin
     RefuseUncheckedSizes(NotAssembled(Problem), ACompileSeconds);
+    Exit(False);
+  end;
+  { the object files and the assembler may come from different sources: a size the object
+    files have may not be the one counted }
+  if FUnsettled then
+  begin
+    RefuseUncheckedSizes('the sources changed while fpc compiled them', ACompileSeconds);
     Exit(False);
   end;
   Compiled := ReadAssembly(AChanged, Problem);
@@ -3951,6 +3965,7 @@ begin
     end;
     FStale := False;
     FSettled := Current;
+    FUnsettled := False;
     Changed := TSourceWatcher.ChangedFiles(FDigests, Digests);
     if GetEnvironmentVariable(DebugVariable) <> '' then
       WriteLn('[hot debug] seen at ', FormatFloat('0.000', SeenAt - LastDigest), ' changed ', Changed.CommaText);
