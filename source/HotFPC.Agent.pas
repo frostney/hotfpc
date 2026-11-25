@@ -172,6 +172,8 @@ const
   SectionNameInfix = '.n_';                 // fpc's section of one item: .text.n_<its name>
   ProgramNamePrefix = 'p$';                 // a program's names start with P$<program>
   UnitLevelSeparator = '_$$_';              // <unit>_$$_<routine>; a nested routine has $_$
+  ScopeSeparator = '$_$';                   // <unit>$_$<scope>_$$_<routine>
+  TypeScopeSuffix = '_$_';                  // a method's scope: <type>_$_, once per type
   FinallyHelperName = 'fin$';               // fpc's helper for a finally: fin$ and a label
   FinallyHelperLabelLength = 8;             // the label's number, in hexadecimal digits
   AnchorSymbolName = 'HOTFPC.AGENT_$$_HOTANCHOR';
@@ -1530,6 +1532,38 @@ begin
   Result := True;
 end;
 
+// Whether a routine's name, after <unit>_$$_ or <scope>_$$_, is the helper fpc makes on
+// Win64 for a finally, implicit ones included (fin$00000016). A label's number starts with
+// a digit, which no routine's or type's name does.
+function IsFinallyHelperName(const ARoutine: AnsiString): Boolean;
+var
+  Digit: SizeInt;
+begin
+  Result := StartsWith(ARoutine, FinallyHelperName) and (Length(ARoutine) = Length(FinallyHelperName) + FinallyHelperLabelLength)
+    and (ARoutine[Length(FinallyHelperName) + 1] in ['0'..'9']);
+  if not Result then Exit;
+  for Digit := Length(FinallyHelperName) + 1 to Length(ARoutine) do
+    if not (ARoutine[Digit] in ['0'..'9', 'a'..'f']) then Exit(False);
+end;
+
+// Whether a routine's mangled name is that of a routine nested in another one, or of a
+// finally's helper. fpc names a routine <unit>_$$_<name>, a method <unit>$_$<type>_$__$$_<name>
+// (each type adds <type>_$_), and a nested routine <unit>$_$<parent and its parameters>_$$_<name>,
+// in a method's <type>_$_<method and its parameters> (compiler/symdef.pas, make_mangledname).
+// A nested routine works in its parent's frame, so its old entry must keep its old code for
+// a frame of the parent that still runs the old code; new code calls the new routine.
+function IsNestedRoutineName(const AName: AnsiString): Boolean;
+var
+  Separator: SizeInt;
+  Head: AnsiString;
+begin
+  Separator := Pos(UnitLevelSeparator, AName);
+  if Separator = 0 then Exit(False);
+  if IsFinallyHelperName(Copy(AName, Separator + Length(UnitLevelSeparator), Length(AName))) then Exit(True);
+  Head := Copy(AName, 1, Separator - 1);
+  Result := Contains(Head, ScopeSeparator) and not EndsWith(Head, TypeScopeSuffix);
+end;
+
 // ---------------------------------------------------------------- COFF (Windows)
 {$ifdef windows}
 type
@@ -1631,26 +1665,19 @@ end;
 // 3.2 names a program's own routines; the program's sections without a symbol are the
 // main block's helpers (.text.n_p$main_$$_fin$00000003), which the running main block
 // calls with its frame. The helper of a unit's initialization or finalization has the
-// unit's level (.text.n_variants_$$_fin$000001e9); a label's number starts with a digit,
-// which no routine's or type's name does.
+// unit's level (.text.n_variants_$$_fin$000001e9).
 function IsUnitLevelRoutineSection(const AName: AnsiString): Boolean;
 var
-  Index, Digit: SizeInt;
-  Rest, Routine: AnsiString;
+  Index: SizeInt;
+  Rest: AnsiString;
 begin
   Index := Pos(SectionNameInfix, AName);
   if Index = 0 then Exit(False);
   Rest := Copy(AName, Index + Length(SectionNameInfix), Length(AName));
   if StartsWith(Rest, ProgramNamePrefix) then Exit(False);
   Index := Pos('$', Rest);
-  Result := (Index > 1) and (Copy(Rest, Index - 1, Length(UnitLevelSeparator)) = UnitLevelSeparator);
-  if not Result then Exit;
-  Routine := Copy(Rest, Index - 1 + Length(UnitLevelSeparator), Length(Rest));
-  if not StartsWith(Routine, FinallyHelperName) or (Length(Routine) <> Length(FinallyHelperName) + FinallyHelperLabelLength)
-    or not (Routine[Length(FinallyHelperName) + 1] in ['0'..'9']) then Exit;
-  for Digit := Length(FinallyHelperName) + 1 to Length(Routine) do
-    if not (Routine[Digit] in ['0'..'9', 'a'..'f']) then Exit;
-  Result := False;
+  Result := (Index > 1) and (Copy(Rest, Index - 1, Length(UnitLevelSeparator)) = UnitLevelSeparator)
+    and not IsFinallyHelperName(Copy(Rest, Index - 1 + Length(UnitLevelSeparator), Length(Rest)));
 end;
 
 function ParseCOFF(AObjectFile: PObjectFile): Boolean;
@@ -3279,7 +3306,9 @@ begin
     Symbol := @AObjectFile^.Symbols[I];
     if not Symbol^.Defined or (Symbol^.Kind = 0) then Continue;
     NewAddress := PlacedAddress(AObjectFile, Symbol);
-    if not Symbol^.External then
+    // A nested routine binds like a local one: new code calls its new version, and its old
+    // entry stays with the old code for a frame of its parent that still runs that code.
+    if not Symbol^.External or ((Symbol^.Kind = KindCode) and IsNestedRoutineName(Symbol^.Name)) then
     begin
       Symbol^.ResolvedAddress := NewAddress;
       Symbol^.CallAddress := NewAddress;

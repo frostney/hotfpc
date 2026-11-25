@@ -46,9 +46,10 @@ A swap changes code, not state:
   microseconds the writes take.
 
 The main program's block is already running, so it keeps its old code (hotfpc notes it),
-and so does a routine that is running at the moment of the swap until it returns: the new
-code runs from the next call on. A unit's initialization section isn't run again. Put the
-code you want to change in routines in units, and call them from the main block.
+and so does a routine that is running at the moment of the swap until it returns, with the
+routines nested in it that it calls: the new code runs from the next call on. A unit's
+initialization section isn't run again. Put the code you want to change in routines in
+units, and call them from the main block.
 
 ## What needs a restart
 

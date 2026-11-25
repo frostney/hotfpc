@@ -152,6 +152,14 @@ symbols and `-FU`/`-o` to build into `.hot/`.
      the bytes a jump replaces. While there is one, it lets the threads run and tries
      again, as it does for a thread stopped inside them; when one stays, the save needs a
      restart. A value that only looks like such an address counts too.
+   - A routine nested in another keeps its old code at its first address, and new code
+     calls its new version. A nested routine reads and writes its parent's locals in the
+     parent's frame, so a frame of the parent that still runs the old code needs the old
+     nested routine, which knows that frame's layout. On Windows, fpc makes a nested helper
+     for each `finally`, implicit ones included, and these stay with the old code too. The
+     agent tells them apart by fpc's names: `U$_$WORKER_$$_SHOW` is nested in `U_$$_WORKER`,
+     `U$_$TBOX_$__$$_RUN` is a method of `TBox`, and a helper's name ends in `fin$`
+     and a number.
    - A virtual method table is updated in place when its shape is unchanged.
    - A literal, such as a floating point constant, is new with the new code. fpc numbers a
      unit's literals in the order it makes them (`_$U$_Ld1` with fpc 3.2, local `.Ld1` labels

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A swap no longer breaks a running routine that calls a routine nested in it. When a save
+  moved the parent's locals, the frame that was still running called the new nested
+  routine, which read that frame with the new layout: in the `nestedframe` scenario, the
+  ticks printed wrong numbers, or the program stopped printing. A nested routine's old
+  entry, and on Windows that of the helper fpc makes for each `finally`, now keeps its old
+  code for the running frame; new code calls the new version. It happened wherever fpc
+  names nested routines: on Linux, on macOS, and on Windows with fpc 3.3.1.
 - On Windows with fpc 3.2, a swap now redirects the old entry of a routine declared only
   in a unit's implementation section, other than a method, to its new code, as it does on
   macOS and Linux and with fpc 3.3.1. fpc 3.2 gives such a routine no symbol in a Windows
