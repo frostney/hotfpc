@@ -81,18 +81,22 @@ end;
 // ---------------------------------------------------------------- files
 { The whole-file and directory operations the driver needs, none of which keeps state. }
 
-{ False when the file cannot be read; AContents is then empty or partial. }
+{ False when the file cannot be read; AContents is then empty or partial. A file that a save
+  is writing meanwhile gives what was there when it was opened, at most. }
 function ReadFileContents(const APath: string; out AContents: string): Boolean;
 var
   Stream: TFileStream;
+  Size: Int64;
 begin
   AContents := '';
   try
     Stream := TFileStream.Create(APath, fmOpenRead or fmShareDenyNone);
     try
-      SetLength(AContents, Stream.Size);
-      if Stream.Size > 0 then
-        Stream.ReadBuffer(AContents[1], Stream.Size);
+      { the size once: the file may grow before the read, and must not overflow the string }
+      Size := Stream.Size;
+      SetLength(AContents, Size);
+      if Size > 0 then
+        SetLength(AContents, Stream.Read(AContents[1], Size));
       Result := True;
     finally
       Stream.Free;

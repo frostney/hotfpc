@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- hotfpc no longer crashes, or corrupts its memory, when a source file grows while it reads
+  it, as when a save or a generator writes the file during the twice-a-second look at the
+  contents. It read the file's size twice and could read more than it had room for.
 - A save whose sources change again while fpc compiles them is compiled again once they
   settle, before hotfpc swaps, refuses or reports anything. fpc reads one file after the
   other, so when an editor wrote the files of one save a few milliseconds apart, or the
