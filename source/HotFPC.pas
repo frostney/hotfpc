@@ -624,11 +624,12 @@ type
     { The files of ANew whose size or time differs from AOld's or that AOld lacks, and the
       files of AOld that ANew lacks. The caller frees the list. }
     class function ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
-    { Keeps AEmptied as the files a save emptied, path=ms, with the time ANow they were first
+    { Keeps AEmptied as the files a save emptied, ms=path, with the time ANow they were first
       seen so: a file of ANew that is empty and changed since AOld (another size or time, or
-      new). A file with content again, or gone, leaves it. True while one of them was seen
-      less than AWaitSeconds before ANow: an editor that empties a file before it writes it
-      may have got only that far. }
+      new). A file with content again, or gone, leaves it. Each is kept by its whole path,
+      with its case, as the stamps are: a path may have = in it. True while one of them was
+      seen less than AWaitSeconds before ANow: an editor that empties a file before it writes
+      it may have got only that far. }
     class function AwaitEmptied(const AOld, ANew: TFileStamps; const ANow, AWaitSeconds: Double;
       const AEmptied: TStrings): Boolean;
     { The files whose digest differs between the two lists of path=digest, or that are new
@@ -851,10 +852,21 @@ begin
   end;
 end;
 
+{ An entry of AwaitEmptied's list: the time, which has no =, then the path, which may. }
+function EmptiedPath(const AEntry: string): string;
+begin
+  Result := Copy(AEntry, Pos('=', AEntry) + 1, MaxInt);
+end;
+
+function EmptiedTime(const AEntry: string): Int64;
+begin
+  Result := StrToInt64(Copy(AEntry, 1, Pos('=', AEntry) - 1));
+end;
+
 class function TSourceWatcher.AwaitEmptied(const AOld, ANew: TFileStamps; const ANow, AWaitSeconds: Double;
   const AEmptied: TStrings): Boolean;
 var
-  Changed, Empty: TStringList;
+  Changed, Empty, Paths: TStringList;
   I: Integer;
   Now: Int64;
 begin
@@ -862,22 +874,29 @@ begin
   Now := Trunc(ANow * MillisecondsPerSecond);
   Changed := ChangedStamps(AOld, ANew);
   Empty := TStringList.Create;
+  Paths := TStringList.Create;
   try
+    Changed.CaseSensitive := True;
+    Empty.CaseSensitive := True;
+    Paths.CaseSensitive := True;
+    for I := 0 to AEmptied.Count - 1 do
+      Paths.Add(EmptiedPath(AEmptied[I]));
     for I := 0 to High(ANew) do
       if ANew[I].Size = 0 then
       begin
         Empty.Add(ANew[I].Path);
-        if (Changed.IndexOf(ANew[I].Path) >= 0) and (AEmptied.IndexOfName(ANew[I].Path) < 0) then
-          AEmptied.Add(ANew[I].Path + '=' + IntToStr(Now));
+        if (Changed.IndexOf(ANew[I].Path) >= 0) and (Paths.IndexOf(ANew[I].Path) < 0) then
+          AEmptied.Add(IntToStr(Now) + '=' + ANew[I].Path);
       end;
     for I := AEmptied.Count - 1 downto 0 do
-      if Empty.IndexOf(AEmptied.Names[I]) < 0 then
+      if Empty.IndexOf(EmptiedPath(AEmptied[I])) < 0 then
         AEmptied.Delete(I);
     Result := False;
     for I := 0 to AEmptied.Count - 1 do
-      if Now - StrToInt64(AEmptied.ValueFromIndex[I]) < Round(AWaitSeconds * MillisecondsPerSecond) then
+      if Now - EmptiedTime(AEmptied[I]) < Round(AWaitSeconds * MillisecondsPerSecond) then
         Result := True;
   finally
+    Paths.Free;
     Empty.Free;
     Changed.Free;
   end;
@@ -5023,6 +5042,40 @@ begin
   end;
 end;
 
+{ A file is kept by its whole path: one with = in it, and two whose names differ in case only,
+  each wait for their own save. }
+procedure TestAwaitEmptiedPaths;
+var
+  Old, New: TFileStamps;
+  Emptied: TStringList;
+begin
+  SetLength(Old, 3);
+  Old[0] := Stamp('/src/a=b.inc', 10, 100);
+  Old[1] := Stamp('/src/A.pas', 10, 100);
+  Old[2] := Stamp('/src/a.pas', 10, 100);
+  New := Copy(Old);
+  New[0] := Stamp('/src/a=b.inc', 0, 101);
+  Emptied := TStringList.Create;
+  try
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 10.0, 0.5, Emptied), 'a path with = that a save emptied');
+    Expect(TSourceWatcher.AwaitEmptied(New, New, 10.25, 0.5, Emptied), 'still, at a look before its wait is over');
+    Old := Copy(New);
+    New[0] := Stamp('/src/a=b.inc', 12, 102);
+    New[1] := Stamp('/src/A.pas', 0, 102);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 11.0, 0.5, Emptied), 'A.pas emptied');
+    Old := Copy(New);
+    New[2] := Stamp('/src/a.pas', 0, 103);
+    Expect(TSourceWatcher.AwaitEmptied(Old, New, 11.25, 0.5, Emptied), 'and a.pas after it');
+    Expect(TSourceWatcher.AwaitEmptied(New, New, 11.5, 0.5, Emptied), 'a.pas still waits once A.pas no longer does');
+    Expect(not TSourceWatcher.AwaitEmptied(New, New, 11.75, 0.5, Emptied), 'and no longer then');
+    New[1] := Stamp('/src/A.pas', 5, 104);
+    New[2] := Stamp('/src/a.pas', 5, 104);
+    Expect(not TSourceWatcher.AwaitEmptied(New, New, 12.0, 0.5, Emptied), 'both written again');
+  finally
+    Emptied.Free;
+  end;
+end;
+
 { What a compile checks when it is done: whether the sources it started from changed
   meanwhile. }
 procedure TestChangedSince;
@@ -7092,6 +7145,7 @@ begin
     TestChangedFiles;
     TestChangedStamps;
     TestAwaitEmptied;
+    TestAwaitEmptiedPaths;
     TestChangedSince;
     TestWatchedPaths;
     TestStampsShowARevertedSave;
