@@ -52,7 +52,7 @@ Each ✓ means all 19 [scenarios](../internals/testing.md#the-scenarios) gave th
 result with hotfpc 1.0.0. For Linux arm64 it means all 25 with hotfpc after 1.1.0: hotfpc
 1.1.0 itself loses the values of variables in a unit's implementation section on Linux
 arm64 (see the [changelog](../../CHANGELOG.md)).
-On Windows, two scenarios expect a restart where the other systems swap
+On Windows, three scenarios expect a restart where the other systems swap
 ([Windows programs](../guides/windows.md)).
 
 With fpc 3.2.2 and 3.3.1, a stress test also passed on all three systems (Windows under
