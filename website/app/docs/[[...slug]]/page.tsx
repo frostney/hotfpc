@@ -1,4 +1,5 @@
 import {
+  canonicalUrl,
   getPageImageUrl,
   getPageMarkdownUrl,
   pageDescription,
@@ -29,11 +30,11 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
     '@type': 'TechArticle',
     headline: pageTitle(page),
     description: await pageDescription(page),
-    url: `${siteUrl}${page.url}`,
+    url: canonicalUrl(page),
     isPartOf: {
       '@type': 'WebSite',
       name: `${appName} documentation`,
-      url: `${siteUrl}/docs`,
+      url: `${siteUrl}/docs/`,
     },
   };
 
@@ -75,7 +76,7 @@ export async function generateMetadata(props: PageProps<'/docs/[[...slug]]'>): P
   return {
     title: pageTitle(page),
     description: await pageDescription(page),
-    alternates: { canonical: `${siteUrl}${page.url}/` },
+    alternates: { canonical: canonicalUrl(page) },
     openGraph: {
       images: `${basePath}${getPageImageUrl(page).url}`,
     },

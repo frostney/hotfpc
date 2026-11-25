@@ -139,9 +139,15 @@ export function absoluteLinks(markdown: string): string {
     .join('\n');
 }
 
+// The canonical URL of a page, with the trailing slash its exported route has: the canonical
+// link, the sitemap, the structured data and the Markdown copies all name it so.
+export function canonicalUrl(page: DocsPage): string {
+  return `${absoluteUrl(page.url)}/`;
+}
+
 export async function getLLMText(page: DocsPage) {
   const processed = await page.data.getText('processed');
-  return `URL: ${absoluteUrl(page.url)}/
+  return `URL: ${canonicalUrl(page)}
 
 ${absoluteLinks(processed)}`;
 }
