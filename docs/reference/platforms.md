@@ -70,7 +70,7 @@ tests and runs all 27 scenarios on Linux x86-64, Linux arm64 and macOS arm64, an
 Windows x86-64 with `hotfpc.exe` ([tooling](../internals/tooling.md#ci)). Release 1.1.0's
 commit passed on Linux x86-64, macOS arm64 and Windows x86-64 in
 [run 44368963617](https://github.com/frostney/hotfpc/actions/runs/44368963617)
-(2026-11-18). On 2026-11-24, all 27 scenarios passed on Linux x86-64 with fpc
+(2026-11-18). On 2026-11-25, all 27 scenarios passed on Linux x86-64 with fpc
 3.2.2 at this version of the repository.
 
 ## Timings
