@@ -3156,6 +3156,36 @@ var
   SuspendThreads: Boolean = True;
   TestDataWrite: Boolean = False;   // HOT_TEST_DATA_WRITE: see the commit
 
+// Writes a new initial value while the variable still holds the old one, and says whether it
+// did. Within one aligned 8-byte word, with one compare-and-swap of that word: a thread that
+// still runs during the commit (on Linux, one that blocks the park signal and sleeps in the
+// kernel) either wrote first, and keeps its value, or writes after. A longer variable only
+// while every other thread is stopped, AAllStopped; otherwise it keeps its value.
+function CopyInitialValue(const ACopy: TDataCopy; AAllStopped: Boolean): Boolean;
+const
+  WordBytes = 8;
+var
+  Offset, WordAddress: QWord;
+  OldWord, NewWord: QWord;
+begin
+  Result := False;
+  Offset := ACopy.Destination and (WordBytes - 1);
+  if (ACopy.Size > 0) and (Offset + ACopy.Size <= WordBytes) then
+  begin
+    WordAddress := ACopy.Destination - Offset;
+    repeat
+      OldWord := PQWord(PtrUInt(WordAddress))^;
+      if CompareByte(PByte(@OldWord)[Offset], ACopy.Expected^, ACopy.Size) <> 0 then Exit;
+      NewWord := OldWord;
+      Move(ACopy.Source^, PByte(@NewWord)[Offset], ACopy.Size);
+    until InterLockedCompareExchange64(PInt64(PtrUInt(WordAddress))^, Int64(NewWord), Int64(OldWord)) = Int64(OldWord);
+    Exit(True);
+  end;
+  if not AAllStopped or (CompareByte(PByte(PtrUInt(ACopy.Destination))^, ACopy.Expected^, ACopy.Size) <> 0) then Exit;
+  Move(ACopy.Source^, PByte(PtrUInt(ACopy.Destination))^, ACopy.Size);
+  Result := True;
+end;
+
 procedure AddPatch(const APatch: TPatch);
 begin
   if PatchCount = Length(Patches) then SetLength(Patches, ListGrowthLarge + 2 * Length(Patches));
@@ -3543,11 +3573,11 @@ begin
     begin
       // An initialised variable or typed constant whose initial value was edited. If the
       // running value is still the old initial value, nothing has written it: take the new one.
-      // A thread can write it while the swap loads, so the commit compares again, with the
-      // threads stopped, and the note says what it found.
+      // A thread can write it while the swap loads, so the commit compares, with the threads
+      // stopped (CopyInitialValue), and the note says what it found.
       NewBytes := SymbolBytes(AObjectFile, Symbol);
       OldBytes := SymbolBytes(Previous, PreviousSymbol);
-      if (NewBytes <> nil) and (OldBytes <> nil) and not HasRelocations(AObjectFile, Symbol) and not HasRelocations(Previous, PreviousSymbol) and (CompareByte(PByte(PtrUInt(ExistingAddress))^, OldBytes^, Symbol^.Size) = 0) then
+      if (NewBytes <> nil) and (OldBytes <> nil) and not HasRelocations(AObjectFile, Symbol) and not HasRelocations(Previous, PreviousSymbol) then
       begin
         if DataCopyCount = Length(DataCopies) then SetLength(DataCopies, ListGrowthSmall + 2 * Length(DataCopies));
         DataCopies[DataCopyCount].Destination := ExistingAddress;
@@ -5530,7 +5560,7 @@ var
   NewWords, OldWords: PQWord;
   OldObject: PObjectFile;
   Address: QWord;
-  Cleared: Boolean;
+  Cleared, AllStopped: Boolean;
   Attempt: LongInt;
   UnwindTable: Pointer;
 begin
@@ -5754,11 +5784,13 @@ begin
     if Applied then
     begin
       for I := 0 to StoreCount - 1 do InterLockedExchange64(PInt64(Stores[I].Destination)^, Int64(Stores[I].Value));
-      for I := 0 to DataCopyCount - 1 do
-      begin
-        DataCopies[I].Taken := CompareByte(PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Expected^, DataCopies[I].Size) = 0;
-        if DataCopies[I].Taken then Move(DataCopies[I].Source^, PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Size);
-      end;
+      // every other thread stopped: on Linux one that blocks the park signal and sleeps isn't
+{$ifdef linux}
+      AllStopped := SuspendThreads and (SleeperCount = 0);
+{$else}
+      AllStopped := SuspendThreads;
+{$endif}
+      for I := 0 to DataCopyCount - 1 do DataCopies[I].Taken := CopyInitialValue(DataCopies[I], AllStopped);
     end;
     WorldStart;
     if not Cleared and (StopFailure = '') and (ResumeHit >= 0) then

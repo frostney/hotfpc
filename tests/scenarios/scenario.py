@@ -921,10 +921,11 @@ end.
 ])
 
 # ---------------------------------------------------------------------------- an initial value written during the load
-# Speed still holds its old initial value when the agent binds the save, and HOT_TEST_DATA_WRITE
-# writes it after that check and before the commit, as a thread of the program could while the
-# swap loads: the commit, with the threads stopped, finds it written, so Speed keeps the value
-# the program has, 6, and the note says so.
+# HOT_TEST_DATA_WRITE writes each variable whose initial value a save changes after the agent
+# binds the save and before the commit, as a thread of the program could while the swap loads:
+# the commit finds it written, so it keeps the value the program has, and the note says so.
+# Speed fits in one aligned word, which the commit compares and writes in one step; Pair, of 16
+# bytes, it compares and copies while every other thread is stopped.
 case("initrace", {
     "main.pas": MAIN,
     "u.pas": r"""unit u;
@@ -933,15 +934,19 @@ interface
 function Tick(n: Integer): string;
 implementation
 uses SysUtils;
+type
+  TPair = record A, B: Int64; end;
 var
   Speed: Integer = 5;
+  Pair: TPair = (A: 1; B: 2);
 function Tick(n: Integer): string;
 begin
-  Result := Format('speed %d', [Speed]);
+  Result := Format('speed %d pair %d %d', [Speed, Pair.A, Pair.B]);
 end;
 end.
 """}, [
-    ("Speed = 5 becomes Speed = 50, and the variable is written during the load", [("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;")]),
+    ("Speed = 5 becomes Speed = 50 and Pair = (1, 2) becomes (10, 20), and both are written during the load",
+     [("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;"), ("u.pas", "Pair: TPair = (A: 1; B: 2);", "Pair: TPair = (A: 10; B: 20);")]),
 ], env={"HOT_TEST_DATA_WRITE": "1"})
 
 # ---------------------------------------------------------------------------- a typed constant

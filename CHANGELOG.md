@@ -6,8 +6,11 @@
   changed initial value. The agent compared the variable with its old initial value
   before it stopped the program's threads, and copied the new one in unconditionally once
   they were stopped, so a thread's write in between was lost, and hotfpc printed
-  `note: U.SPEED still had its initial value; set to the new one`. The agent now compares
-  again with the threads stopped, right before the copy, and the note says what it found.
+  `note: U.SPEED still had its initial value; set to the new one`. Now the commit compares
+  and writes in one atomic step for a variable of up to 8 bytes within one aligned word,
+  so that also a thread that is still running then (on Linux, one that blocks the agent's
+  signal and sleeps) keeps its write, and a longer one only while every other thread is
+  stopped. The note says what the commit found.
 - On Windows with fpc 3.2, a swap now applies a changed initial value of a variable in a
   unit's implementation section by the same rule as on the other systems
   ([What a swap keeps](docs/guides/saves-and-restarts.md#what-a-swap-keeps)): while the

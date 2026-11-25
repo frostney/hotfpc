@@ -25,7 +25,7 @@ the program starts doesn't connect to hotfpc too.
 | Variable | Effect |
 | --- | --- |
 | `HOT_NOSUSPEND` | Any value: the agent doesn't stop the program's other threads during a swap, which is then not safe while they run. |
-| `HOT_TEST_DATA_WRITE` | Any value: just before it stops the program's threads to write a swap, the agent adds 1 to the first byte of each variable it is about to give a new initial value, as a thread of the program could write it while the swap loads. The swap then keeps the value the variable has. The `initrace` scenario sets it. |
+| `HOT_TEST_DATA_WRITE` | `1`, or any value but an empty one: just before it stops the program's threads to write a swap, the agent adds 1 to the first byte of each variable it is about to give a new initial value, as a thread of the program could write it while the swap loads. The swap then keeps the value the variable has. The `initrace` scenario sets it. |
 | `HOT_TEST_BLOCK` | A number of MiB: on Linux and macOS, the agent maps a block of that size just above the program before it looks for memory for new code, to test the case where something else took that space. |
 
 ## Read by the scenario tests
