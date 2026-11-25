@@ -1614,11 +1614,14 @@ begin
   end;
 end;
 
-// Whether a section fpc named after a routine is a routine of a unit's or the program's own
-// level (.text.n_u_$$_hidden$longint), not one nested in a routine or method
+// Whether a section fpc named after a routine is a routine of a unit's own level
+// (.text.n_u_$$_hidden$longint), not one nested in a routine or method
 // (.text.n_u$_$hidden$longint_$$_nested, and the helper of a routine's implicit finally,
 // .text.n_u$_$hidden$longint_$$_fin$00000016). A nested routine works in its parent's
-// frame, so its old entry must keep its old code for a parent that runs the old code.
+// frame, so its old entry must keep its old code for a parent that runs the old code. fpc
+// 3.2 names a program's own routines; the program's sections without a symbol are the
+// main block's helpers (.text.n_p$main_$$_fin$00000003), which the running main block
+// calls with its frame.
 function IsUnitLevelRoutineSection(const AName: AnsiString): Boolean;
 var
   Index: SizeInt;
@@ -1627,7 +1630,7 @@ begin
   Index := Pos(SectionNameInfix, AName);
   if Index = 0 then Exit(False);
   Rest := Copy(AName, Index + Length(SectionNameInfix), Length(AName));
-  if StartsWith(Rest, ProgramNamePrefix) then Delete(Rest, 1, Length(ProgramNamePrefix));
+  if StartsWith(Rest, ProgramNamePrefix) then Exit(False);
   Index := Pos('$', Rest);
   Result := (Index > 1) and (Copy(Rest, Index - 1, Length(UnitLevelSeparator)) = UnitLevelSeparator);
 end;
@@ -1710,11 +1713,12 @@ begin
     end;
     Inc(I, 1 + SymbolEntry^.NumberOfAuxSymbols);
   end;
-  // fpc 3.2 gives an implementation-section variable or routine no symbol at all, only a
-  // section of its own named after it (.bss.n_u_$u_$$_hidden, .text.n_u_$$_hidden$longint).
-  // Such a section stands for a variable or routine named after the section; the program's
-  // map file says where the linker put it. A nested routine stays unnamed: new code reaches
-  // it as section + offset, and its old entry keeps its old code.
+  // fpc 3.2 gives an implementation-section variable, or a routine of a unit's level declared
+  // only there, no symbol at all, only a section of its own named after it
+  // (.bss.n_u_$u_$$_hidden, .text.n_u_$$_hidden$longint). Such a section stands for a
+  // variable or routine named after the section; the program's map file says where the
+  // linker put it. A nested routine stays unnamed: new code reaches it as section + offset,
+  // and its old entry keeps its old code.
   for I := 0 to Header^.NumberOfSections - 1 do
   begin
     Section := @AObjectFile^.Sections[I];

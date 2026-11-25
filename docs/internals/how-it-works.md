@@ -245,11 +245,12 @@ after its agent connected, and the first program in every case, end hotfpc.
     The agent maps those references back to the symbols they mean, allowing for an
     immediate's length that fpc folds into the offset, so a unit's own variables keep
     their values.
-  - fpc 3.2 gives an implementation-section variable or routine no symbol at all, only a
-    section named after it. hotfpc links Windows programs with `-Xm`, and the agent finds
-    those sections' addresses in the linker's map: such a variable keeps its value, and
-    such a routine's old entry jumps to its new code. fpc 3.2 names neither a nested
-    routine nor the helper that runs a routine's implicit `finally` either. Both work in
+  - fpc 3.2 gives an implementation-section variable, and a unit's routine declared only
+    in the implementation section, no symbol at all, only a section named after it (it
+    names methods). hotfpc links Windows programs with `-Xm`, and the agent finds those
+    sections' addresses in the linker's map: such a variable keeps its value, and such a
+    routine's old entry jumps to its new code. fpc 3.2 names neither a nested routine nor
+    the helper that runs a routine's or the main block's implicit `finally`. These work in
     their parent's frame, so the agent leaves their old entries with the old code, for a
     parent that is still running it.
   - fpc gives a variable with an initial value, and a typed constant, a section of its own

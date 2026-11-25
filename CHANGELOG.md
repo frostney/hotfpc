@@ -3,8 +3,8 @@
 ## Unreleased
 
 - On Windows with fpc 3.2, a swap now redirects the old entry of a routine declared only in
-  a unit's implementation section to its new code, as it does on macOS and Linux and with
-  fpc 3.3.1. fpc 3.2 gives such a routine no symbol in a Windows object file, so the agent
+  a unit's implementation section, other than a method, to its new code, as it does on
+  macOS and Linux and with fpc 3.3.1. fpc 3.2 gives such a routine no symbol in a Windows object file, so the agent
   couldn't find its old entry: a procedure variable taken before the swap, or a frame that
   kept calling the routine, ran its old code. The agent now finds the routine's section in
   the linker's map, as it does for such a variable.
