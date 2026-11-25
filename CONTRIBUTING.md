@@ -12,7 +12,8 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
   it.
 - **Python 3.9 or later**, for the scenarios and the reference check.
 - **Lefthook**: `lefthook install` once per clone sets up the pre-commit hook.
-- **Node.js 20 or later**, only for the Markdown lint.
+- **Node.js**, only for the Markdown lint, in the version [Tooling](docs/internals/tooling.md)
+  gives.
 
 [Tooling](docs/internals/tooling.md) lists the rest, such as what recording the demo needs.
 

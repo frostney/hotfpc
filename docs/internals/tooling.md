@@ -8,7 +8,7 @@
 | fpcres | ships with fpc | turns the agent's source into a resource of hotfpc ([build system](build-system.md#the-embedded-agent)) |
 | Python | 3.9 or later | the scenario tests in `tests/scenarios/` and the reference check |
 | Lefthook | 1.5 or later | the pre-commit hook in [`lefthook.yml`](../../lefthook.yml) (`lefthook install` once per clone) |
-| Node.js | 20 or later, with `npx` | the Markdown lint (`markdownlint-cli2` 0.24.0, which `npx` fetches) |
+| Node.js | 22 or later, with `npx`: `markdownlint-cli2` 0.24.0 and its `markdownlint` 0.42.0 require it | the Markdown lint (`markdownlint-cli2` 0.24.0, which `npx` fetches) |
 | tmux, vim, asciinema, agg, ffmpeg | any recent | recording the terminal demo with `scripts/record-demo.py`; only needed to re-record ([demos](demos.md)) |
 
 Only fpc is needed to build hotfpc. Everything else is for working on it.
