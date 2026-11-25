@@ -52,11 +52,12 @@
   a compile, so a file that keeps changing can't hold back every save, nor keep hotfpc
   running after the program has ended. On Windows a save whose sizes of variables with
   initial values are checked then needs a restart, as its compile and its compile to
-  assembler may have read different sources. hotfpc reads the times of the sources as
-  finely as the file system keeps them, so a save that came and was put back during a
-  compile, at the same size and within the same second, shows too. On Windows such a save
-  needs a restart where the times can't show it, as on a file system that keeps whole
-  seconds, and hotfpc waits 22 ms for a save to settle instead of 4.
+  assembler may have read different sources; when that happens to the build a program
+  starts from, every such save needs a restart until it starts over. hotfpc reads the
+  times of the sources as finely as the file system keeps them, so a save that came and
+  was put back during a compile, at the same size and within the same second, shows too.
+  On Windows such a save needs a restart where the times can't show it, as on a file
+  system that keeps whole seconds, and hotfpc waits 22 ms for a save to settle instead of 4.
 - hotfpc keeps each source file by its whole path, with its case. In a directory whose
   path has `=` in it, the files used to share one entry, so unchanged sources looked
   changed after every compile: each save was compiled four times, and on Windows a save

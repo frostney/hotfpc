@@ -941,6 +941,23 @@ case("startblock", {
     ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
 ])
 
+# ---------------------------------------------------------------------------- saves during four builds at the start
+# progvar's program. A save lands during each of the first four builds, so the fourth is used
+# as it is: the program runs the third save, while the fourth, which grows Calls, may be what
+# its compile to assembler read. On Windows the program's sizes are then unknown, and every
+# save that needs them, such as the fourth once the program runs, needs a restart
+case("startcap", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("another text, while hotfpc builds the program to start it",
+     [("main.pas", "' main one", "' main two")], AT_START),
+    ("another text, while hotfpc builds it again", [("main.pas", "' main two", "' main three")], AT_START),
+    ("another text, while hotfpc builds it a third time", [("main.pas", "' main three", "' main four")], AT_START),
+    ("Calls: Integer = 0 becomes Calls: Int64 = 0, while hotfpc builds it a fourth time and uses that build",
+     [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")], AT_START),
+    ("another text", [("main.pas", "' main four", "' main five")]),
+])
+
 # ---------------------------------------------------------------------------- a unit left out during the start
 # progvar's program, which also uses w, a unit with an initialization section. A save during
 # the first build leaves w out, so the program starts without it: when main uses it again, w
@@ -1512,21 +1529,21 @@ def run(name):
         except OSError:
             return None
 
-    def built(again):
+    def built(before):
         made = written(os.path.join("units", "main.o"))
         linked = max(written("main") or 0, written("main.exe") or 0)
-        return made is not None and (not again or 0 < linked < made)
-    again = False
+        return made is not None and (before is None or (made != before and 0 < linked < made))
+    before = None
     while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
         desc, edits = steps[0][:2]
         steps = steps[1:]
         deadline = time.time() + OUTCOME_TIMEOUT
-        while not built(again) and p.poll() is None and time.time() < deadline \
+        while not built(before) and p.poll() is None and time.time() < deadline \
                 and not any("] v1: built" in line for line in lines):
             time.sleep(0.001)
-        if not built(again):
-            out("!!! the driver did not build main.pas %sbefore it started the program" % ("again " if again else ""))
-        again = True
+        if not built(before):
+            out("!!! the driver did not build main.pas %sbefore it started the program" % ("again " if before else ""))
+        before = written(os.path.join("units", "main.o"))
         out("--- the script saves: " + desc)
         for path, text in texts_of(edits).items():
             write(path, text)

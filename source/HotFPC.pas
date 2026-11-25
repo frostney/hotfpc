@@ -3250,6 +3250,8 @@ const
   { The longest hotfpc waits for the files to stop changing. A file that changes all the time
     is then compiled as it is, and that compile sees the change: the limit above applies. }
   MaximumSettleSeconds = 1.0;
+  { why the sizes of initialised data are unknown after MaximumUnusedCompiles }
+  UnsettledSources = 'the sources changed while fpc compiled them';
   { macOS checks a newly linked executable on its first start (seconds, more under load); Wine
     starts its server the first time. }
   ConnectTimeoutSeconds = 60;
@@ -3342,6 +3344,7 @@ type
     function ReadAssembly(const AObjects: TStrings; out AProblem: string): TStringList;
     function WriteLiveAssembly(out AProblem: string): Boolean;
     procedure KeepLiveSizes(const ASizesKnown: Boolean; const AProblem: string);
+    function LiveSizesProblem(const ASizesKnown: Boolean; const AProblem: string): string;
     function NotAssembled(const AProblem: string): string;
     procedure RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
     function SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
@@ -3796,21 +3799,31 @@ begin
   end;
 end;
 
+{ Why the sizes of the program about to start are unknown, or '': fpc did not write its
+  assembler (ASizesKnown, AProblem), or the sources kept changing during its build or link
+  and its compile to assembler (FUnsettled), so these may come from different sources. }
+function TDriver.LiveSizesProblem(const ASizesKnown: Boolean; const AProblem: string): string;
+begin
+  Result := '';
+  if not ASizesKnown then
+    Result := NotAssembled(AProblem)
+  else if FUnsettled then
+    Result := UnsettledSources;
+end;
+
 { The sizes of the units the program starts with become the running program's (FSizes), from
-  the assembler WriteLiveAssembly wrote, or are unknown when it failed or an object file
-  cannot be read (FSizesProblem). After a compile to assembler, every unit's file in the
-  assembly directory is current: the units whose source changed since were made to recompile
-  there too. }
+  the assembler WriteLiveAssembly wrote, or are unknown (FSizesProblem, LiveSizesProblem), as
+  they are when an object file cannot be read. After a compile to assembler, every unit's
+  file in the assembly directory is current: the units whose source changed since were made
+  to recompile there too. }
 procedure TDriver.KeepLiveSizes(const ASizesKnown: Boolean; const AProblem: string);
 var
   Objects: TStringList;
 begin
   FreeAndNil(FSizes);
-  if not ASizesKnown then
-  begin
-    FSizesProblem := NotAssembled(AProblem);
+  FSizesProblem := LiveSizesProblem(ASizesKnown, AProblem);
+  if FSizesProblem <> '' then
     Exit;
-  end;
   Objects := FWorkspace.UnitObjects;
   try
     FSizes := ReadAssembly(Objects, FSizesProblem);
@@ -3872,7 +3885,7 @@ begin
     files have may not be the one counted }
   if FUnsettled then
   begin
-    RefuseUncheckedSizes('the sources changed while fpc compiled them', ACompileSeconds);
+    RefuseUncheckedSizes(UnsettledSources, ACompileSeconds);
     Exit(False);
   end;
   { nor can the stamps show that no save came and was put back during the compiles (Settle

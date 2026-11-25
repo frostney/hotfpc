@@ -103,6 +103,8 @@ These scenarios let hotfpc start the program over; the others pass `--no-restart
 | Another text, after that start | swap | `startsave` |
 | Another text, saved during the first build while fpc can't write the program's assembler, and another during the build that follows | built again each time: the program runs the second from its first tick | `startblock` |
 | `Calls: Integer = 0` in the program file becomes `Int64 = 0`, after that start | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes` | `startblock` |
+| Saves during each of the first four builds, the last of which makes `Calls: Integer = 0` `Int64 = 0` | the fourth build is used as it is: the program runs the third save | `startcap` |
+| That save, compiled once the program runs, and another text | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes`; on Windows `the sizes of variables with initial values are unknown: the sources changed while fpc compiled them`, for one or both saves | `startcap` |
 | The program no longer uses a unit, saved while hotfpc builds the program to start it | built again before the program starts: the program starts without the unit | `startunit` |
 | The program uses that unit again | restart: `unit w is not part of the running program` | `startunit` |
 | A unit the program uses gets a new unit with a typed constant, `Limit: Integer = 7` | restart: `unit w is not part of the running program` | `newconst` |

@@ -10,7 +10,8 @@ $HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
 import os, platform, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# case: (reloads applied, refused, failed to compile); rapid may merge two quick saves into one reload
+# case: (reloads applied, refused, failed to compile); a tuple lists the numbers a case may give, as
+# when two saves may make one reload (rapid)
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
@@ -42,6 +43,10 @@ EXPECT = {
     # a save during the first build while fpc cannot write the assembler, and one during the
     # build after it: the program starts from the last, and its grown variable needs a restart
     "startblock": (0, 1, 0),
+    # saves during four builds at the start, the last of which grows Calls: the program runs
+    # the third, and the grown variable needs a restart, once or twice as hotfpc compiles it
+    # alone or with the save after it
+    "startcap": (0, (1, 2), 0),
     # a unit the program no longer uses after a save during the first build, then uses again:
     # a restart, for a unit the running program does not have
     "startunit": (0, 1, 0),
@@ -67,7 +72,7 @@ PRINTS = {
     # the program runs the save made during the start from its first tick
     "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
     "newconst": ["n 1 limit 7", "n 1 limit 8"],
-    "startblock": ["n 1 main three 1"],
+    "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
 # the save: Tick passes the new second argument, and the main block keeps its old code
@@ -141,7 +146,7 @@ for name in names:
     # during it, so none finds the same code ("not swapped")
     # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
     # gave no outcome for
-    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! " not in body
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! " not in body
     # the program's tick records, each a line of its own after the script's timestamp: the
     # same records count toward continuity and carry the counters
     records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)
