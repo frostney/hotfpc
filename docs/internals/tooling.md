@@ -103,5 +103,6 @@ npm run start      # website/out at http://localhost:3000/hotfpc/
   Open Graph image per page and a sitemap.
 - `package.json` pins every package to an exact version, and `package-lock.json` the rest.
 
-`pages.yml` builds the site on every pull request that touches `docs/` or `website/`, so a
-broken link fails the pull request, and deploys it from pushes to main.
+`pages.yml` builds the site on every pull request, so a broken link fails the pull request,
+also when the change that breaks it is outside `docs/`, such as a renamed heading in
+`README.md`. It deploys the site from pushes to main.

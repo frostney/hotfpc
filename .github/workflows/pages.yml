@@ -1,21 +1,14 @@
 # Builds the website, a landing page and docs/ rendered as it is, and deploys it to
-# https://frostney.github.io/hotfpc/ (docs/internals/tooling.md, "The website"). A pull
-# request that touches docs/ or website/ builds it without deploying: the build fails on a
-# broken link or image in docs/. Pushes to main deploy.
+# https://frostney.github.io/hotfpc/ (docs/internals/tooling.md, "The website"). Every pull
+# request builds it without deploying: the build fails on a broken link or image in docs/,
+# and those links reach files anywhere in the repository (README.md's headings, the
+# examples, the source), so it runs whatever the change touches. Pushes to main deploy.
 name: Pages
 
 on:
   push:
     branches: [main]
-    paths:
-      - "docs/**"
-      - "website/**"
-      - ".github/workflows/pages.yml"
   pull_request:
-    paths:
-      - "docs/**"
-      - "website/**"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
