@@ -49,7 +49,9 @@ writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
 `(path, None, None)` removes it again. After the last step the script tells the program to
 end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
 
-`check.py` runs `scenario.py` and checks each case's run:
+`check.py` runs `scenario.py` and checks each case's run, line by line without the script's
+timestamps: hotfpc's lines start with `[hot]`, and a check matches a whole line from its
+start, so a line the program prints is never taken for one of hotfpc's:
 
 - the closing summary: the number of reloads applied, refused and failed to compile, and of
   restarts, against the case's expected numbers in `EXPECT` and `RESTARTS` (a tuple lists
