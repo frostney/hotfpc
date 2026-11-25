@@ -24,7 +24,11 @@ code you change in units.
 
 ## Get raylib
 
-- **macOS:** `brew install raylib`.
+- **macOS on Apple silicon:** `brew install raylib`.
+- **macOS on Intel:** download `raylib-<version>_macos.tar.gz` from raylib's
+  [releases](https://github.com/raysan5/raylib/releases), whose library runs on Intel and
+  Apple silicon, and unpack it in a directory whose path has no spaces. Homebrew has no
+  prebuilt raylib for Intel Macs any more.
 - **Linux:** download the archive for your processor from raylib's
   [releases](https://github.com/raysan5/raylib/releases) and unpack it in a directory whose
   path has no spaces ([Run it](#run-it) says why): `raylib-<version>_linux_amd64.tar.gz` on
@@ -37,14 +41,15 @@ The example was written against raylib 6.2.
 
 ## Run it
 
-On macOS, with raylib from Homebrew:
+On macOS, with raylib from Homebrew, `brew --prefix` names where Homebrew put it:
 
 ```sh
 cd examples/raylib
-hotfpc -Fl/opt/homebrew/lib game.pas
+hotfpc "-Fl$(brew --prefix)/lib" game.pas
 ```
 
-With a release unpacked on macOS or Linux, name the directory you unpacked it into:
+With a release unpacked on macOS or Linux, set `RAYLIB` to the directory it unpacked into,
+here Linux x86-64's in your home directory (`raylib-6.2_macos` on a Mac):
 
 ```sh
 cd examples/raylib

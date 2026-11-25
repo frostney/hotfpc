@@ -7,9 +7,9 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
 ## Toolchain
 
 - **Free Pascal 3.2.2**, the release hotfpc is built and tested with:
-  `sudo apt-get install fpc`, `brew install fpc`, or the win32 and win64 installer from
-  [freepascal.org](https://www.freepascal.org/download.html). fpcres and ppudump come with
-  it.
+  `sudo apt-get install fpc`, `brew install fpc` on a Mac with Apple silicon, or the
+  installer from [freepascal.org](https://www.freepascal.org/download.html) for an Intel Mac
+  and for Windows (win32 and win64). fpcres and ppudump come with it.
 - **Python 3.9 or later**, for the scenarios and the reference check.
 - **Lefthook**: `lefthook install` once per clone sets up the pre-commit hook.
 - **Node.js**, only for the Markdown lint, in the version [Tooling](docs/internals/tooling.md)
