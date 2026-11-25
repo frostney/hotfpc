@@ -9,6 +9,7 @@
 | Python | 3.9 or later | the scenario tests in `tests/scenarios/` and the reference check |
 | Lefthook | 1.5 or later | the pre-commit hook in [`lefthook.yml`](../../lefthook.yml) (`lefthook install` once per clone) |
 | Node.js | 22 or later, with `npx`: `markdownlint-cli2` 0.24.0 and its `markdownlint` 0.42.0 require it | the Markdown lint (`markdownlint-cli2` 0.24.0, which `npx` fetches) |
+| Node.js, for the website | 22.12 or later, which the site's `mermaid` 12.2.0 requires; CI builds it with Node.js 24 | the website (`website/`) |
 | tmux, vim, asciinema, agg, ffmpeg | any recent | recording the terminal demo with `scripts/record-demo.py`; only needed to re-record ([demos](demos.md)) |
 
 Only fpc is needed to build hotfpc. Everything else is for working on it.
@@ -68,4 +69,40 @@ runs the unit tests and runs the scenarios with `hotfpc.exe`. The `docs` job run
 reference check and the Markdown lint.
 
 `.github/workflows/release.yml` builds the release binaries for a version tag
-([releasing](releasing.md)).
+([releasing](releasing.md)), and `.github/workflows/pages.yml` builds and deploys the
+website (below).
+
+## The website
+
+<https://frostney.github.io/hotfpc/> is a landing page and `docs/` rendered as it is. It is
+a [Fumadocs](https://fumadocs.dev) site in `website/`, exported as static files by Next.js
+with the basePath `/hotfpc`. Only the landing page and the glue live in `website/`; every
+documentation page is a file in `docs/`, ordered by the `meta.json` in each folder, with
+its H1 as its title. Node and the site's packages are for the website only: building
+hotfpc doesn't need them.
+
+```sh
+cd website
+npm ci
+npm run build      # the static export in website/out
+npm run start      # website/out at http://localhost:3000/hotfpc/
+```
+
+- `lib/remark-repo-links.mjs` maps the links in `docs/`: a link to a page becomes the
+  page's route, a link to a file under `docs/` that isn't a page (the demo recordings, an
+  image) becomes the site's copy of it, which `scripts/sync-docs-assets.mjs` makes before
+  each build, and any other link in the repository becomes its GitHub URL. A link or image
+  whose target doesn't exist fails the build, and so does a link whose fragment
+  (`page.md#section`, `#section`) names no heading of the Markdown file it points to.
+- `lib/remark-term-links.mjs` links the first mention of a few tools on each page (Free
+  Pascal, raylib, lwpt, Wine).
+- A ```` ```mermaid ```` block is drawn in the browser by `components/mermaid.tsx`; GitHub
+  draws the same block natively.
+- The site has a static search index, `llms.txt`, `llms-full.txt` and a Markdown copy of
+  every page, whose links to pages, sections and files of the site are absolute URLs, an
+  Open Graph image per page and a sitemap.
+- `package.json` pins every package to an exact version, and `package-lock.json` the rest.
+
+`pages.yml` builds the site on every pull request, so a broken link fails the pull request,
+also when the change that breaks it is outside `docs/`, such as a renamed heading in
+`README.md`. It deploys the site from pushes to main.

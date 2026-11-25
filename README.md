@@ -10,7 +10,8 @@ brew install fpc frostney/tap/hotfpc
 ```
 
 Homebrew covers macOS on Apple silicon and Linux on x86-64. For Windows, Linux arm64 or a
-build from source, see [Install](#install).
+build from source, see [Install](#install). The documentation is at
+<https://frostney.github.io/hotfpc/>, rendered from [docs/](docs/index.md).
 
 ![hotfpc running examples/demo: scene.pas is edited in vim on the left while the program keeps running on the right](docs/demo.gif)
 

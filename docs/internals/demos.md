@@ -39,4 +39,5 @@ and trimmed to the four swaps. The run was `hotfpc -Fl/opt/homebrew/lib game.pas
 
 To record it again, run the example the same way, make the four edits the README describes
 in `scene.pas`, and keep each `[hot]` line in view. Commit the GIF for the README and the
-MP4 for a sharper look.
+MP4, which the website's home page plays with the browser's controls, under the same names:
+the README, the guides and the site pick up the new files as they are.
