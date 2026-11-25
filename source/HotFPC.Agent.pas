@@ -169,6 +169,9 @@ const
   MainBlockName = 'PASCALMAIN';
   MainSymbolName = 'main';
   SectionSymbolPrefix = '@sect:';
+  SectionNameInfix = '.n_';                 // fpc's section of one item: .text.n_<its name>
+  ProgramNamePrefix = 'p$';                 // a program's names start with P$<program>
+  UnitLevelSeparator = '_$$_';              // <unit>_$$_<routine>; a nested routine has $_$
   AnchorSymbolName = 'HOTFPC.AGENT_$$_HOTANCHOR';
   DebugSectionPrefix = '.debug';
   PDataSectionPrefix = '.pdata';
@@ -1611,6 +1614,24 @@ begin
   end;
 end;
 
+// Whether a section fpc named after a routine is a routine of a unit's or the program's own
+// level (.text.n_u_$$_hidden$longint), not one nested in a routine or method
+// (.text.n_u$_$hidden$longint_$$_nested, and the helper of a routine's implicit finally,
+// .text.n_u$_$hidden$longint_$$_fin$00000016). A nested routine works in its parent's
+// frame, so its old entry must keep its old code for a parent that runs the old code.
+function IsUnitLevelRoutineSection(const AName: AnsiString): Boolean;
+var
+  Index: SizeInt;
+  Rest: AnsiString;
+begin
+  Index := Pos(SectionNameInfix, AName);
+  if Index = 0 then Exit(False);
+  Rest := Copy(AName, Index + Length(SectionNameInfix), Length(AName));
+  if StartsWith(Rest, ProgramNamePrefix) then Delete(Rest, 1, Length(ProgramNamePrefix));
+  Index := Pos('$', Rest);
+  Result := (Index > 1) and (Copy(Rest, Index - 1, Length(UnitLevelSeparator)) = UnitLevelSeparator);
+end;
+
 function ParseCOFF(AObjectFile: PObjectFile): Boolean;
 var
   Header: PCOFFHeader;
@@ -1692,11 +1713,13 @@ begin
   // fpc 3.2 gives an implementation-section variable or routine no symbol at all, only a
   // section of its own named after it (.bss.n_u_$u_$$_hidden, .text.n_u_$$_hidden$longint).
   // Such a section stands for a variable or routine named after the section; the program's
-  // map file says where the linker put it.
+  // map file says where the linker put it. A nested routine stays unnamed: new code reaches
+  // it as section + offset, and its old entry keeps its old code.
   for I := 0 to Header^.NumberOfSections - 1 do
   begin
     Section := @AObjectFile^.Sections[I];
     if not (Section^.Kind in [KindData, KindCode]) or (Section^.Size = 0) or (Pos('$', Section^.Name) = 0) then Continue;
+    if (Section^.Kind = KindCode) and not IsUnitLevelRoutineSection(Section^.Name) then Continue;
     K := 0;
     while (K < LongInt(Header^.NumberOfSymbols)) and not (AObjectFile^.Symbols[K].Defined and (AObjectFile^.Symbols[K].Section = I)) do Inc(K);
     if K < LongInt(Header^.NumberOfSymbols) then Continue;   // it has symbols of its own
