@@ -224,18 +224,14 @@ On Windows itself, CI runs the unit tests and the scenarios with `hotfpc.exe` an
 on every push.
 
 A swap usually takes 40 to 150 ms from save to running, and most of that is fpc compiling
-the unit. A unit with about 500 functions takes 0.5 to 1.1 s.
+the unit. A unit with about 500 functions takes 0.5 to 1.1 s. For a Windows program, a save
+that changes a unit with a variable with an initial value or a typed constant compiles
+twice: the second compile, to assembler, shows their sizes, which Windows object files
+don't.
 
 ## Limits
 
 - A unit's initialization section doesn't run again, and a new unit needs a restart.
-- On Windows, hotfpc can't see that a variable with an initial value in the program file
-  changed size (`Calls: Integer = 0` becoming `Int64 = 0`), and with fpc 3.2 the same for
-  a typed constant in a unit's implementation section (`const Calls: Integer = 0`). COFF
-  objects don't state symbol sizes, and fpc pads such a variable's section to 16 bytes, so
-  only the unit file shows the new type: fpc writes none for the program, and fpc 3.2
-  leaves such a constant out of it. The edit is swapped and the variable keeps its old
-  size, so restart the program yourself after one.
 - Memory for new code and data is never freed.
 - Hardened and notarised macOS programs aren't supported.
 
@@ -246,7 +242,7 @@ each system needs.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 25 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 26 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```

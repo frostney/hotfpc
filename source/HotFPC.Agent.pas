@@ -754,7 +754,8 @@ function IsAnonymous(const AName: AnsiString): Boolean; forward;
 
 // fpc 3.2.2 for x86-64 Linux gives every variable with an initial value a section of its own
 // and pads it to 16 bytes, so the distance to the section's end stays the same when an
-// Integer becomes an Int64. ELF states each symbol's size as well; the other formats don't.
+// Integer becomes an Int64. ELF states each symbol's size as well. COFF doesn't: for a Windows
+// program the driver compares the sizes in fpc's assembler output before it sends the objects.
 function SizeChanged(AOld, ANew: PObjectSymbol): Boolean;
 begin
   Result := (AOld^.Size <> ANew^.Size)

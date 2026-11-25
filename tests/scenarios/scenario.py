@@ -34,6 +34,10 @@ end.
 '''
 
 CASES = {}
+# An edit (path, None, BLOCKED) puts a directory where the driver writes a file, such as the
+# compile to assembler's .hot/asm/main.s, so that fpc cannot write it; (path, None, None)
+# removes it again.
+BLOCKED = object()
 
 
 def case(name, files, steps, ticks=None, opts=(), restart=False):
@@ -771,8 +775,9 @@ end.
 ])
 
 # ---------------------------------------------------------------------------- a variable with an initial value
-# fpc 3.2.2 for x86-64 Linux gives it a section of its own, padded to 16 bytes: only the size
-# ELF states for the symbol shows that it grew
+# fpc gives it a section of its own, padded to 16 bytes, so the object file's section looks the
+# same when it grows: the size ELF states for the symbol shows it, and on Windows, where COFF
+# states none, the unit file and fpc's assembler output
 case("initvar", {
     "main.pas": MAIN,
     "u.pas": r'''unit u;
@@ -821,7 +826,9 @@ end.
 ])
 
 # ---------------------------------------------------------------------------- a variable of the program
-# like initvar, but in the program file, for which fpc writes no unit file
+# like initvar, but in the program file, for which fpc writes no unit file. The second save
+# lands while fpc cannot write the program's assembler: on Windows its sizes are then unknown,
+# so it needs a restart, and the running program's sizes stay what they were for the third
 case("progvar", {
     "main.pas": r'''program main;
 {$mode objfpc}{$H+}
@@ -857,7 +864,33 @@ end;
 end.
 '''}, [
     ("another text", [("main.pas", "' main one", "' main two")]),
-    ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0", [("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
+    ("another text, while fpc cannot write the program's assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("main.pas", "' main two", "' main three")]),
+    ("Calls: Integer = 0 in the program becomes Calls: Int64 = 0",
+     [(".hot/asm/main.s", None, None), ("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
+])
+
+# ---------------------------------------------------------------------------- a routine's typed constant
+# like typedconst, but declared in a routine, which no unit file has with any fpc
+case("localconst", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}{$J+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+function Tick(n: Integer): string;
+const
+  Calls: Integer = 0;
+begin
+  Inc(Calls);
+  Result := Format('one calls %d', [Calls]);
+end;
+end.
+'''}, [
+    ("another text", [("u.pas", "'one calls", "'two calls")]),
+    ("Calls: Integer = 0 in Tick becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
 ])
 
 # ---------------------------------------------------------------------------- restarts
@@ -972,9 +1005,16 @@ def run(name):
                 out("!!! the edit does not apply: %r" % old)
             texts[path] = texts[path].replace(old, new)
         for path, text in texts.items():
-            if text is None:   # (file, None, None): the file goes away
+            if text is None:   # (file, None, None): the file, or the directory BLOCKED put there, goes away
+                if os.path.isdir(path):
+                    os.rmdir(path)
+                elif os.path.exists(path):
+                    os.remove(path)
+                continue
+            if text is BLOCKED:
                 if os.path.exists(path):
                     os.remove(path)
+                os.makedirs(path)
                 continue
             with open(path, "w") as fh:
                 fh.write(text)

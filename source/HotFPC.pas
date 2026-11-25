@@ -432,6 +432,7 @@ type
     FAgentDirectory: string;
     FAgentSourceDirectory: string;
     FNextDirectory: string;
+    FAssemblyDirectory: string;
     FExecutable: string;
     FNextExecutable: string;
   public
@@ -461,6 +462,9 @@ type
     { Where a restart links the program, so that the running program and its file stay as
       they are until the link has worked. }
     property NextDirectory: string read FNextDirectory;
+    { Where a Windows program is also compiled to assembler, for the sizes of its variables
+      with initial values (see "sizes of initialised data"). }
+    property AssemblyDirectory: string read FAssemblyDirectory;
     { The built program (no trailing delimiter). }
     property Executable: string read FExecutable;
     { The program a restart links, in NextDirectory. }
@@ -474,6 +478,7 @@ const
   AgentDirectoryName = 'agent';
   AgentSourceDirectoryName = 'agent-src';
   NextDirectoryName = 'next';
+  AssemblyDirectoryName = 'asm';
   StageDirectoryPrefix = 'v';
   ObjectPattern = '*.o';
   WindowsExecutableExtension = '.exe';
@@ -490,6 +495,7 @@ begin
   FAgentDirectory := FHotDirectory + AgentDirectoryName + PathDelim;
   FAgentSourceDirectory := FHotDirectory + AgentSourceDirectoryName + PathDelim;
   FNextDirectory := FHotDirectory + NextDirectoryName + PathDelim;
+  FAssemblyDirectory := FHotDirectory + AssemblyDirectoryName + PathDelim;
   FExecutable := FHotDirectory + FName;
   if ATargetWindows then
     FExecutable := FExecutable + WindowsExecutableExtension;
@@ -834,9 +840,10 @@ end;
   down: name=text for the layout of each record or class type and the type of each variable,
   of the interface (ppudump's JSON) and of the implementation section (its text, as the JSON
   leaves the section out). Two texts differ exactly when a field was added, removed, moved
-  or retyped, or a variable changed its type. The implementation section matters most on
-  Windows: a COFF object states no sizes, so it is the only place that shows a variable with
-  an initial value growing inside the 16 bytes fpc pads its section to. }
+  or retyped, or a variable changed its type. On Windows, where a COFF object states no
+  sizes, the type also shows a variable with an initial value that grows inside the 16 bytes
+  fpc pads its section to; the check of sizes covers the ones no unit file has (see "sizes
+  of initialised data"). }
 
 type
   TLayout = TStringList;
@@ -1719,6 +1726,411 @@ begin
 end;
 
 
+// ---------------------------------------------------------------- sizes of initialised data (assembler)
+{ The check of sizes for a Windows program. fpc gives every variable with an initial value
+  and every typed constant a section of its own and pads it to 16 bytes, and a COFF object
+  states no symbol sizes, so one that grows inside the padding (Integer = 0 to Int64 = 0)
+  looks the same in the object file. On the other systems the agent finds the size in the
+  object file. The unit file names the type, but fpc writes none for the program, a
+  routine's typed constant is never in it, and fpc 3.2 leaves out an implementation
+  section's typed constant too. fpc's assembler output (-s -Aas) has every one of them as a
+  label followed by its data, so for a Windows program hotfpc also compiles to assembler,
+  into .hot/asm, and compares the sizes it counts there with the running program's. A size
+  is name=bytes, under the label's name (TC_$U_$$_CALLS). The running program's sizes are
+  those it started with, and those of the labels that swaps added, each as the program first
+  had it: the agent keeps a variable at its first address, also when a save removed it and a
+  later one brings it back. The object file names the data the assembler must give a size
+  for: a section of its own for each (.data.n_TC_$U_$$_CALLS). A datum it names that the
+  assembler has no size for has an unknown size (name=?), and a save that changes a unit
+  with one needs a restart: an unknown size is never taken as the same. }
+
+type
+  TDataSizes = class
+  public
+    { Whether an object file has a variable with an initial value or a typed constant: fpc
+      names each one TC_$..., in COFF as a section's name or a symbol's. }
+    class function HasInitialisedData(const AObjectPath: string): Boolean;
+    { Adds to ANames the variables with an initial value and the typed constants a COFF
+      object defines, by fpc's TC_$ names: each section of one (.data.n_TC_$U_$$_CALLS) and
+      each symbol of one it defines. False when the file cannot be read or is no COFF object
+      that has them; ANames is then incomplete. }
+    class function ObjectNames(const AObjectPath: string; const ANames: TStrings): Boolean;
+    { name=bytes for every TC_$ label of fpc's assembler text, name=? (UnknownSize) for one
+      followed by a directive it does not know. The caller frees the list. }
+    class function Read(const AAssembler: string): TStringList;
+    { The bytes of the string of a .ascii line. }
+    class function StringBytes(const ALine: string): Integer;
+    { The restart reasons between two lists of sizes: "variable U.CALLS changed size from 4
+      to 8 bytes" for each name both have, and one for each name of ANew whose size either
+      list has as unknown. A name only AOld has, or only ANew with a known size, is no change.
+      The caller frees the list. }
+    class function Changes(const AOld, ANew: TStrings): TStringList;
+    { Adds to ASizes the sizes in AAdded of the names ASizes doesn't have; a name it has keeps
+      its size. }
+    class procedure Keep(const ASizes, AAdded: TStrings);
+    { A label as the agent prints names: TC_$U_$$_CALLS is U.CALLS, and
+      TC_$U$_$TICK$LONGINT$$LONGINT_$$_N is U.TICK(LONGINT):LONGINT.N. }
+    class function Pretty(const AName: string): string;
+  end;
+
+const
+  AssemblerExtension = '.s';
+  InitialisedDataPrefix = 'TC_$';
+  { a size the assembler does not give }
+  UnknownSize = '?';
+  UnknownSizes = 'the sizes of variables with initial values are unknown: ';
+  { fpc's section of a datum: its kind, this, and the datum's name (.data.n_TC_$U_$$_CALLS) }
+  DatumSectionInfix = '.n_';
+  { the parts of a COFF object (the PE/COFF specification) the names are read from }
+  COFFHeaderBytes = 20;
+  COFFSectionCountOffset = 2;
+  COFFSymbolTableOffset = 8;
+  COFFSymbolCountOffset = 12;
+  COFFOptionalHeaderOffset = 16;
+  COFFSectionBytes = 40;
+  COFFSymbolBytes = 18;
+  COFFShortNameBytes = 8;
+  COFFSymbolSectionOffset = 12;
+  COFFSymbolAuxiliaryOffset = 17;
+  { a section name longer than 8 bytes: / and its offset in the string table, in decimal }
+  COFFLongSectionName = '/';
+  ProgramPrefix = 'P$';
+  SectionDirective = '.section';
+  GlobalDirective = '.globl';
+  StringDirective = '.ascii';
+  { the data directives fpc writes, and the bytes of each value they list }
+  DataDirectives: array[0..6] of string = ('.byte', '.short', '.word', '.long', '.rva', '.secrel32', '.quad');
+  DataWidths: array[0..6] of Integer = (1, 2, 2, 4, 4, 4, 8);
+  { directives for a number of zero bytes }
+  FillDirectives: array[0..1] of string = ('.zero', '.skip');
+  AssemblerComment = '#';
+  LabelEnd = ':';
+  OperandSeparator = ',';
+  StringQuote = '"';
+  StringEscape = '\';
+  OctalDigits = ['0'..'7'];
+  OctalEscapeLength = 3;
+
+class function TDataSizes.HasInitialisedData(const AObjectPath: string): Boolean;
+var
+  Contents: string;
+begin
+  Result := ReadFileContents(AObjectPath, Contents) and (Pos(InitialisedDataPrefix, Contents) > 0);
+end;
+
+class function TDataSizes.ObjectNames(const AObjectPath: string; const ANames: TStrings): Boolean;
+var
+  Contents, Name: string;
+  Sections, OptionalBytes, SymbolTable, Symbols, Strings, Offset, Section, Auxiliary, StringOffset: Int64;
+  I: Integer;
+
+  { the little-endian number of ABytes bytes at AOffset; False past the end of the file }
+  function Field(const AOffset, ABytes: Int64; out AValue: Int64): Boolean;
+  var
+    K: Integer;
+  begin
+    AValue := 0;
+    Result := (AOffset >= 0) and (AOffset + ABytes <= Length(Contents));
+    if Result then
+      for K := ABytes - 1 downto 0 do
+        AValue := (AValue shl 8) or Ord(Contents[AOffset + 1 + K]);
+  end;
+
+  { the string at AOffset of the string table, up to its NUL }
+  function LongName(const AOffset: Int64; out AName: string): Boolean;
+  var
+    Last: Int64;
+  begin
+    AName := '';
+    Result := (Strings >= 0) and (AOffset >= 0) and (Strings + AOffset < Length(Contents));
+    if not Result then
+      Exit;
+    Last := Strings + AOffset;
+    while (Last < Length(Contents)) and (Contents[Last + 1] <> #0) do
+      Inc(Last);
+    Result := Last < Length(Contents);
+    AName := Copy(Contents, Strings + AOffset + 1, Last - Strings - AOffset);
+  end;
+
+  function ShortName(const AOffset: Int64): string;
+  begin
+    Result := Copy(Contents, AOffset + 1, COFFShortNameBytes);
+    if Pos(#0, Result) > 0 then
+      SetLength(Result, Pos(#0, Result) - 1);
+  end;
+
+  procedure Add(const AName: string);
+  begin
+    if ANames.IndexOf(AName) < 0 then
+      ANames.Add(AName);
+  end;
+
+begin
+  Result := False;
+  if not ReadFileContents(AObjectPath, Contents) then
+    Exit;
+  Result := True;
+  if Pos(InitialisedDataPrefix, Contents) = 0 then
+    Exit;
+  Result := False;
+  if not (Field(COFFSectionCountOffset, 2, Sections) and Field(COFFSymbolTableOffset, 4, SymbolTable)
+    and Field(COFFSymbolCountOffset, 4, Symbols) and Field(COFFOptionalHeaderOffset, 2, OptionalBytes)) then
+    Exit;
+  { the string table follows the symbols }
+  Strings := SymbolTable + Symbols * COFFSymbolBytes;
+  if (SymbolTable = 0) or (Strings + 4 > Length(Contents)) then
+    Strings := -1;
+  for I := 0 to Sections - 1 do
+  begin
+    Offset := COFFHeaderBytes + OptionalBytes + Int64(I) * COFFSectionBytes;
+    if Offset + COFFSectionBytes > Length(Contents) then
+      Exit;
+    Name := ShortName(Offset);
+    if (Copy(Name, 1, Length(COFFLongSectionName)) = COFFLongSectionName) then
+    begin
+      StringOffset := StrToInt64Def(Copy(Name, Length(COFFLongSectionName) + 1, MaxInt), -1);
+      if not LongName(StringOffset, Name) then
+        Exit;
+    end;
+    if Pos(DatumSectionInfix + InitialisedDataPrefix, Name) > 0 then
+      Add(Copy(Name, Pos(DatumSectionInfix + InitialisedDataPrefix, Name) + Length(DatumSectionInfix), MaxInt));
+  end;
+  I := 0;
+  while I < Symbols do
+  begin
+    Offset := SymbolTable + Int64(I) * COFFSymbolBytes;
+    if not (Field(Offset + COFFSymbolSectionOffset, 2, Section) and Field(Offset + COFFSymbolAuxiliaryOffset, 1, Auxiliary)) then
+      Exit;
+    { the first four bytes zero: the name is in the string table, at the next four }
+    if Field(Offset, 4, StringOffset) and (StringOffset = 0) then
+    begin
+      if not (Field(Offset + 4, 4, StringOffset) and LongName(StringOffset, Name)) then
+        Exit;
+    end
+    else
+      Name := ShortName(Offset);
+    { a section number of 1 or more (signed): defined here; 0 is an undefined reference to
+      another unit's }
+    if StartsWith(Name, InitialisedDataPrefix) and (Section > 0) and (Section < $8000) then
+      Add(Name);
+    Inc(I, 1 + Auxiliary);
+  end;
+  Result := True;
+end;
+
+class function TDataSizes.StringBytes(const ALine: string): Integer;
+var
+  First, Last, Index, Digits: Integer;
+begin
+  Result := 0;
+  First := Pos(StringQuote, ALine);
+  Last := Length(ALine);
+  while (Last > First) and (ALine[Last] <> StringQuote) do
+    Dec(Last);
+  Index := First + 1;
+  while Index < Last do
+  begin
+    if ALine[Index] = StringEscape then
+    begin
+      { \000 is one byte in octal; \" and \\ are one character }
+      Digits := 0;
+      while (Digits < OctalEscapeLength) and (Index + 1 + Digits < Last) and (ALine[Index + 1 + Digits] in OctalDigits) do
+        Inc(Digits);
+      if Digits > 0 then
+        Inc(Index, 1 + Digits)
+      else
+        Inc(Index, 2);
+    end
+    else
+      Inc(Index);
+    Inc(Result);
+  end;
+end;
+
+class function TDataSizes.Read(const AAssembler: string): TStringList;
+var
+  Lines: TStringList;
+  I, K, Space, Bytes: Integer;
+  Line, Directive, Operands, Current: string;
+  Size: Int64;
+  Known, Counted: Boolean;
+  Sizes: TStringList;
+
+  procedure Finish;
+  begin
+    if (Current <> '') and Known then
+      Sizes.Add(Current + '=' + IntToStr(Size))
+    else if Current <> '' then
+      Sizes.Add(Current + '=' + UnknownSize);
+    Current := '';
+  end;
+
+begin
+  Sizes := TStringList.Create;
+  Lines := TStringList.Create;
+  try
+    Lines.Text := AAssembler;
+    Current := '';
+    Size := 0;
+    Known := False;
+    for I := 0 to Lines.Count - 1 do
+    begin
+      Line := Trim(Lines[I]);
+      if (Line = '') or StartsWith(Line, AssemblerComment) then
+        Continue;
+      Space := Pos(' ', StringReplace(Line, #9, ' ', [rfReplaceAll]));
+      { a label: one word that ends in a colon }
+      if (Space = 0) and (Line[Length(Line)] = LabelEnd) then
+      begin
+        Finish;
+        if StartsWith(Line, InitialisedDataPrefix) then
+        begin
+          Current := Copy(Line, 1, Length(Line) - 1);
+          Size := 0;
+          Known := True;
+        end;
+        Continue;
+      end;
+      if Space = 0 then
+      begin
+        Directive := Line;
+        Operands := '';
+      end
+      else
+      begin
+        Directive := Copy(Line, 1, Space - 1);
+        Operands := Trim(Copy(Line, Space + 1, MaxInt));
+      end;
+      if Directive = SectionDirective then
+      begin
+        Finish;
+        Continue;
+      end;
+      if (Current = '') or (Directive = GlobalDirective) then
+        Continue;
+      Counted := False;
+      for K := 0 to High(DataDirectives) do
+        if (Directive = DataDirectives[K]) and (Operands <> '') then
+        begin
+          Inc(Size, Int64(DataWidths[K])
+            * (1 + Length(Operands) - Length(StringReplace(Operands, OperandSeparator, '', [rfReplaceAll]))));
+          Counted := True;
+        end;
+      for K := 0 to High(FillDirectives) do
+        if Directive = FillDirectives[K] then
+        begin
+          Bytes := StrToIntDef(Trim(Copy(Operands, 1, Pos(OperandSeparator, Operands + OperandSeparator) - 1)), -1);
+          if Bytes >= 0 then
+          begin
+            Inc(Size, Bytes);
+            Counted := True;
+          end;
+        end;
+      if Directive = StringDirective then
+      begin
+        Inc(Size, StringBytes(Line));
+        Counted := True;
+      end;
+      if not Counted then
+        Known := False;
+    end;
+    Finish;
+  finally
+    Lines.Free;
+  end;
+  Result := Sizes;
+end;
+
+class function TDataSizes.Changes(const AOld, ANew: TStrings): TStringList;
+var
+  I: Integer;
+  Name: string;
+begin
+  Result := TStringList.Create;
+  for I := 0 to ANew.Count - 1 do
+  begin
+    Name := ANew.Names[I];
+    if ANew.ValueFromIndex[I] = UnknownSize then
+      Result.Add(UnknownSizes + 'fpc''s assembler has no size for ' + Pretty(Name))
+    else if AOld.IndexOfName(Name) < 0 then
+      Continue
+    else if AOld.Values[Name] = UnknownSize then
+      Result.Add(UnknownSizes + 'the assembler the program started from had no size for ' + Pretty(Name))
+    else if AOld.Values[Name] <> ANew.ValueFromIndex[I] then
+      Result.Add('variable ' + Pretty(Name) + ' changed size from ' + AOld.Values[Name] + ' to '
+        + ANew.ValueFromIndex[I] + ' bytes');
+  end;
+end;
+
+class procedure TDataSizes.Keep(const ASizes, AAdded: TStrings);
+var
+  I: Integer;
+begin
+  for I := 0 to AAdded.Count - 1 do
+    if ASizes.IndexOfName(AAdded.Names[I]) < 0 then
+      ASizes.Add(AAdded[I]);
+end;
+
+class function TDataSizes.Pretty(const AName: string): string;
+var
+  Text: string;
+  Index: Integer;
+  Open: Boolean;
+begin
+  Text := AName;
+  if StartsWith(Text, InitialisedDataPrefix) then
+    Delete(Text, 1, Length(InitialisedDataPrefix));
+  if StartsWith(Text, ProgramPrefix) then
+    Delete(Text, 1, Length(ProgramPrefix));
+  Result := '';
+  Open := False;
+  Index := 1;
+  while Index <= Length(Text) do
+  begin
+    if Copy(Text, Index, 4) = '_$$_' then
+    begin
+      { the routine's parameters end where the constant's name begins }
+      if Open then
+        Result := Result + ')';
+      Open := False;
+      Result := Result + '.';
+      Inc(Index, 4);
+    end
+    else if Copy(Text, Index, 3) = '$_$' then
+    begin
+      Result := Result + '.';
+      Inc(Index, 3);
+    end
+    else if Copy(Text, Index, 4) = '_$__' then
+      Inc(Index, 4)
+    else if Copy(Text, Index, 2) = '$$' then
+    begin
+      if Open then
+        Result := Result + ')';
+      Result := Result + ':';
+      Open := False;
+      Inc(Index, 2);
+    end
+    else if Text[Index] = '$' then
+    begin
+      if Open then
+        Result := Result + ','
+      else
+        Result := Result + '(';
+      Open := True;
+      Inc(Index);
+    end
+    else
+    begin
+      Result := Result + Text[Index];
+      Inc(Index);
+    end;
+  end;
+  if Open then
+    Result := Result + ')';
+end;
+
+
 // ---------------------------------------------------------------- the agent connection
 { The connection between the driver and the agent inside the program, and the protocol on it.
   The driver listens on 127.0.0.1 on a port the system picks; the program connects and greets
@@ -2046,6 +2458,10 @@ type
     FTargetWindows: Boolean;
     FWorkspace: TWorkspace;
     function Execute(const AArguments: array of string; out AOutput: string): Integer;
+    { The options every compile of the program starts with, then the user's: symbols kept, the
+      agent loaded, the units built into AUnitsDirectory, and AExecutable as the program. }
+    function StartArguments(const AUnitsDirectory, AExecutable: string): TStringList;
+    procedure ForgetUnitsIn(const ADirectory: string; const AChangedFiles: TStrings);
   public
     constructor Create(const AOptions: TOptions; const AWorkspace: TWorkspace);
     { Runs "<compiler> -iV". False, with the one-line reason in AProblem, when the compiler
@@ -2065,10 +2481,23 @@ type
       check compares times of one-second granularity: an edit saved in the same second as its
       previous compile of the unit goes unnoticed. The driver knows from the content which
       files changed, so it removes the compiler's record of those units from its own unit
-      directory. HOT_TRUST_TIMESTAMPS=1 turns this off. }
+      directory, and for a Windows program from the assembly directory too.
+      HOT_TRUST_TIMESTAMPS=1 turns this off. }
     procedure ForgetUnits(const AChangedFiles: TStrings);
     { The arguments of the program's compile; AExecutable as for Compile. }
     function CompileArguments(const ALink: Boolean; const AExecutable: string = ''): TStringList;
+    { The arguments of the compile that writes the program's assembler (-s -Aas) instead of its
+      object files, into the workspace's assembly directory, which keeps units of its own. }
+    function AssemblerArguments: TStringList;
+    { Compiles the program to assembler (see "sizes of initialised data"). False when fpc
+      failed; AProblem is then its first error. Removes the scripts fpc writes next to the
+      program there, as it links nothing. Every assembler file in the assembly directory
+      afterwards comes from this compile or from the one that wrote its unit's file there:
+      first the units of AChanged (object files, such as foo.o; may be nil) are made to
+      compile again, and the assembler of every unit without its unit file there, the
+      program's included, is removed. One that fpc does not write again is then missing,
+      and its sizes are unknown, not those of an earlier compile. }
+    function WriteAssembler(const AChanged: TStrings; out AProblem: string; out ASeconds: Double): Boolean;
     { The options the agent's compile shares with the program's: the ones that decide the
       target, how code is generated and where units are. }
     class function AgentOptions(const AOptions: TStrings): TStringList;
@@ -2106,6 +2535,10 @@ const
   KeepSymbolsOption = '-Xs-';
   NoLinkOption = '-Cn';
   LinkMapOption = '-Xm';
+  { write assembler and stop, and write it for the GNU assembler: fpc 3.2.2 for Windows
+    otherwise keeps writing object files with its internal one }
+  AssemblerOnlyOption = '-s';
+  GNUAssemblerOption = '-Aas';
   VersionOption = '-iV';
   UnitDirectoryOption = '-FU';
   UnitPathOption = '-Fu';
@@ -2348,7 +2781,7 @@ begin
   end;
 end;
 
-function TCompiler.CompileArguments(const ALink: Boolean; const AExecutable: string): TStringList;
+function TCompiler.StartArguments(const AUnitsDirectory, AExecutable: string): TStringList;
 var
   I: Integer;
 begin
@@ -2356,19 +2789,80 @@ begin
   Result.Add(KeepSymbolsOption);
   Result.Add(AgentUnitOption);
   Result.Add(UnitPathOption + ExcludeTrailingPathDelimiter(FWorkspace.AgentDirectory));
-  Result.Add(UnitDirectoryOption + ExcludeTrailingPathDelimiter(FWorkspace.UnitsDirectory));
-  if AExecutable <> '' then
-    Result.Add(OutputOption + AExecutable)
-  else
-    Result.Add(OutputOption + FWorkspace.Executable);
+  Result.Add(UnitDirectoryOption + ExcludeTrailingPathDelimiter(AUnitsDirectory));
+  Result.Add(OutputOption + AExecutable);
   for I := 0 to FOptions.Count - 1 do
     Result.Add(FOptions[I]);
+end;
+
+function TCompiler.CompileArguments(const ALink: Boolean; const AExecutable: string): TStringList;
+begin
+  if AExecutable <> '' then
+    Result := StartArguments(FWorkspace.UnitsDirectory, AExecutable)
+  else
+    Result := StartArguments(FWorkspace.UnitsDirectory, FWorkspace.Executable);
   if not ALink then
     Result.Add(NoLinkOption)
   { the linker's map: where it put sections that fpc 3.2 gives no symbol (the agent reads it) }
   else if FTargetWindows then
     Result.Add(LinkMapOption);
   Result.Add(FWorkspace.Source);
+end;
+
+function TCompiler.AssemblerArguments: TStringList;
+begin
+  { the program's name in the assembly directory: fpc writes its link scripts next to it }
+  Result := StartArguments(FWorkspace.AssemblyDirectory,
+    FWorkspace.AssemblyDirectory + ExtractFileName(FWorkspace.Executable));
+  Result.Add(AssemblerOnlyOption);
+  Result.Add(GNUAssemblerOption);
+  Result.Add(FWorkspace.Source);
+end;
+
+function TCompiler.WriteAssembler(const AChanged: TStrings; out AProblem: string; out ASeconds: Double): Boolean;
+var
+  Arguments, Before, Errors: TStringList;
+  Output: string;
+  Start: Double;
+  I: Integer;
+  Search: TSearchRec;
+begin
+  AProblem := '';
+  ForceDirectories(FWorkspace.AssemblyDirectory);
+  if AChanged <> nil then
+    for I := 0 to AChanged.Count - 1 do
+      DeleteFile(FWorkspace.AssemblyDirectory + ChangeFileExt(AChanged[I], RecordExtension));
+  if FindFirst(FWorkspace.AssemblyDirectory + '*' + AssemblerExtension, faAnyFile, Search) = 0 then
+  begin
+    repeat
+      if not FileExists(FWorkspace.AssemblyDirectory + ChangeFileExt(Search.Name, RecordExtension)) then
+        DeleteFile(FWorkspace.AssemblyDirectory + Search.Name);
+    until FindNext(Search) <> 0;
+    FindClose(Search);
+  end;
+  Before := FindLeftovers(FWorkspace.AssemblyDirectory);
+  Arguments := AssemblerArguments;
+  try
+    Start := NowSeconds;
+    Result := Execute(Arguments.ToStringArray, Output) = 0;
+    ASeconds := NowSeconds - Start;
+    RemoveNewLeftovers(FWorkspace.AssemblyDirectory, Before);
+  finally
+    Arguments.Free;
+    Before.Free;
+  end;
+  if not Result then
+  begin
+    Errors := ExtractErrors(Output);
+    try
+      if Errors.Count > 0 then
+        AProblem := Errors[0]
+      else
+        AProblem := Trim(Output);
+    finally
+      Errors.Free;
+    end;
+  end;
 end;
 
 class function TCompiler.IsPlaced(const ALine: string): Boolean;
@@ -2446,16 +2940,23 @@ begin
 end;
 
 procedure TCompiler.ForgetUnits(const AChangedFiles: TStrings);
+begin
+  if GetEnvironmentVariable(TrustTimestampsVariable) <> '' then
+    Exit;
+  ForgetUnitsIn(FWorkspace.UnitsDirectory, AChangedFiles);
+  if FTargetWindows then
+    ForgetUnitsIn(FWorkspace.AssemblyDirectory, AChangedFiles);
+end;
+
+procedure TCompiler.ForgetUnitsIn(const ADirectory: string; const AChangedFiles: TStrings);
 var
   I, K: Integer;
   Records: TStringList;
   Search: TSearchRec;
 begin
-  if GetEnvironmentVariable(TrustTimestampsVariable) <> '' then
-    Exit;
   Records := TStringList.Create;
   try
-    if FindFirst(FWorkspace.UnitsDirectory + '*' + RecordExtension, faAnyFile, Search) = 0 then
+    if FindFirst(ADirectory + '*' + RecordExtension, faAnyFile, Search) = 0 then
     begin
       repeat
         Records.Add(Search.Name);
@@ -2467,8 +2968,8 @@ begin
         if AffectsUnit(AChangedFiles[I], Records[K]) then
         begin
           if GetEnvironmentVariable(DebugVariable) <> '' then
-            WriteLn('[hot debug] forget ', Records[K], ' for ', AChangedFiles[I]);
-          DeleteFile(FWorkspace.UnitsDirectory + Records[K]);
+            WriteLn('[hot debug] forget ', ADirectory + Records[K], ' for ', AChangedFiles[I]);
+          DeleteFile(ADirectory + Records[K]);
         end;
   finally
     Records.Free;
@@ -2526,6 +3027,15 @@ type
     FLayouts: TLayoutHistory;
     FDigests: TStringList;
     FBased: TStringList;
+    { The check of sizes of initialised data is on (a Windows program). }
+    FCheckSizes: Boolean;
+    { This save compiled the program to assembler. }
+    FAssemblyWritten: Boolean;
+    { The sizes of the running program's initialised data (see "sizes of initialised data"),
+      name=bytes, or name=? for a datum the assembler had no size for; nil while they are
+      unknown, FSizesProblem then says why. }
+    FSizes: TStringList;
+    FSizesProblem: string;
     { The running program; nil while hotfpc waits for a save that builds to start it again. }
     FProgram: TProcess;
     { FProgram was started by a restart. }
@@ -2552,6 +3062,14 @@ type
     function CollectChangedObjects(const AChanged: TStrings; const ACompileSeconds: Double): Boolean;
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
+    function HasInitialisedData(const AObjects: TStrings): Boolean;
+    function ReadAssembly(const AObjects: TStrings; out AProblem: string): TStringList;
+    function RefreshLiveAssembly(out AProblem: string): Boolean;
+    procedure StartSizeCheck;
+    function NotAssembled(const AProblem: string): string;
+    procedure RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
+    function SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
+      var AInterfaceSeconds: Double): Boolean;
     function Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
     procedure Accept(const AChanged: TStrings; const AStage: string);
     procedure Reject(const AReply: TStrings; const AVerdict, AStage: string; const ACompileSeconds: Double);
@@ -2602,6 +3120,7 @@ end;
 destructor TDriver.Destroy;
 begin
   FProgram.Free;
+  FSizes.Free;
   FDigests.Free;
   FBased.Free;
   FLayouts.Free;
@@ -2806,12 +3325,195 @@ begin
   Result := True;
 end;
 
-{ The swap is applied: the staged files become the running program's, and so do the layouts. }
+{ Whether a unit's object file (a name in the units directory) has a variable with an initial
+  value or a typed constant. }
+function TDriver.HasInitialisedData(const AObjects: TStrings): Boolean;
+var
+  I: Integer;
+begin
+  for I := 0 to AObjects.Count - 1 do
+    if TDataSizes.HasInitialisedData(FWorkspace.UnitsDirectory + AObjects[I]) then
+      Exit(True);
+  Result := False;
+end;
+
+{ The sizes in this save's assembler of the initialised data of the units (named by their
+  object files), each datum the object file names: name=? (UnknownSize) for one the
+  assembler has no size for, as when fpc wrote no assembler for the unit or a directive it
+  does not know follows the label. nil when an object file cannot be read; AProblem then
+  says why. Otherwise the caller frees the list. }
+function TDriver.ReadAssembly(const AObjects: TStrings; out AProblem: string): TStringList;
+var
+  I, K: Integer;
+  Text: string;
+  Names, Sizes: TStringList;
+begin
+  AProblem := '';
+  Result := TStringList.Create;
+  Names := TStringList.Create;
+  try
+    for I := 0 to AObjects.Count - 1 do
+    begin
+      Names.Clear;
+      if not TDataSizes.ObjectNames(FWorkspace.UnitsDirectory + AObjects[I], Names) then
+      begin
+        AProblem := 'hotfpc could not read the object file ' + AObjects[I];
+        FreeAndNil(Result);
+        Exit;
+      end;
+      if Names.Count = 0 then
+        Continue;
+      Sizes := nil;
+      if FAssemblyWritten
+        and ReadFileContents(FWorkspace.AssemblyDirectory + ChangeFileExt(AObjects[I], AssemblerExtension), Text) then
+        Sizes := TDataSizes.Read(Text);
+      try
+        for K := 0 to Names.Count - 1 do
+          if (Sizes <> nil) and (Sizes.IndexOfName(Names[K]) >= 0) then
+            Result.Add(Names[K] + '=' + Sizes.Values[Names[K]])
+          else
+            Result.Add(Names[K] + '=' + UnknownSize);
+      finally
+        Sizes.Free;
+      end;
+    end;
+  finally
+    Names.Free;
+  end;
+end;
+
+{ The sizes of the units the program was just started with become the running program's
+  (FSizes), from fpc's assembler when one of them has initialised data. After a compile to
+  assembler, every unit's file in the assembly directory is current: the units whose source
+  changed since were made to recompile there too. False when fpc failed; the sizes are then
+  unknown (FSizesProblem), as they are when an object file cannot be read. }
+function TDriver.RefreshLiveAssembly(out AProblem: string): Boolean;
+var
+  Objects: TStringList;
+  Seconds: Double;
+begin
+  AProblem := '';
+  Result := True;
+  FreeAndNil(FSizes);
+  Objects := FWorkspace.UnitObjects;
+  try
+    if not FAssemblyWritten and HasInitialisedData(Objects) then
+    begin
+      FAssemblyWritten := FCompiler.WriteAssembler(nil, AProblem, Seconds);
+      Result := FAssemblyWritten;
+      if GetEnvironmentVariable(DebugVariable) <> '' then
+        WriteLn('[hot debug] assembler of the running program in ', FormatMilliseconds(Seconds), ' ms');
+    end;
+    if Result then
+      FSizes := ReadAssembly(Objects, FSizesProblem)
+    else
+      FSizesProblem := NotAssembled(AProblem);
+  finally
+    Objects.Free;
+  end;
+end;
+
+{ A Windows program's sizes of initialised data are checked from fpc's assembler, unless fpc
+  cannot write it. }
+procedure TDriver.StartSizeCheck;
+var
+  Problem: string;
+begin
+  FCheckSizes := FOptions.TargetWindows;
+  if FCheckSizes and not RefreshLiveAssembly(Problem) then
+  begin
+    FCheckSizes := False;
+    FReporter.Say(FOptions.Compiler + ' did not compile the program to assembler (' + Problem
+      + '): the check of sizes of variables with initial values is off');
+  end;
+end;
+
+function TDriver.NotAssembled(const AProblem: string): string;
+begin
+  Result := FOptions.Compiler + ' did not compile the program to assembler (' + AProblem + ')';
+end;
+
+{ A save whose sizes cannot be checked is not swapped: one of them may have grown. }
+procedure TDriver.RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
+begin
+  Inc(FRefused);
+  FReporter.Say('restart needed: ' + UnknownSizes + AReason
+    + ' (not applied; compile ' + FormatMilliseconds(ACompileSeconds) + ' ms)');
+end;
+
+{ Each changed unit's variables with initial values and typed constants, by the sizes in
+  fpc's assembler: on Windows the object file does not show one that grows inside the
+  padding of its section. Compiles to assembler only when a changed unit has such data. A
+  save whose sizes cannot be compared, because fpc did not write the assembler, the running
+  program's sizes are unknown, or either has no size for a datum a changed object file
+  names, needs a restart too. }
+function TDriver.SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
+  var AInterfaceSeconds: Double): Boolean;
+var
+  Start, Seconds: Double;
+  K: Integer;
+  Problem: string;
+  Compiled, Changes: TStringList;
+begin
+  Result := True;
+  if not FCheckSizes or not HasInitialisedData(AChanged) then
+    Exit;
+  if FSizes = nil then
+  begin
+    RefuseUncheckedSizes(FSizesProblem, ACompileSeconds);
+    Exit(False);
+  end;
+  Start := NowSeconds;
+  FAssemblyWritten := FCompiler.WriteAssembler(AChanged, Problem, Seconds);
+  if GetEnvironmentVariable(DebugVariable) <> '' then
+    WriteLn('[hot debug] assembler in ', FormatMilliseconds(Seconds), ' ms');
+  if not FAssemblyWritten then
+  begin
+    RefuseUncheckedSizes(NotAssembled(Problem), ACompileSeconds);
+    Exit(False);
+  end;
+  Compiled := ReadAssembly(AChanged, Problem);
+  if Compiled = nil then
+  begin
+    RefuseUncheckedSizes(Problem, ACompileSeconds);
+    Exit(False);
+  end;
+  Changes := TDataSizes.Changes(FSizes, Compiled);
+  try
+    if Changes.Count > 0 then
+    begin
+      Inc(FRefused);
+      for K := 0 to Changes.Count - 1 do
+        FReporter.Say('restart needed: ' + Changes[K] + ' (not applied; compile '
+          + FormatMilliseconds(ACompileSeconds) + ' ms)');
+      Exit(False);
+    end;
+  finally
+    Changes.Free;
+    Compiled.Free;
+  end;
+  AInterfaceSeconds := AInterfaceSeconds + NowSeconds - Start;
+end;
+
+{ The swap is applied: the staged files become the running program's, and so do the layouts
+  and the sizes of the initialised data the new code adds. }
 procedure TDriver.Accept(const AChanged: TStrings; const AStage: string);
 var
   I: Integer;
   RecordName: string;
+  Added: TStringList;
+  Problem: string;
 begin
+  if FCheckSizes and (FSizes <> nil) then
+  begin
+    Added := ReadAssembly(AChanged, Problem);
+    try
+      if Added <> nil then
+        TDataSizes.Keep(FSizes, Added);
+    finally
+      Added.Free;
+    end;
+  end;
   for I := 0 to AChanged.Count - 1 do
   begin
     CopyFileContents(AStage + AChanged[I], FWorkspace.LiveDirectory + AChanged[I]);
@@ -2926,6 +3628,8 @@ begin
       Exit(True);
     if not LayoutsAllowSwap(Changed, CompileSeconds, InterfaceSeconds) then
       Exit(True);
+    if not SizesAllowSwap(Changed, CompileSeconds, InterfaceSeconds) then
+      Exit(True);
     if Changed.Count = 0 then
     begin
       Inc(FUnchanged);
@@ -2978,6 +3682,7 @@ end;
 procedure TDriver.Restart(const ASeen: Double);
 var
   Errors: TStringList;
+  Problem: string;
   Linked: Boolean;
   ProgramExitCode: Integer;
   LinkSeconds, StopStart, StopSeconds: Double;
@@ -3037,6 +3742,10 @@ begin
   FReporter.Say(Format('v%d restarted: the program starts over; %s ms after the save was seen (link %s, stop %s, start %s)',
     [FVersion, FormatMilliseconds(NowSeconds - ASeen), FormatMilliseconds(LinkSeconds), FormatMilliseconds(StopSeconds),
      FormatMilliseconds(NowSeconds - FStartedAt)]));
+  { the sizes the next save is checked against, once the program runs; when fpc fails, a save
+    that needs them is refused until the program starts over again }
+  if FCheckSizes then
+    RefreshLiveAssembly(Problem);
 end;
 
 { Waits for the save to stop changing the files. }
@@ -3107,6 +3816,7 @@ begin
     if GetEnvironmentVariable(DebugVariable) <> '' then
       WriteLn('[hot debug] seen at ', FormatFloat('0.000', SeenAt - LastDigest), ' changed ', Changed.CommaText);
     FCompiler.ForgetUnits(Changed);
+    FAssemblyWritten := False;
     Changed.Free;
     FDigests.Free;
     FDigests := Digests;
@@ -3187,6 +3897,7 @@ begin
   if not AwaitAgent(FProgram, Result) then
     Exit;
   SayStart;
+  StartSizeCheck;
   Watch;
   FProgram.WaitOnExit;
   Result := ExitCodeOf(FProgram);
@@ -3603,6 +4314,7 @@ begin
     ExpectEqual(Workspace.Executable, Hot + 'scene', 'the program without an extension');
     ExpectEqual(Workspace.NextDirectory, Hot + 'next' + PathDelim, 'where a restart links');
     ExpectEqual(Workspace.NextExecutable, Hot + 'next' + PathDelim + 'scene', 'the program a restart links');
+    ExpectEqual(Workspace.AssemblyDirectory, Hot + 'asm' + PathDelim, 'where a Windows program is compiled to assembler');
     ExpectEqual(Workspace.StageDirectory(2), Hot + 'v2' + PathDelim, 'the stage of a swap');
     ExpectEqual(Workspace.StageDirectory(13), Hot + 'v13' + PathDelim, 'by version');
   finally
@@ -4517,6 +5229,305 @@ begin
   end;
 end;
 
+// ---------------------------------------------------------------- tests: sizes of initialised data (assembler)
+{ The sizes read from fpc's assembler output, what counts as a change, how the names print,
+  and which object files have initialised data. The texts are cut from what fpc 3.2.2 and
+  3.3.1 write for win64 with -s -Aas; fpc itself is not run. }
+
+const
+  { fpc 3.2.2: a program's two variables with an initial value, the second an Int64, then
+    the start of the next list }
+  ProgramAssembler322 =
+    '# Begin asmlist al_typedconsts' + LineEnding +
+    '' + LineEnding +
+    '.section .data.n_TC_$P$PROG_$$_COUNT,"d"' + LineEnding +
+    #9'.balign 4' + LineEnding +
+    'TC_$P$PROG_$$_COUNT:' + LineEnding +
+    #9'.long'#9'0' + LineEnding +
+    '' + LineEnding +
+    '.section .data.n_TC_$P$PROG_$$_CALLS,"d"' + LineEnding +
+    #9'.balign 8' + LineEnding +
+    'TC_$P$PROG_$$_CALLS:' + LineEnding +
+    #9'.quad'#9'0' + LineEnding +
+    '# End asmlist al_typedconsts' + LineEnding +
+    '# Begin asmlist al_dwarf_frame' + LineEnding +
+    '' + LineEnding +
+    '.section .debug_frame' + LineEnding +
+    '.Lc6:' + LineEnding +
+    #9'.long'#9'.Lc8-.Lc7' + LineEnding;
+  { fpc 3.3.1: a unit's typed constants, each with .globl before its label: a record with its
+    padding, a shortstring, a pointer to a literal, and one more variable }
+  UnitAssembler331 =
+    '.section .data.n_TC_$SHAPES_$$_CREC,"aw"' + LineEnding +
+    #9'.balign 8' + LineEnding +
+    '.globl'#9'TC_$SHAPES_$$_CREC' + LineEnding +
+    'TC_$SHAPES_$$_CREC:' + LineEnding +
+    #9'.byte'#9'1,0,0,0,0,0,0,0' + LineEnding +
+    #9'.quad'#9'2' + LineEnding +
+    '' + LineEnding +
+    '.section .data.n_TC_$SHAPES_$$_CSHORT255,"aw"' + LineEnding +
+    '.globl'#9'TC_$SHAPES_$$_CSHORT255' + LineEnding +
+    'TC_$SHAPES_$$_CSHORT255:' + LineEnding +
+    #9'.byte'#9'19' + LineEnding +
+    #9'.ascii'#9'"hello \"world\" \\ end\000                         "' + LineEnding +
+    #9'.ascii'#9'"                                                   "' + LineEnding +
+    #9'.ascii'#9'"                                                   "' + LineEnding +
+    #9'.ascii'#9'"                                                   "' + LineEnding +
+    #9'.ascii'#9'"                                                   "' + LineEnding +
+    #9'.ascii'#9'"      "' + LineEnding +
+    '' + LineEnding +
+    '.section .data.n_TC_$SHAPES_$$_CGUID,"aw"' + LineEnding +
+    #9'.balign 4' + LineEnding +
+    '.globl'#9'TC_$SHAPES_$$_CGUID' + LineEnding +
+    'TC_$SHAPES_$$_CGUID:' + LineEnding +
+    #9'.long'#9'19088743' + LineEnding +
+    #9'.short'#9'35243,52719' + LineEnding +
+    #9'.byte'#9'1,35,69,103,137,171,205,239' + LineEnding +
+    '' + LineEnding +
+    '.section .data.n_TC_$SHAPES_$$_CANSI,"aw"' + LineEnding +
+    #9'.balign 8' + LineEnding +
+    '.globl'#9'TC_$SHAPES_$$_CANSI' + LineEnding +
+    'TC_$SHAPES_$$_CANSI:' + LineEnding +
+    #9'.quad'#9'.Ld1' + LineEnding +
+    '' + LineEnding +
+    '.section .data.n_TC_$SHAPES$_$LOCAL$$LONGINT_$$_LCOUNT,"aw"' + LineEnding +
+    #9'.balign 4' + LineEnding +
+    'TC_$SHAPES$_$LOCAL$$LONGINT_$$_LCOUNT:' + LineEnding +
+    #9'.long'#9'0' + LineEnding;
+
+procedure TestReadDataSizes;
+var
+  Sizes: TStringList;
+begin
+  Sizes := TDataSizes.Read(ProgramAssembler322);
+  try
+    ExpectEqual(Sizes.Count, 2, 'the program''s two variables with an initial value');
+    ExpectEqual(Sizes.Values['TC_$P$PROG_$$_COUNT'], '4', 'an Integer');
+    ExpectEqual(Sizes.Values['TC_$P$PROG_$$_CALLS'], '8', 'an Int64, up to the next section');
+  finally
+    Sizes.Free;
+  end;
+  Sizes := TDataSizes.Read(UnitAssembler331);
+  try
+    ExpectEqual(Sizes.Count, 5, 'every typed constant');
+    ExpectEqual(Sizes.Values['TC_$SHAPES_$$_CREC'], '16', 'a record with its padding');
+    ExpectEqual(Sizes.Values['TC_$SHAPES_$$_CSHORT255'], '256', 'a ShortString, its escapes as one byte each');
+    ExpectEqual(Sizes.Values['TC_$SHAPES_$$_CGUID'], '16', 'values of several widths');
+    ExpectEqual(Sizes.Values['TC_$SHAPES_$$_CANSI'], '8', 'a pointer to a literal');
+    ExpectEqual(Sizes.Values['TC_$SHAPES$_$LOCAL$$LONGINT_$$_LCOUNT'], '4', 'a routine''s typed constant');
+  finally
+    Sizes.Free;
+  end;
+  Sizes := TDataSizes.Read('.section .data.n_TC_$U_$$_A,"d"' + LineEnding + 'TC_$U_$$_A:' + LineEnding
+    + #9'.zero'#9'24' + LineEnding + 'TC_$U_$$_B:' + LineEnding + #9'.sleb128'#9'3' + LineEnding
+    + 'U_$U_$$_C:' + LineEnding + #9'.long'#9'5' + LineEnding);
+  try
+    ExpectEqual(Sizes.Values['TC_$U_$$_A'], '24', 'zero bytes, up to the next label');
+    ExpectEqual(Sizes.Values['TC_$U_$$_B'], UnknownSize, 'data it cannot count gives an unknown size');
+    Expect(Sizes.IndexOfName('U_$U_$$_C') < 0, 'only initialised data counts');
+  finally
+    Sizes.Free;
+  end;
+  Sizes := TDataSizes.Read('.section .data.n_TC_$Z_$$_E,"d"' + LineEnding + 'TC_$Z_$$_E:' + LineEnding
+    + LineEnding + '.section .data.n_TC_$Z_$$_F,"d"' + LineEnding + 'TC_$Z_$$_F:' + LineEnding);
+  try
+    ExpectEqual(Sizes.CommaText, 'TC_$Z_$$_E=0,TC_$Z_$$_F=0', 'an empty record has a size too: none');
+  finally
+    Sizes.Free;
+  end;
+  Sizes := TDataSizes.Read('');
+  try
+    ExpectEqual(Sizes.Count, 0, 'nothing in nothing');
+  finally
+    Sizes.Free;
+  end;
+end;
+
+procedure TestStringBytes;
+begin
+  ExpectEqual(TDataSizes.StringBytes(#9'.ascii'#9'"abc"'), 3, 'plain characters');
+  ExpectEqual(TDataSizes.StringBytes(#9'.ascii'#9'"abc\000      "'), 10, 'an octal escape is one byte');
+  ExpectEqual(TDataSizes.StringBytes(#9'.ascii'#9'"\"x\\"'), 3, 'an escaped quote and backslash');
+  ExpectEqual(TDataSizes.StringBytes(#9'.ascii'#9'"a,b: c"'), 6, 'commas and colons are characters');
+  ExpectEqual(TDataSizes.StringBytes(#9'.ascii'#9'""'), 0, 'an empty string');
+end;
+
+procedure TestDataSizeChanges;
+var
+  Running, Compiled, Changes: TStringList;
+begin
+  Running := TStringList.Create;
+  Compiled := TStringList.Create;
+  try
+    Running.Add('TC_$P$MAIN_$$_CALLS=4');
+    Running.Add('TC_$P$MAIN_$$_COUNT=4');
+    Running.Add('TC_$P$MAIN_$$_GONE=8');
+    Compiled.Add('TC_$P$MAIN_$$_COUNT=4');
+    Compiled.Add('TC_$P$MAIN_$$_CALLS=8');
+    Compiled.Add('TC_$P$MAIN_$$_ADDED=2');
+    Changes := TDataSizes.Changes(Running, Compiled);
+    try
+      ExpectEqual(Changes.Count, 1, 'one variable changed its size');
+      ExpectEqual(Changes.Text, 'variable MAIN.CALLS changed size from 4 to 8 bytes' + LineEnding,
+        'and is named as the agent names it');
+    finally
+      Changes.Free;
+    end;
+    Compiled.Values['TC_$P$MAIN_$$_CALLS'] := '4';
+    Changes := TDataSizes.Changes(Running, Compiled);
+    try
+      ExpectEqual(Changes.Count, 0, 'a variable added or removed is no change of size');
+    finally
+      Changes.Free;
+    end;
+    { a size the check needs and does not have is never taken as the same }
+    Compiled.Values['TC_$P$MAIN_$$_CALLS'] := UnknownSize;
+    Compiled.Values['TC_$P$MAIN_$$_ADDED'] := UnknownSize;
+    Running.Values['TC_$P$MAIN_$$_COUNT'] := UnknownSize;
+    Changes := TDataSizes.Changes(Running, Compiled);
+    try
+      ExpectEqual(Changes.Text,
+        UnknownSizes + 'the assembler the program started from had no size for MAIN.COUNT' + LineEnding
+        + UnknownSizes + 'fpc''s assembler has no size for MAIN.CALLS' + LineEnding
+        + UnknownSizes + 'fpc''s assembler has no size for MAIN.ADDED' + LineEnding,
+        'an unknown size of the running program or of the save, also of a new variable, needs a restart');
+    finally
+      Changes.Free;
+    end;
+  finally
+    Compiled.Free;
+    Running.Free;
+  end;
+end;
+
+{ The running program's sizes keep a variable that a save removed: the agent keeps it at its
+  first address, so a later save that brings it back larger needs a restart. }
+procedure TestKeepDataSizes;
+var
+  Running, Removed, Back, Changes: TStringList;
+begin
+  Running := TStringList.Create;
+  Removed := TStringList.Create;
+  Back := TStringList.Create;
+  try
+    Running.Add('TC_$P$MAIN_$$_COUNT=4');
+    Running.Add('TC_$P$MAIN_$$_CALLS=4');
+    Removed.Add('TC_$P$MAIN_$$_COUNT=4');
+    Removed.Add('TC_$P$MAIN_$$_ADDED=2');
+    TDataSizes.Keep(Running, Removed);
+    ExpectEqual(Running.CommaText, 'TC_$P$MAIN_$$_COUNT=4,TC_$P$MAIN_$$_CALLS=4,TC_$P$MAIN_$$_ADDED=2',
+      'a swap that removes CALLS and adds ADDED keeps CALLS and adds ADDED');
+    Back.Add('TC_$P$MAIN_$$_CALLS=8');
+    Back.Add('TC_$P$MAIN_$$_ADDED=4');
+    Changes := TDataSizes.Changes(Running, Back);
+    try
+      ExpectEqual(Changes.Text, 'variable MAIN.CALLS changed size from 4 to 8 bytes' + LineEnding
+        + 'variable MAIN.ADDED changed size from 2 to 4 bytes' + LineEnding,
+        'CALLS back with another size, and ADDED with another size, each need a restart');
+    finally
+      Changes.Free;
+    end;
+    TDataSizes.Keep(Running, Back);
+    ExpectEqual(Running.Values['TC_$P$MAIN_$$_CALLS'], '4', 'a size the program has is not replaced');
+  finally
+    Back.Free;
+    Removed.Free;
+    Running.Free;
+  end;
+end;
+
+procedure TestPrettyDataNames;
+begin
+  ExpectEqual(TDataSizes.Pretty('TC_$P$MAIN_$$_CALLS'), 'MAIN.CALLS', 'the program''s variable');
+  ExpectEqual(TDataSizes.Pretty('TC_$U_$$_CALLS'), 'U.CALLS', 'a unit''s');
+  ExpectEqual(TDataSizes.Pretty('TC_$SHAPES$_$LOCAL$$LONGINT_$$_LCOUNT'), 'SHAPES.LOCAL:LONGINT.LCOUNT',
+    'a routine''s');
+  ExpectEqual(TDataSizes.Pretty('TC_$U$_$TICK$LONGINT$$LONGINT_$$_N'), 'U.TICK(LONGINT):LONGINT.N',
+    'a routine''s with a parameter');
+  ExpectEqual(TDataSizes.Pretty('TC_$U$_$TICK$LONGINT_$$_CALLS'), 'U.TICK(LONGINT).CALLS',
+    'a procedure''s with a parameter');
+  ExpectEqual(TDataSizes.Pretty('TC_$U$_$MOVE$LONGINT$SMALLINT_$$_STEPS'), 'U.MOVE(LONGINT,SMALLINT).STEPS',
+    'a procedure''s with two parameters');
+end;
+
+{ A COFF object as fpc writes one, with the parts ObjectNames reads: the header, the section
+  table, the symbols and the string table. }
+function TestCOFFObject: string;
+
+  function Bytes(const AValue: Int64; const ACount: Integer): string;
+  var
+    K: Integer;
+  begin
+    Result := '';
+    for K := 0 to ACount - 1 do
+      Result := Result + Chr((AValue shr (8 * K)) and $FF);
+  end;
+
+  function Padded(const AText: string; const ACount: Integer): string;
+  begin
+    Result := AText + StringOfChar(#0, ACount - Length(AText));
+  end;
+
+  function Symbol(const AName: string; const ASection, AClass, AAuxiliary: Integer): string;
+  begin
+    Result := AName + Bytes(0, 4) + Bytes(ASection, 2) + Bytes(0, 2) + Bytes(AClass, 1) + Bytes(AAuxiliary, 1);
+  end;
+
+const
+  SectionA = '.data.n_TC_$U_$$_A';
+  SymbolB = 'TC_$U_$$_B';
+  SymbolC = 'TC_$V_$$_C';
+var
+  Strings: string;
+begin
+  Strings := SectionA + #0 + SymbolB + #0 + SymbolC + #0;
+  { two sections, four symbols (one of them an auxiliary record) from offset 100 }
+  Result := Bytes($8664, 2) + Bytes(2, 2) + Bytes(0, 4) + Bytes(100, 4) + Bytes(4, 4) + Bytes(0, 2) + Bytes(0, 2)
+    + Padded('/4', 8) + StringOfChar(#0, 32)
+    + Padded('.text', 8) + StringOfChar(#0, 32)
+    { TC_$U_$$_B, defined in section 1, with an auxiliary record that names nothing }
+    + Symbol(Bytes(0, 4) + Bytes(4 + Length(SectionA) + 1, 4), 1, 2, 1) + StringOfChar(#0, 18)
+    { TC_$V_$$_C, another unit's, used here: undefined }
+    + Symbol(Bytes(0, 4) + Bytes(4 + Length(SectionA) + 1 + Length(SymbolB) + 1, 4), 0, 2, 0)
+    + Symbol(Padded('.text', 8), 2, 3, 0)
+    + Bytes(4 + Length(Strings), 4) + Strings;
+end;
+
+procedure TestObjectNames;
+var
+  Root: string;
+  Names: TStringList;
+begin
+  Root := MakeTestDirectory('objectnames');
+  WriteTestFile(Root + 'u.o', TestCOFFObject);
+  WriteTestFile(Root + 'v.o', 'no COFF object, but TC_$U_$$_A');
+  WriteTestFile(Root + 'w.o', 'd'#0#0'.bss.n_u_$w_$$_x'#0);
+  Names := TStringList.Create;
+  try
+    Expect(TDataSizes.ObjectNames(Root + 'u.o', Names), 'a COFF object');
+    ExpectEqual(Names.CommaText, 'TC_$U_$$_A,TC_$U_$$_B',
+      'the datum of a section, and one of a symbol defined there, not one used from another unit');
+    Names.Clear;
+    Expect(not TDataSizes.ObjectNames(Root + 'v.o', Names), 'a file that names one but cannot be read as COFF');
+    Expect(TDataSizes.ObjectNames(Root + 'w.o', Names) and (Names.Count = 0), 'a file without initialised data');
+    Expect(not TDataSizes.ObjectNames(Root + 'x.o', Names), 'no file');
+  finally
+    Names.Free;
+  end;
+end;
+
+procedure TestHasInitialisedData;
+var
+  Root: string;
+begin
+  Root := MakeTestDirectory('initialised');
+  WriteTestFile(Root + 'u.o', 'd'#0#0'.data.n_TC_$U_$$_CALLS'#0'.bss.n_u_$u_$$_x'#0);
+  WriteTestFile(Root + 'v.o', 'd'#0#0'.bss.n_u_$v_$$_x'#0'U_$V_$$_X'#0);
+  Expect(TDataSizes.HasInitialisedData(Root + 'u.o'), 'a section named after a typed constant');
+  Expect(not TDataSizes.HasInitialisedData(Root + 'v.o'), 'variables without an initial value');
+  Expect(not TDataSizes.HasInitialisedData(Root + 'w.o'), 'no file');
+end;
+
 // ---------------------------------------------------------------- tests: the agent connection
 { The lines of the protocol, how a reply is read, and a real connection on 127.0.0.1 inside
   this process, with the test as the program's side of it. }
@@ -5027,6 +6038,165 @@ begin
   end;
 end;
 
+procedure TestAssemblerArguments;
+var
+  Options: TOptions;
+  Workspace: TWorkspace;
+  Compiler: TCompiler;
+  Arguments: TStringList;
+  Root: string;
+begin
+  Root := MakeTestDirectory('assembler-arguments');
+  Options := ParseOptions(['-Twin64', '-O2', Root + 'demo.pas'], False);
+  Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
+  Compiler := TCompiler.Create(Options, Workspace);
+  try
+    Arguments := Compiler.AssemblerArguments;
+    try
+      ExpectEqual(Arguments[0], '-Xs-', 'the same start as the program''s compile');
+      ExpectEqual(Arguments[1], '-FaHotFPC.Agent', 'with the agent');
+      ExpectEqual(Arguments[3], '-FU' + ExcludeTrailingPathDelimiter(Workspace.AssemblyDirectory),
+        'but units of its own');
+      ExpectEqual(Arguments[4], '-o' + Workspace.AssemblyDirectory + 'demo.exe',
+        'and the program''s name there, so that fpc''s scripts go there');
+      ExpectEqual(Arguments[5], '-Twin64', 'then the user''s options');
+      ExpectEqual(Arguments[6], '-O2', 'in their order');
+      ExpectEqual(Arguments[7], '-s', 'then only assembler');
+      ExpectEqual(Arguments[8], '-Aas', 'for the GNU assembler');
+      ExpectEqual(Arguments[9], Options.Source, 'and the source');
+      ExpectEqual(Arguments.Count, 10, 'nothing else');
+    finally
+      Arguments.Free;
+    end;
+  finally
+    Compiler.Free;
+    Workspace.Free;
+    Options.Free;
+  end;
+end;
+
+{ A script that stands in for fpc compiling to assembler: it writes the link scripts fpc
+  leaves next to the program into ADirectory, prints AOutput and ends with AExitCode. }
+function WriteFakeAssembler(const AScriptDirectory, AName, ADirectory, AOutput: string;
+  const AExitCode: Integer): string;
+begin
+  {$ifdef windows}
+  Result := AScriptDirectory + AName + '.bat';
+  WriteTestFile(Result, '@echo off' + LineEnding
+    + 'echo script> "' + ADirectory + 'ppas.bat"' + LineEnding
+    + 'echo script> "' + ADirectory + 'link1.res"' + LineEnding
+    + 'echo ' + AOutput + LineEnding
+    + 'exit /b ' + IntToStr(AExitCode) + LineEnding);
+  {$else}
+  Result := AScriptDirectory + AName;
+  WriteTestFile(Result, '#!/bin/sh' + LineEnding
+    + 'echo script > ''' + ADirectory + 'ppas.sh''' + LineEnding
+    + 'echo script > ''' + ADirectory + 'link1.res''' + LineEnding
+    + 'printf ''%s\n'' ''' + AOutput + '''' + LineEnding
+    + 'exit ' + IntToStr(AExitCode) + LineEnding);
+  FpChmod(Result, &755);
+  {$endif}
+end;
+
+function AssemblerResult(const ACompiler, ASource: string; out AProblem: string;
+  const AChanged: TStrings = nil): Boolean;
+var
+  Options: TOptions;
+  Workspace: TWorkspace;
+  Compiler: TCompiler;
+  Seconds: Double;
+begin
+  Options := ParseOptions(['--fpc', ACompiler, '-Twin64', ASource], False);
+  Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
+  Compiler := TCompiler.Create(Options, Workspace);
+  try
+    Result := Compiler.WriteAssembler(AChanged, AProblem, Seconds);
+  finally
+    Compiler.Free;
+    Workspace.Free;
+    Options.Free;
+  end;
+end;
+
+procedure TestWriteAssembler;
+var
+  Root, Assembly, Problem: string;
+begin
+  Root := MakeTestDirectory('assembler');
+  Assembly := Root + '.hot' + PathDelim + 'asm' + PathDelim;
+  Expect(AssemblerResult(WriteFakeAssembler(Root, 'works', Assembly, 'Compiling demo.pas', 0), Root + 'demo.pas', Problem),
+    'a compile that works');
+  ExpectEqual(Problem, '', 'has no problem');
+  Expect(DirectoryExists(Assembly), 'it has a directory of its own');
+  Expect(not FileExists(Assembly + 'ppas.sh') and not FileExists(Assembly + 'ppas.bat'), 'without the link script fpc wrote');
+  Expect(not FileExists(Assembly + 'link1.res'), 'or its linker''s script');
+  Expect(not AssemblerResult(WriteFakeAssembler(Root, 'fails', Assembly, 'demo.pas(3,1) Error: Illegal expression', 1),
+    Root + 'demo.pas', Problem), 'a compile that fails');
+  ExpectEqual(Problem, 'demo.pas(3,1) Error: Illegal expression', 'says why');
+end;
+
+{ A compile to assembler that writes no file leaves no assembler of an earlier compile for
+  the program or a changed unit, only for a unit fpc had no reason to compile again. }
+procedure TestWriteAssemblerAnew;
+var
+  Root, Assembly, Problem: string;
+  Changed: TStringList;
+begin
+  Root := MakeTestDirectory('assembler-anew');
+  Assembly := Root + '.hot' + PathDelim + 'asm' + PathDelim;
+  WriteTestFile(Assembly + 'demo.s', 'the program''s earlier assembler');
+  WriteTestFile(Assembly + 'gone.s', 'a unit''s whose unit file fpc removed');
+  WriteTestFile(Assembly + 'changed.s', 'a changed unit''s');
+  WriteTestFile(Assembly + 'changed.ppu', 'record');
+  WriteTestFile(Assembly + 'kept.s', 'an unchanged unit''s');
+  WriteTestFile(Assembly + 'kept.ppu', 'record');
+  Changed := TStringList.Create;
+  try
+    Changed.Add('changed.o');
+    Expect(AssemblerResult(WriteFakeAssembler(Root, 'silent', Assembly, 'Compiling demo.pas', 0), Root + 'demo.pas',
+      Problem, Changed), 'a compile to assembler that writes nothing');
+  finally
+    Changed.Free;
+  end;
+  Expect(not FileExists(Assembly + 'demo.s'), 'leaves no assembler of the program from before');
+  Expect(not FileExists(Assembly + 'gone.s'), 'or of a unit that has no unit file there');
+  Expect(not FileExists(Assembly + 'changed.s') and not FileExists(Assembly + 'changed.ppu'),
+    'or of a changed unit, which compiles again');
+  Expect(FileExists(Assembly + 'kept.s') and FileExists(Assembly + 'kept.ppu'), 'but keeps an unchanged unit''s');
+end;
+
+procedure TestForgetAssemblyUnits;
+var
+  Options: TOptions;
+  Workspace: TWorkspace;
+  Compiler: TCompiler;
+  Changed: TStringList;
+  Root: string;
+begin
+  if GetEnvironmentVariable(TrustTimestampsVariable) <> '' then
+    Exit;
+  Root := MakeTestDirectory('forget-assembly');
+  Options := ParseOptions(['-Twin64', Root + 'demo.pas'], False);
+  Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
+  Compiler := TCompiler.Create(Options, Workspace);
+  Changed := TStringList.Create;
+  try
+    WriteTestFile(Workspace.UnitsDirectory + 'foo.ppu', 'record');
+    WriteTestFile(Workspace.AssemblyDirectory + 'foo.ppu', 'record');
+    WriteTestFile(Workspace.AssemblyDirectory + 'bar.ppu', 'record');
+    Changed.Add(Root + 'foo.pas');
+    Compiler.ForgetUnits(Changed);
+    Expect(not FileExists(Workspace.UnitsDirectory + 'foo.ppu'), 'a Windows program''s changed unit is recompiled');
+    Expect(not FileExists(Workspace.AssemblyDirectory + 'foo.ppu'), 'to assembler too');
+    Expect(FileExists(Workspace.AssemblyDirectory + 'bar.ppu'), 'and another unit is not');
+  finally
+    Changed.Free;
+    Compiler.Free;
+    Workspace.Free;
+    Options.Free;
+  end;
+end;
+
 { The resource is the whole of HotFPC.Agent.pas: its first line and its last. }
 procedure TestAgentResource;
 var
@@ -5174,6 +6344,13 @@ begin
     TestProbe;
     TestLocate;
     TestHistory;
+    TestReadDataSizes;
+    TestStringBytes;
+    TestDataSizeChanges;
+    TestKeepDataSizes;
+    TestPrettyDataNames;
+    TestHasInitialisedData;
+    TestObjectNames;
     TestEncodeCommand;
     TestTakeLine;
     TestReplyField;
@@ -5191,6 +6368,10 @@ begin
     TestCompileArgumentsLinking;
     TestAgentResource;
     TestForgetUnits;
+    TestForgetAssemblyUnits;
+    TestAssemblerArguments;
+    TestWriteAssembler;
+    TestWriteAssemblerAnew;
     TestVerifyVersion;
     Result := FinishTests;
   finally
