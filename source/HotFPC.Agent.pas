@@ -3730,7 +3730,11 @@ begin
     SpanSize := PageEnd - Page;
     PageCopy := 0;
     KernelResult := MachVMRemap(Task, PageCopy, SpanSize, 0, VM_FLAGS_ANYWHERE, Task, Page, 1, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
-    if KernelResult = 0 then KernelResult := MachVMProtect(Task, PageCopy, SpanSize, 0, VM_PROT_READ or VM_PROT_WRITE or VM_PROT_COPY);
+    if KernelResult = 0 then
+    begin
+      KernelResult := MachVMProtect(Task, PageCopy, SpanSize, 0, VM_PROT_READ or VM_PROT_WRITE or VM_PROT_COPY);
+      if KernelResult <> 0 then MachVMDeallocate(Task, PageCopy, SpanSize);
+    end;
     if KernelResult <> 0 then
     begin
       PatchKernelResult := KernelResult;
@@ -3744,6 +3748,7 @@ begin
     if KernelResult = 0 then KernelResult := MachVMRemap(Task, Destination, SpanSize, 0, VM_FLAGS_FIXED or VM_FLAGS_OVERWRITE, Task, PageCopy, 0, CurrentProtection, MaximumProtection, VM_INHERIT_NONE);
     if KernelResult <> 0 then
     begin
+      MachVMDeallocate(Task, PageCopy, SpanSize);   // the copy, which never replaced the program's pages
       PatchKernelResult := KernelResult;
       PatchError := 'cannot replace a code page of the program';
       Exit(False);
