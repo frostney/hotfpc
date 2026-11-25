@@ -69,12 +69,30 @@ symbols and `-FU`/`-o` to build into `.hot/`.
 
 ## One save
 
-1. The driver sees the change. It checks file sizes and times every 10 ms and file contents
-   twice a second. The content check catches an edit of the same size within the same
-   second, which the compiler's own check misses. The driver then deletes the compiler's
+1. The driver sees the change. It checks file sizes and times every 10 ms, the times as
+   finely as the file system keeps them, and file contents twice a second. The content
+   check catches an edit of the same size that the time doesn't show, such as one within
+   the same second where the file system keeps whole seconds, which the compiler's own
+   check misses. The driver then deletes the compiler's
    record of the changed units so they're recompiled. A changed include file causes every
    unit to be recompiled; units whose object file comes out the same are left alone.
-2. fpc compiles without linking (`-Cn`).
+2. fpc compiles without linking (`-Cn`). fpc reads the files one after the other, so a
+   source that changes during the compile, such as the second file of a save written a
+   moment after the first, or the next save, may be read before or after its change. When
+   the sources changed, the driver neither swaps nor reports what fpc made: it waits for
+   them to settle and compiles again. It checks a save's compile to assembler (step 4), the
+   link of a restart and the first build the same way: a save during the first build is
+   compiled as soon as the program runs. A source that changes faster than fpc compiles, such
+   as a file a generator keeps rewriting, holds a save back for three compiles, links or
+   compiles to assembler at most, each after a wait of a second at most for the files to
+   settle: the fourth is used as it is. For a Windows program whose
+   sizes step 4 checks, such a save needs a restart instead: its object files and its
+   assembler may come from different sources, so the sizes counted may not be the code's.
+   The same goes when the times of the sources can't show a save that came and was put
+   back during the compiles, at the same size: the time of a file written less than 20 ms
+   before the compile, about a tick of the clock behind file times, or less than two
+   seconds before when the file system keeps whole seconds. For such a program the driver
+   waits 22 ms for the files to settle, so that a save it saw isn't one of them.
 3. ppudump reads each changed unit: the interface from its JSON output, and the
    implementation section from its text output, which the JSON leaves out. A field that
    moved, or a field or variable that changed its type without changing a size, is

@@ -244,7 +244,7 @@ each system needs.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 26 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 27 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 ```
@@ -252,7 +252,9 @@ HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 `tests/scenarios/scenario.py` holds the programs and their edits. `check.py` runs
 `build/hotfpc` on each one, compares the run with its expected number of swaps applied,
 refused and failed and of restarts, and checks for a clean exit and that the program's
-output had no gaps.
+output had no gaps. The script saves each edit once hotfpc has reported on the one before,
+and ends the program after the last, so the numbers don't depend on how fast the machine
+compiles.
 For some cases it also checks the values the program printed after a swap.
 [docs/build-system.md](docs/build-system.md) describes `build.sh` and `build.bat`.
 

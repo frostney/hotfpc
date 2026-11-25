@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
-    "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
+    "slowsave": (1, 0, 0), "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
     "include": (2, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
@@ -33,9 +33,19 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2}
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
     "signals": ["text two"],
+    # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
+    "rapid": [re.compile(r"text five \d+")],
     # a restarted program runs the new code and counts from the start
     "restart": ["three calls 1"], "linkfail": ["three calls 1 extra 1"], "crash": ["three calls 1"],
 }
+# case: what tick n prints once the case's last swap is in place, so that it runs the code of
+# the save: Tick passes the new second argument, and the main block keeps its old code
+SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, 100 * n)
+           for name in ("signature", "slowsave")}
+# and what it printed before: the tick that runs while the swap is written may print this
+# once after the swap's line, as its Tick ran the old code or had its result already
+UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
+             for name in ("signature", "slowsave")}
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
 # so every tick prints it and the two numbers stay equal
@@ -76,18 +86,20 @@ for name in names:
         continue
     rc, applied, refused, failed, unchanged, restarts = map(int, end.groups())
     ea, er, ef = EXPECT[name]
-    # rapid: a save that lands while fpc reads the file is compiled with the one before it,
-    # and the compile for it then finds the same code ("not swapped"); the program shows the
-    # newest text either way
-    merged = unchanged if name == "rapid" else 0
-    ok = rc == 0 and (applied + merged in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == merged and restarts == RESTARTS.get(name, 0) and "!!! the edit does not apply" not in body
+    # rapid: a save that lands while fpc compiles the one before is compiled again with it,
+    # so the two may make one reload; a compile is never acted on when the sources changed
+    # during it, so none finds the same code ("not swapped")
+    # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
+    # gave no outcome for
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and refused == er and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and "!!! " not in body
     # the program's tick records, each a line of its own after the script's timestamp: the
     # same records count toward continuity and carry the counters
     records = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", body, re.M)
     ticks = [int(tick) for tick, _ in records]
     seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
     ok = ok and seq
-    missing = [text for text in PRINTS.get(name, []) if not re.search(r"tick \d+: " + re.escape(text) + "$", body, re.M)]
+    missing = [text for text in PRINTS.get(name, [])
+               if not re.search(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", body, re.M)]
     ok = ok and not missing
     drift = []
     for tick, text in records if name in COUNTERS else []:
@@ -95,15 +107,27 @@ for name in names:
         if not count or count.group(1) != tick:
             drift.append((tick, count and count.group(1)))
     ok = ok and not drift
+    # every tick after the last swap's line ran its code, but the first, which may have been
+    # running when the swap was written; and one of them did
+    swaps = list(re.finditer(r"\] v\d+ swapped", body))
+    swapped = body[swaps[-1].end():] if swaps else ""
+    after = re.findall(r"^ *\d+\.\d+s  tick (\d+):(.*)$", swapped, re.M) if name in SWAPPED else []
+    stale = [(tick, text.strip()) for i, (tick, text) in enumerate(after)
+             if text != " " + SWAPPED[name](int(tick)) and not (i == 0 and text == " " + UNSWAPPED[name](int(tick)))]
+    if name in SWAPPED and not any(text == " " + SWAPPED[name](int(tick)) for tick, text in after):
+        stale.append(("", "no tick"))
+    ok = ok and not stale
     loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
-          + "".join("; never printed %r" % text for text in missing)
+          + "".join("; never printed %r" % getattr(text, "pattern", text) for text in missing)
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
-          + "".join("; a load took %s ms in the program" % x for x in slow))
+          + "".join("; a load took %s ms in the program" % x for x in slow)
+          + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
+                    for tick, text in stale[:1]))
     if not ok:
         failing.append((name, body))
 for name, body in failing:

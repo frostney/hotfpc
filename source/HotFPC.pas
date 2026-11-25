@@ -37,6 +37,7 @@ uses
   {$ifdef unix}
   cthreads,
   BaseUnix,
+  Unix,
   {$endif}
   {$ifdef windows}
   WinSock2,
@@ -81,18 +82,22 @@ end;
 // ---------------------------------------------------------------- files
 { The whole-file and directory operations the driver needs, none of which keeps state. }
 
-{ False when the file cannot be read; AContents is then empty or partial. }
+{ False when the file cannot be read; AContents is then empty or partial. A file that a save
+  is writing meanwhile gives what was there when it was opened, at most. }
 function ReadFileContents(const APath: string; out AContents: string): Boolean;
 var
   Stream: TFileStream;
+  Size: Int64;
 begin
   AContents := '';
   try
     Stream := TFileStream.Create(APath, fmOpenRead or fmShareDenyNone);
     try
-      SetLength(AContents, Stream.Size);
-      if Stream.Size > 0 then
-        Stream.ReadBuffer(AContents[1], Stream.Size);
+      { the size once: the file may grow before the read, and must not overflow the string }
+      Size := Stream.Size;
+      SetLength(AContents, Size);
+      if Size > 0 then
+        SetLength(AContents, Stream.Read(AContents[1], Size));
       Result := True;
     finally
       Stream.Free;
@@ -584,7 +589,9 @@ type
   TFileStamp = record
     Path: string;
     Size: Int64;
-    Time: LongInt;
+    { When the file was last written, in StampUnitsPerSecond since the system's epoch, as
+      finely as the file system keeps it }
+    Time: Int64;
   end;
 
   TFileStamps = array of TFileStamp;
@@ -592,6 +599,7 @@ type
   TSourceWatcher = class
   private
     FDirectories: TStringList;
+    FStampedAt: Int64;
   public
     { ASourceDirectory is the program's own; ACompilerOptions are the options for fpc,
       where -Fu, -Fi and @response files name more directories. }
@@ -605,17 +613,37 @@ type
     { A 64-bit hash of the contents: FNV-1a, from the seed the driver has always used. }
     class function ContentDigest(const AContents: string): QWord;
     class function SameStamps(const AFirst, ASecond: TFileStamps): Boolean;
+    { The system's clock, in the units and from the epoch of a stamp's time. }
+    class function Clock: Int64;
+    { Whether a write to one of the files after AAt (Clock) gives it another time, so that its
+      stamp shows the write even when the content and the size are back to what they were:
+      the time of each is older than AAt by more than the tick of the clock behind file times
+      (StampGranuleSeconds), or two seconds for a time in whole seconds, as file systems
+      such as FAT and HFS+ keep them. }
+    class function TimesShowWrites(const AStamps: TFileStamps; const AAt: Int64): Boolean;
+    { The files of ANew whose size or time differs from AOld's or that AOld lacks, and the
+      files of AOld that ANew lacks. The caller frees the list. }
+    class function ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
     { The files whose digest differs between the two lists of path=digest, or that are new
-      in ACurrent. APrevious may be nil: then every file is a change. }
+      in ACurrent. APrevious may be nil: then every file is a change. Each file is kept by
+      its whole path, with its case: a path may have = in it, and the digest has none. }
     class function ChangedFiles(const APrevious, ACurrent: TStrings): TStringList;
-    { The paths of every watched source file, sorted. The caller frees the list. }
+    { The paths of every watched source file, sorted, each with its case: two files whose
+      names differ only in case are two files where the file system keeps both. The caller
+      frees the list. }
     function Files: TStringList;
-    { Names, sizes and times of the watched files. Times have whole seconds only. }
+    { Names, sizes and times of the watched files, the times as finely as the file system
+      keeps them; StampedAt is then the Clock before they were read. }
     function Stamps: TFileStamps;
     { The content of every watched file as path=digest. False while a file is missing or empty
       (a save in progress); ADigests is then nil. Otherwise the caller frees the list. }
     function ReadDigests(out ADigests: TStringList): Boolean;
+    { The files that changed since the sources had AStamps and ADigests: another size or time,
+      new or gone, or, for an edit of the same size within the same second, other content.
+      ADigests may be nil; then only the sizes and times count. The caller frees the list. }
+    function ChangedSince(const AStamps: TFileStamps; const ADigests: TStrings): TStringList;
     property Directories: TStringList read FDirectories;
+    property StampedAt: Int64 read FStampedAt;
   end;
 
 const
@@ -634,6 +662,21 @@ const
   DigestSeed = QWord(1469598103934665603);
   FNVPrime = QWord(1099511628211);
   DigestWidth = 16;
+  {$ifdef windows}
+  { a FILETIME counts 100 ns }
+  StampUnitsPerSecond = 10000000;
+  {$else}
+  StampUnitsPerSecond = 1000000000;
+  {$endif}
+  { The clock behind file times ticks every 15.6 ms on Windows and every 1 to 10 ms on Linux:
+    two writes within one tick give a file the same time. }
+  StampGranuleSeconds = 0.02;
+  { FAT keeps the time a file was written in steps of two seconds. }
+  WholeSecondGranule = 2;
+
+{$ifdef windows}
+procedure GetSystemTimeAsFileTime(out ATime: Int64); stdcall; external 'kernel32' name 'GetSystemTimeAsFileTime';
+{$endif}
 
 constructor TSourceWatcher.Create(const ASourceDirectory: string; const ACompilerOptions: TStrings);
 var
@@ -740,21 +783,103 @@ begin
   Result := True;
 end;
 
-class function TSourceWatcher.ChangedFiles(const APrevious, ACurrent: TStrings): TStringList;
+class function TSourceWatcher.Clock: Int64;
+{$ifdef unix}
+var
+  Now: TTimeVal;
+{$endif}
+begin
+  {$ifdef windows}
+  GetSystemTimeAsFileTime(Result);
+  {$else}
+  fpgettimeofday(@Now, nil);
+  Result := Int64(Now.tv_sec) * StampUnitsPerSecond + Int64(Now.tv_usec) * (StampUnitsPerSecond div 1000000);
+  {$endif}
+end;
+
+class function TSourceWatcher.TimesShowWrites(const AStamps: TFileStamps; const AAt: Int64): Boolean;
 var
   I: Integer;
-  Name, Value: string;
+  Granule: Int64;
+begin
+  for I := 0 to High(AStamps) do
+  begin
+    if AStamps[I].Time mod StampUnitsPerSecond = 0 then
+      Granule := WholeSecondGranule * StampUnitsPerSecond
+    else
+      Granule := Round(StampGranuleSeconds * StampUnitsPerSecond);
+    if AStamps[I].Time > AAt - Granule then
+      Exit(False);
+  end;
+  Result := True;
+end;
+
+class function TSourceWatcher.ChangedStamps(const AOld, ANew: TFileStamps): TStringList;
+var
+  Old: TStringList;
+  I, K, Index: Integer;
 begin
   Result := TStringList.Create;
-  { Each value goes into a variable of its own first: fpc 3.3.1+3 for x86-64 gave the loop
-    counter and the temporary result of ValueFromIndex the same register when this was one
-    expression (docs/how-it-works.md, "A compiler bug"). }
-  for I := 0 to ACurrent.Count - 1 do
-  begin
-    Name := ACurrent.Names[I];
-    Value := ACurrent.ValueFromIndex[I];
-    if (APrevious = nil) or (APrevious.Values[Name] <> Value) then
-      Result.Add(Name);
+  Old := TStringList.Create;
+  try
+    Old.CaseSensitive := True;
+    Old.Sorted := True;
+    for I := 0 to High(AOld) do
+      Old.AddObject(AOld[I].Path, TObject(PtrInt(I)));
+    for I := 0 to High(ANew) do
+      if not Old.Find(ANew[I].Path, K) then
+        Result.Add(ANew[I].Path)
+      else
+      begin
+        Index := PtrInt(Old.Objects[K]);
+        if (AOld[Index].Size <> ANew[I].Size) or (AOld[Index].Time <> ANew[I].Time) then
+          Result.Add(ANew[I].Path);
+        Old.Delete(K);
+      end;
+    for K := 0 to Old.Count - 1 do
+      Result.Add(Old[K]);
+  finally
+    Old.Free;
+  end;
+end;
+
+{ An entry of a list of digests: the path, which may have =, then the digest, which has none. }
+function DigestPath(const AEntry: string): string;
+begin
+  Result := Copy(AEntry, 1, LastDelimiter('=', AEntry) - 1);
+end;
+
+function DigestValue(const AEntry: string): string;
+begin
+  Result := Copy(AEntry, LastDelimiter('=', AEntry) + 1, MaxInt);
+end;
+
+class function TSourceWatcher.ChangedFiles(const APrevious, ACurrent: TStrings): TStringList;
+var
+  Previous: TStringList;
+  I, K: Integer;
+  Path, Value: string;
+begin
+  Result := TStringList.Create;
+  Previous := TStringList.Create;
+  try
+    Previous.CaseSensitive := True;
+    Previous.Sorted := True;
+    if APrevious <> nil then
+      for I := 0 to APrevious.Count - 1 do
+        Previous.AddObject(DigestPath(APrevious[I]), TObject(PtrInt(I)));
+    { Each value goes into a variable of its own first: fpc 3.3.1+3 for x86-64 gave the loop
+      counter and the temporary result of ValueFromIndex the same register when this was one
+      expression (docs/how-it-works.md, "A compiler bug"). }
+    for I := 0 to ACurrent.Count - 1 do
+    begin
+      Path := DigestPath(ACurrent[I]);
+      Value := DigestValue(ACurrent[I]);
+      if not Previous.Find(Path, K) or (DigestValue(APrevious[PtrInt(Previous.Objects[K])]) <> Value) then
+        Result.Add(Path);
+    end;
+  finally
+    Previous.Free;
   end;
 end;
 
@@ -765,6 +890,7 @@ var
   Prefix: string;
 begin
   Result := TStringList.Create;
+  Result.CaseSensitive := True;
   Result.Sorted := True;
   Result.Duplicates := dupIgnore;
   for I := 0 to FDirectories.Count - 1 do
@@ -785,9 +911,14 @@ function TSourceWatcher.Stamps: TFileStamps;
 var
   Watched: TStringList;
   I: Integer;
+  {$ifdef windows}
   Search: TSearchRec;
+  {$else}
+  Info: TStat;
+  {$endif}
 begin
   Result := nil;
+  FStampedAt := Clock;
   Watched := Files;
   try
     SetLength(Result, Watched.Count);
@@ -796,12 +927,28 @@ begin
       Result[I].Path := Watched[I];
       Result[I].Size := -1;
       Result[I].Time := 0;
+      {$ifdef windows}
       if FindFirst(Watched[I], faAnyFile, Search) = 0 then
       begin
         Result[I].Size := Search.Size;
-        Result[I].Time := Search.Time;
+        Result[I].Time := Int64(Search.FindData.ftLastWriteTime.dwHighDateTime) shl 32
+          or Search.FindData.ftLastWriteTime.dwLowDateTime;
         FindClose(Search);
       end;
+      {$else}
+      if FpStat(Watched[I], Info) = 0 then
+      begin
+        Result[I].Size := Info.st_size;
+        Result[I].Time := Int64(Info.st_mtime) * StampUnitsPerSecond
+          {$if defined(linux)}
+          + Int64(Info.st_mtime_nsec);
+          {$elseif defined(darwin) or defined(bsd)}
+          + Int64(Info.st_mtimensec);
+          {$else}
+          ;
+          {$endif}
+      end;
+      {$endif}
     end;
   finally
     Watched.Free;
@@ -830,6 +977,26 @@ begin
     Watched.Free;
   end;
   Result := True;
+end;
+
+function TSourceWatcher.ChangedSince(const AStamps: TFileStamps; const ADigests: TStrings): TStringList;
+var
+  Digests, Changed: TStringList;
+begin
+  Result := ChangedStamps(AStamps, Stamps);
+  { a file that is missing or empty has already shown in the stamps }
+  if (Result.Count > 0) or (ADigests = nil) or not ReadDigests(Digests) then
+    Exit;
+  try
+    Changed := ChangedFiles(ADigests, Digests);
+    try
+      Result.AddStrings(Changed);
+    finally
+      Changed.Free;
+    end;
+  finally
+    Digests.Free;
+  end;
 end;
 
 
@@ -1779,6 +1946,7 @@ const
   { a size the assembler does not give }
   UnknownSize = '?';
   UnknownSizes = 'the sizes of variables with initial values are unknown: ';
+  UnseenSaves = 'the times of the sources may not show a save while fpc compiled them';
   { fpc's section of a datum: its kind, this, and the datum's name (.data.n_TC_$U_$$_CALLS) }
   DatumSectionInfix = '.n_';
   { the parts of a COFF object (the PE/COFF specification) the names are read from }
@@ -2991,6 +3159,14 @@ const
   AcceptIntervalMilliseconds = 5;
   SettleSlackMilliseconds = 2;
   DigestIntervalSeconds = 0.5;
+  { How many compiles in a row hotfpc leaves unused because the sources changed meanwhile.
+    A source that changes faster than fpc compiles, such as a file a generator keeps
+    rewriting, would otherwise hold back every save; the next compile is then used as it is,
+    and the changes still to come are compiled after it. }
+  MaximumUnusedCompiles = 3;
+  { The longest hotfpc waits for the files to stop changing. A file that changes all the time
+    is then compiled as it is, and that compile sees the change: the limit above applies. }
+  MaximumSettleSeconds = 1.0;
   { macOS checks a newly linked executable on its first start (seconds, more under load); Wine
     starts its server the first time. }
   ConnectTimeoutSeconds = 60;
@@ -3026,6 +3202,21 @@ type
     FReader: TLayoutReader;
     FLayouts: TLayoutHistory;
     FDigests: TStringList;
+    { The sizes and times of the sources when FDigests was read: the state the compile of a
+      save starts from. }
+    FSettled: TFileStamps;
+    { The clock before FSettled was read (TSourceWatcher.StampedAt) }
+    FSettledAt: Int64;
+    { The sources changed while fpc read them, so the compile was not acted on: Watch compiles
+      them again. }
+    FStale: Boolean;
+    { Compiles, links and compiles to assembler in a row that were not acted on (FStale);
+      Watch sets it back once a save has been handled. }
+    FUnusedCompiles: Integer;
+    { A compile, link or compile to assembler of this save was acted on although the sources
+      changed while fpc read them (after MaximumUnusedCompiles), so it and the others may come
+      from different sources. }
+    FUnsettled: Boolean;
     FBased: TStringList;
     { The check of sizes of initialised data is on (a Windows program). }
     FCheckSizes: Boolean;
@@ -3058,6 +3249,8 @@ type
     function ProgramHasEnded: Boolean;
     function Settle(const AStamps: TFileStamps): TFileStamps;
     procedure SayErrors(const AErrors: TStringList; const AFallback: string);
+    function SourcesChangedDuringCompile: Boolean;
+    procedure ForgetNewUnits;
     function CompileSources(out ACompileSeconds: Double): Boolean;
     function CollectChangedObjects(const AChanged: TStrings; const ACompileSeconds: Double): Boolean;
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
@@ -3080,6 +3273,15 @@ type
     procedure SayEnd(const AExitCode: Integer);
     { The program's exit code; -1 when a signal ended it. }
     class function ExitCodeOf(const AProgram: TProcess): Integer;
+    { When the wait of Settle that starts at ANow ends, for a settle that started at AStart and
+      waits AWait between looks: AWait later, but never past MaximumSettleSeconds after AStart,
+      or one AWait after AStart when that is later. A file that keeps changing is then compiled
+      as it is. }
+    class function SettleWaitEnd(const AStart, ANow, AWait: Double): Double;
+    { How long Settle sleeps before it looks again when ARemaining seconds of its wait are
+      left: one poll interval at most, and 0, no sleep, once the wait is over. ARemaining
+      comes from one reading of the clock, which may already be past the wait's end. }
+    class function SettlePause(const ARemaining: Double): Integer;
   public
     constructor Create(const AOptions: TOptions);
     destructor Destroy; override;
@@ -3243,12 +3445,67 @@ begin
       FReporter.Say('error: ' + AErrors[I] + ' (nothing changed)');
 end;
 
+{ Whether a source changed after the compile, link or assembler compile of a save started
+  (FSettled, FDigests). fpc reads one file after the other, so it may have read some of a save
+  that was still being written, or of the next one: what it made is then no state the sources
+  were in, and acting on it would apply, refuse or report a state nobody saved. The units of
+  the changed files, and of units the running program does not have, are then compiled again
+  by the next compile, which Watch starts once the sources have settled (FStale). After
+  MaximumUnusedCompiles such compiles in a row, the next one is acted on all the same
+  (FUnsettled). }
+function TDriver.SourcesChangedDuringCompile: Boolean;
+var
+  Changed: TStringList;
+begin
+  Changed := FWatcher.ChangedSince(FSettled, FDigests);
+  try
+    Result := (Changed.Count > 0) and (FUnusedCompiles < MaximumUnusedCompiles);
+    if (Changed.Count > 0) and not Result then
+      FUnsettled := True;
+    if Result then
+    begin
+      Inc(FUnusedCompiles);
+      if GetEnvironmentVariable(DebugVariable) <> '' then
+        WriteLn('[hot debug] changed during the compile: ', Changed.CommaText);
+      FCompiler.ForgetUnits(Changed);
+      ForgetNewUnits;
+      FStale := True;
+    end;
+  finally
+    Changed.Free;
+  end;
+end;
+
+{ Removes the object files and records of units the running program does not have, so that
+  a compile that leaves such a unit out doesn't find them. }
+procedure TDriver.ForgetNewUnits;
+var
+  Objects: TStringList;
+  I: Integer;
+begin
+  Objects := FWorkspace.UnitObjects;
+  try
+    for I := 0 to Objects.Count - 1 do
+      if not FileExists(FWorkspace.LiveDirectory + Objects[I]) then
+      begin
+        DeleteFile(FWorkspace.UnitsDirectory + Objects[I]);
+        DeleteFile(FWorkspace.UnitsDirectory + ChangeFileExt(Objects[I], RecordExtension));
+      end;
+  finally
+    Objects.Free;
+  end;
+end;
+
+{ Compiles the sources without linking. False when fpc failed, which it says with fpc's
+  errors, or when the sources changed meanwhile (FStale), which it doesn't. }
 function TDriver.CompileSources(out ACompileSeconds: Double): Boolean;
 var
   Errors: TStringList;
 begin
   Result := FCompiler.Compile(False, Errors, ACompileSeconds);
   try
+    if SourcesChangedDuringCompile then
+      Exit(False);
     if not Result then
       SayErrors(Errors, 'the compiler failed');
   finally
@@ -3445,8 +3702,10 @@ end;
   fpc's assembler: on Windows the object file does not show one that grows inside the
   padding of its section. Compiles to assembler only when a changed unit has such data. A
   save whose sizes cannot be compared, because fpc did not write the assembler, the running
-  program's sizes are unknown, or either has no size for a datum a changed object file
-  names, needs a restart too. }
+  program's sizes are unknown, either has no size for a datum a changed object file names,
+  or the sources kept changing during the compiles (FUnsettled), needs a restart too, and so
+  does one whose sources' times could not show a save that came and was put back during the
+  compiles (TSourceWatcher.TimesShowWrites). }
 function TDriver.SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
   var AInterfaceSeconds: Double): Boolean;
 var
@@ -3467,9 +3726,26 @@ begin
   FAssemblyWritten := FCompiler.WriteAssembler(AChanged, Problem, Seconds);
   if GetEnvironmentVariable(DebugVariable) <> '' then
     WriteLn('[hot debug] assembler in ', FormatMilliseconds(Seconds), ' ms');
+  { Reload sees FStale }
+  if SourcesChangedDuringCompile then
+    Exit;
   if not FAssemblyWritten then
   begin
     RefuseUncheckedSizes(NotAssembled(Problem), ACompileSeconds);
+    Exit(False);
+  end;
+  { the object files and the assembler may come from different sources: a size the object
+    files have may not be the one counted }
+  if FUnsettled then
+  begin
+    RefuseUncheckedSizes('the sources changed while fpc compiled them', ACompileSeconds);
+    Exit(False);
+  end;
+  { nor can the stamps show that no save came and was put back during the compiles (Settle
+    waits long enough for a save it saw) }
+  if not TSourceWatcher.TimesShowWrites(FSettled, FSettledAt) then
+  begin
+    RefuseUncheckedSizes(UnseenSaves, ACompileSeconds);
     Exit(False);
   end;
   Compiled := ReadAssembly(AChanged, Problem);
@@ -3613,7 +3889,7 @@ begin
 end;
 
 { One save: compile, then swap what changed in the running program or say why not. True when
-  the save needs a restart. }
+  the save needs a restart; False also when the sources changed during a compile (FStale). }
 function TDriver.Reload(const ASeen, ASettled: Double): Boolean;
 var
   Changed: TStringList;
@@ -3630,6 +3906,8 @@ begin
       Exit(True);
     if not SizesAllowSwap(Changed, CompileSeconds, InterfaceSeconds) then
       Exit(True);
+    if FStale then
+      Exit;
     if Changed.Count = 0 then
     begin
       Inc(FUnchanged);
@@ -3691,6 +3969,9 @@ begin
   ForceDirectories(FWorkspace.NextDirectory);
   Linked := FCompiler.Compile(True, Errors, LinkSeconds, FWorkspace.NextExecutable);
   try
+    { the program keeps running; the next compile decides again }
+    if SourcesChangedDuringCompile then
+      Exit;
     if not Linked then
       SayErrors(Errors, 'the program did not link');
   finally
@@ -3748,19 +4029,60 @@ begin
     RefreshLiveAssembly(Problem);
 end;
 
-{ Waits for the save to stop changing the files. }
+{ Waits for the save to stop changing the files, for MaximumSettleSeconds at most, or for
+  one --settle wait when that is longer (SettleWaitEnd). Stops as soon as the program has
+  ended, also during a long wait (Watch then ends with it). The files as they are then. With
+  the check of sizes, each wait is longer than a tick of the clock behind file times. }
 function TDriver.Settle(const AStamps: TFileStamps): TFileStamps;
 var
   Again: TFileStamps;
+  Start, Wait, WaitEnd: Double;
+  Pause: Integer;
 begin
   Result := AStamps;
+  Wait := FOptions.SettleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  { a write after the files settled then gives them another time: the check of sizes needs
+    that (TSourceWatcher.TimesShowWrites) }
+  if FCheckSizes and (Wait < StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond) then
+    Wait := StampGranuleSeconds + SettleSlackMilliseconds / MillisecondsPerSecond;
+  Start := NowSeconds;
   repeat
-    Sleep(Trunc(FOptions.SettleSeconds * MillisecondsPerSecond) + SettleSlackMilliseconds);
+    WaitEnd := SettleWaitEnd(Start, NowSeconds, Wait);
+    { in steps, to see the program end }
+    repeat
+      if (FProgram <> nil) and not FProgram.Running then
+        Exit;
+      Pause := SettlePause(WaitEnd - NowSeconds);
+      if Pause > 0 then
+        Sleep(Pause);
+    until Pause = 0;
     Again := FWatcher.Stamps;
     if TSourceWatcher.SameStamps(Again, Result) then
       Break;
     Result := Again;
-  until False;
+  until (SettleWaitEnd(Start, NowSeconds, Wait) <= NowSeconds) or ((FProgram <> nil) and not FProgram.Running);
+end;
+
+class function TDriver.SettleWaitEnd(const AStart, ANow, AWait: Double): Double;
+var
+  Deadline: Double;
+begin
+  Deadline := AStart + MaximumSettleSeconds;
+  if AStart + AWait > Deadline then
+    Deadline := AStart + AWait;
+  Result := ANow + AWait;
+  if Result > Deadline then
+    Result := Deadline;
+end;
+
+class function TDriver.SettlePause(const ARemaining: Double): Integer;
+begin
+  if ARemaining <= 0 then
+    Result := 0
+  else if ARemaining * MillisecondsPerSecond >= PollIntervalMilliseconds then
+    Result := PollIntervalMilliseconds
+  else
+    Result := Trunc(ARemaining * MillisecondsPerSecond) + 1;
 end;
 
 { True when the program has ended and hotfpc ends with it. A program that a restart started
@@ -3782,7 +4104,9 @@ begin
 end;
 
 { Polls the sizes and times of the sources every few milliseconds and their contents twice a
-  second: the content check catches an edit of the same size within the same second. }
+  second: the content check catches an edit of the same size within the same second. A save
+  whose files changed again while fpc compiled them is compiled again once they settle
+  (FStale), even when their content is back to what it was. }
 procedure TDriver.Watch;
 var
   Seen, Current: TFileStamps;
@@ -3790,6 +4114,9 @@ var
   LastDigest, SeenAt, CompileSeconds: Double;
 begin
   Seen := FWatcher.Stamps;
+  { the sources changed during the first build }
+  if FStale then
+    Seen := nil;
   LastDigest := NowSeconds;
   while True do
   begin
@@ -3802,16 +4129,22 @@ begin
     SeenAt := NowSeconds;
     if not TSourceWatcher.SameStamps(Current, Seen) then
       Current := Settle(Current);
+    if ProgramHasEnded then
+      Break;
     Seen := Current;
     LastDigest := NowSeconds;
     { a missing or empty file: a save in progress }
     if not FWatcher.ReadDigests(Digests) then
       Continue;
-    if (FDigests <> nil) and (Digests.Text = FDigests.Text) then
+    if not FStale and (FDigests <> nil) and (Digests.Text = FDigests.Text) then
     begin
       Digests.Free;
       Continue;
     end;
+    FStale := False;
+    FSettled := Current;
+    FSettledAt := FWatcher.StampedAt;
+    FUnsettled := False;
     Changed := TSourceWatcher.ChangedFiles(FDigests, Digests);
     if GetEnvironmentVariable(DebugVariable) <> '' then
       WriteLn('[hot debug] seen at ', FormatFloat('0.000', SeenAt - LastDigest), ' changed ', Changed.CommaText);
@@ -3827,6 +4160,11 @@ begin
     end
     else if Reload(SeenAt, NowSeconds) and FOptions.Restart then
       Restart(SeenAt);
+    { settle first: the save that changed them may still be in progress }
+    if FStale then
+      Seen := nil
+    else
+      FUnusedCompiles := 0;
     if ProgramHasEnded then
       Break;
   end;
@@ -3883,16 +4221,22 @@ begin
     WriteLn(Output);
     Exit(1);
   end;
+  { the state the build starts from: a save fpc reads only in part, or after it read the file,
+    is compiled as soon as Watch starts }
+  FSettled := FWatcher.Stamps;
+  FSettledAt := FWatcher.StampedAt;
+  FWatcher.ReadDigests(FDigests);
   if not BuildProgram then
     Exit(1);
   CopyObjectsToLive;
+  { before the check of the sources, which may remove the records ppudump is probed with }
   ProbeLayouts;
+  SourcesChangedDuringCompile;
   if not FLink.Listen then
   begin
     WriteLn('[hot] cannot listen on 127.0.0.1');
     Exit(1);
   end;
-  FWatcher.ReadDigests(FDigests);
   FProgram := StartProgram;
   if not AwaitAgent(FProgram, Result) then
     Exit;
@@ -4165,6 +4509,32 @@ begin
   finally
     Options.Free;
   end;
+end;
+
+{ A file that keeps changing is compiled after a second, or after one --settle wait when that
+  is longer: no wait goes past that. }
+procedure TestSettleWaitEnd;
+begin
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.0, 0.002) - 10.002) < 1E-9, 'the first wait is one --settle');
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.6, 0.6) - 11.0) < 1E-9,
+    'a later wait ends a second after the settle started, not a whole --settle later');
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.9995, 0.002) - 11.0) < 1E-9, 'nor a few milliseconds later');
+  Expect(Abs(TDriver.SettleWaitEnd(10.0, 10.0, 5.0) - 15.0) < 1E-9, 'a --settle longer than a second waits once');
+  Expect(TDriver.SettleWaitEnd(10.0, 15.0, 5.0) <= 15.0, 'and no more after it');
+end;
+
+{ Each pause of a settle wait is a poll interval at most and ends with the wait, also when
+  the clock is read past its end. }
+procedure TestSettlePause;
+begin
+  ExpectEqual(TDriver.SettlePause(1.0), PollIntervalMilliseconds, 'a long wait sleeps one poll interval at a time');
+  ExpectEqual(TDriver.SettlePause(PollIntervalMilliseconds / MillisecondsPerSecond), PollIntervalMilliseconds,
+    'a poll interval left is one poll interval');
+  ExpectEqual(TDriver.SettlePause(0.0034), 4, 'the rest of a wait shorter than that, to the next millisecond');
+  ExpectEqual(TDriver.SettlePause(0.0000001), 1, 'a millisecond for a moment left');
+  ExpectEqual(TDriver.SettlePause(0), 0, 'no sleep once the wait is over');
+  ExpectEqual(TDriver.SettlePause(-0.002), 0, 'nor when the clock was read past its end');
+  ExpectEqual(TDriver.SettlePause(-86400.0), 0, 'by however much');
 end;
 
 procedure TestCompilerOptionsAndProgramArguments;
@@ -4492,10 +4862,256 @@ begin
     finally
       Changed.Free;
     end;
+    { a path may have = in it, and differ from another only in case }
+    Previous.Clear;
+    Current.Clear;
+    Previous.Add('/a=b/one.pas=0000000000000001');
+    Previous.Add('/a=b/two.pas=0000000000000002');
+    Previous.Add('/a=b/A.inc=0000000000000003');
+    Previous.Add('/a=b/a.inc=0000000000000004');
+    Current.Assign(Previous);
+    Changed := TSourceWatcher.ChangedFiles(Previous, Current);
+    try
+      ExpectEqual(Changed.Count, 0, 'files under a directory with = in its name, as they were');
+    finally
+      Changed.Free;
+    end;
+    Current[3] := '/a=b/a.inc=00000000000000FF';
+    Changed := TSourceWatcher.ChangedFiles(Previous, Current);
+    try
+      ExpectEqual(Changed.CommaText, '/a=b/a.inc', 'the one of two files that differ in case that changed');
+    finally
+      Changed.Free;
+    end;
   finally
     Previous.Free;
     Current.Free;
   end;
+end;
+
+function Stamp(const APath: string; const ASize: Int64; const ATime: Int64): TFileStamp;
+begin
+  Result.Path := APath;
+  Result.Size := ASize;
+  Result.Time := ATime;
+end;
+
+procedure TestChangedStamps;
+var
+  Old, New: TFileStamps;
+  Changed: TStringList;
+begin
+  SetLength(Old, 4);
+  Old[0] := Stamp('/src/a.pas', 10, 100);
+  Old[1] := Stamp('/src/b.pas', 20, 100);
+  Old[2] := Stamp('/src/c.pas', 30, 100);
+  Old[3] := Stamp('/src/gone.pas', 40, 100);
+  SetLength(New, 4);
+  New[0] := Stamp('/src/a.pas', 10, 100);
+  New[1] := Stamp('/src/b.pas', 21, 100);
+  New[2] := Stamp('/src/c.pas', 30, 101);
+  New[3] := Stamp('/src/new.pas', 50, 101);
+  Changed := TSourceWatcher.ChangedStamps(Old, New);
+  try
+    ExpectEqual(Changed.CommaText, '/src/b.pas,/src/c.pas,/src/new.pas,/src/gone.pas',
+      'another size, another time, a new file and a file that is gone, but not a file as it was');
+  finally
+    Changed.Free;
+  end;
+  Changed := TSourceWatcher.ChangedStamps(New, New);
+  try
+    ExpectEqual(Changed.Count, 0, 'nothing changed');
+  finally
+    Changed.Free;
+  end;
+end;
+
+{ What a compile checks when it is done: whether the sources it started from changed
+  meanwhile. }
+procedure TestChangedSince;
+var
+  Root: string;
+  Watcher: TSourceWatcher;
+  Options, Digests, Changed: TStringList;
+  Stamps: TFileStamps;
+begin
+  Root := MakeTestDirectory('changed-since');
+  WriteTestFile(Root + 'main.pas', 'program Main;');
+  WriteTestFile(Root + 'u.pas', 'unit U; { one }');
+  Options := TStringList.Create;
+  Watcher := TSourceWatcher.Create(Root, Options);
+  try
+    Stamps := Watcher.Stamps;
+    Expect(Watcher.ReadDigests(Digests), 'digests of the sources');
+    try
+      Changed := Watcher.ChangedSince(Stamps, Digests);
+      try
+        ExpectEqual(Changed.Count, 0, 'sources as they were');
+      finally
+        Changed.Free;
+      end;
+      { the same size; the stamps taken after it stand for an edit within the same second }
+      WriteTestFile(Root + 'u.pas', 'unit U; { two }');
+      Stamps := Watcher.Stamps;
+      Changed := Watcher.ChangedSince(Stamps, Digests);
+      try
+        ExpectEqual(Changed.Count, 1, 'an edit that only the content shows');
+        if Changed.Count = 1 then
+          ExpectEqual(Changed[0], Root + 'u.pas', 'names the file');
+      finally
+        Changed.Free;
+      end;
+      Changed := Watcher.ChangedSince(Stamps, nil);
+      try
+        ExpectEqual(Changed.Count, 0, 'without digests only the sizes and times count');
+      finally
+        Changed.Free;
+      end;
+      WriteTestFile(Root + 'w.pas', 'unit W;');
+      DeleteFile(Root + 'u.pas');
+      Changed := Watcher.ChangedSince(Stamps, Digests);
+      try
+        ExpectEqual(Changed.Count, 2, 'a new file and a file that is gone');
+        if Changed.Count = 2 then
+        begin
+          ExpectEqual(Changed[0], Root + 'w.pas', 'the new file');
+          ExpectEqual(Changed[1], Root + 'u.pas', 'the file that is gone');
+        end;
+      finally
+        Changed.Free;
+      end;
+    finally
+      Digests.Free;
+    end;
+  finally
+    Watcher.Free;
+    Options.Free;
+  end;
+end;
+
+{ The sources of a program whose directory has = in its name, two of them differing only in
+  case where the file system keeps both: the watcher keeps each by its whole path, so it
+  sees them as they were and names the one that changed. }
+procedure TestWatchedPaths;
+var
+  Root, Contents: string;
+  Watcher: TSourceWatcher;
+  Options, Files, Digests, Changed: TStringList;
+  Stamps: TFileStamps;
+  BothCases: Boolean;
+begin
+  Root := MakeTestDirectory('watched-paths') + 'p=q' + PathDelim;
+  WriteTestFile(Root + 'main.pas', 'program Main;');
+  WriteTestFile(Root + 'u.pas', 'unit U;');
+  WriteTestFile(Root + 'A.inc', '{ upper }');
+  WriteTestFile(Root + 'a.inc', '{ lower }');
+  BothCases := ReadFileContents(Root + 'A.inc', Contents) and (Contents = '{ upper }');
+  Options := TStringList.Create;
+  Watcher := TSourceWatcher.Create(Root, Options);
+  try
+    Files := Watcher.Files;
+    try
+      if BothCases then
+      begin
+        ExpectEqual(Files.Count, 4, 'every file, also two whose names differ only in case');
+        Expect((Files.IndexOf(Root + 'A.inc') >= 0) and (Files.IndexOf(Root + 'a.inc') >= 0), 'both of them');
+      end
+      else
+        ExpectEqual(Files.Count, 3, 'every file');
+    finally
+      Files.Free;
+    end;
+    Stamps := Watcher.Stamps;
+    Expect(Watcher.ReadDigests(Digests), 'digests of the sources');
+    try
+      Changed := Watcher.ChangedSince(Stamps, Digests);
+      try
+        ExpectEqual(Changed.CommaText, '', 'the sources as they were, under a directory with = in its name');
+      finally
+        Changed.Free;
+      end;
+      if BothCases then
+      begin
+        { the same size; the stamps taken after it stand for an edit within the same tick }
+        WriteTestFile(Root + 'a.inc', '{ LOWER }');
+        Stamps := Watcher.Stamps;
+        Changed := Watcher.ChangedSince(Stamps, Digests);
+        try
+          ExpectEqual(Changed.CommaText, Root + 'a.inc', 'an edit of one of two files that differ in case names that one');
+        finally
+          Changed.Free;
+        end;
+      end;
+    finally
+      Digests.Free;
+    end;
+  finally
+    Watcher.Free;
+    Options.Free;
+  end;
+end;
+
+{ A save that writes a file and then puts its content back, within one second and at the
+  same size, as one during a compile may: the stamps show it, as file systems keep finer
+  times than seconds. Each write waits out the tick of the clock behind file times. }
+procedure TestStampsShowARevertedSave;
+var
+  Root: string;
+  Watcher: TSourceWatcher;
+  Options, Changed: TStringList;
+  Before: TFileStamps;
+begin
+  Root := MakeTestDirectory('reverted-save');
+  Options := TStringList.Create;
+  Watcher := TSourceWatcher.Create(Root, Options);
+  try
+    { early in a second, so that the writes below share it }
+    while Frac(NowSeconds) > 0.5 do
+      Sleep(10);
+    WriteTestFile(Root + 'u.pas', 'unit U; { one }');
+    Sleep(25);
+    Before := Watcher.Stamps;
+    Sleep(25);
+    WriteTestFile(Root + 'u.pas', 'unit U; { two }');
+    Sleep(25);
+    WriteTestFile(Root + 'u.pas', 'unit U; { one }');
+    Changed := TSourceWatcher.ChangedStamps(Before, Watcher.Stamps);
+    try
+      ExpectEqual(Changed.CommaText, Root + 'u.pas', 'a save put back within a second shows in the stamps');
+    finally
+      Changed.Free;
+    end;
+  finally
+    Watcher.Free;
+    Options.Free;
+  end;
+end;
+
+{ Whether the stamps can show a write after a moment: every file's time older than it by more
+  than a tick of the clock behind file times, or by two seconds when the time is in whole
+  seconds. }
+procedure TestTimesShowWrites;
+var
+  Stamps: TFileStamps;
+  At: Int64;
+begin
+  At := 1000 * Int64(StampUnitsPerSecond);
+  SetLength(Stamps, 2);
+  Stamps[0] := Stamp('/src/old.pas', 10, 900 * Int64(StampUnitsPerSecond) + 1);
+  Stamps[1] := Stamp('/src/new.pas', 10, At - Round(0.03 * StampUnitsPerSecond));
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'times older than a tick');
+  Stamps[1].Time := At - Round(0.01 * StampUnitsPerSecond);
+  Expect(not TSourceWatcher.TimesShowWrites(Stamps, At), 'not a time within a tick of the moment');
+  Stamps[1].Time := At + 1;
+  Expect(not TSourceWatcher.TimesShowWrites(Stamps, At), 'nor a time after it');
+  Stamps[1].Time := At - 3 * Int64(StampUnitsPerSecond);
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'a time in whole seconds older than two seconds');
+  Stamps[1].Time := At - Int64(StampUnitsPerSecond);
+  Expect(not TSourceWatcher.TimesShowWrites(Stamps, At), 'but not a time in whole seconds a second before');
+  Stamps[1] := Stamp('/src/gone.pas', -1, 0);
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'a missing file has no time to show');
+  SetLength(Stamps, 0);
+  Expect(TSourceWatcher.TimesShowWrites(Stamps, At), 'no files');
 end;
 
 function Absolute(const APath: string): string;
@@ -6318,6 +6934,8 @@ begin
     TestDefaults;
     TestValues;
     TestSettleFallback;
+    TestSettleWaitEnd;
+    TestSettlePause;
     TestCompilerOptionsAndProgramArguments;
     TestMissingValue;
     TestLastSourceWins;
@@ -6331,6 +6949,11 @@ begin
     TestContentDigest;
     TestSameStamps;
     TestChangedFiles;
+    TestChangedStamps;
+    TestChangedSince;
+    TestWatchedPaths;
+    TestStampsShowARevertedSave;
+    TestTimesShowWrites;
     TestOptionDirectories;
     TestResponseFile;
     TestWatchedFiles;

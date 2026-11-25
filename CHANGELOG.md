@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- hotfpc no longer crashes, or corrupts its memory, when a source file grows while it reads
+  it, as when a save or a generator writes the file during the twice-a-second look at the
+  contents. It read the file's size twice and could read more than it had room for.
+- A save whose sources change again while fpc compiles them is compiled again once they
+  settle, before hotfpc swaps, refuses or reports anything. fpc reads one file after the
+  other, so when an editor wrote the files of one save a few milliseconds apart, or the
+  next save came during the compile, hotfpc used to act on a mix of old and new files: it
+  could report errors or a needed restart for a state nobody saved, and then compile the
+  same save a second time. The same goes for a save's compile to assembler on Windows and
+  the link of a restart. A save that landed during the first build, after fpc had read the
+  file, used to be left out until the next save; it is now compiled as soon as the program
+  runs. After three such compiles, links or compiles to assembler in a row, hotfpc uses the
+  next one as it is, and it waits at most a second for the files to settle before a
+  compile, so a file that keeps changing can't hold back every save, nor keep hotfpc
+  running after the program has ended. On Windows a save whose sizes of variables with
+  initial values are checked then needs a restart, as its compile and its compile to
+  assembler may have read different sources. hotfpc reads the times of the sources as
+  finely as the file system keeps them, so a save that came and was put back during a
+  compile, at the same size and within the same second, shows too. On Windows such a save
+  needs a restart where the times can't show it, as on a file system that keeps whole
+  seconds, and hotfpc waits 22 ms for a save to settle instead of 4.
+- hotfpc keeps each source file by its whole path, with its case. In a directory whose
+  path has `=` in it, the files used to share one entry, so unchanged sources looked
+  changed after every compile: each save was compiled four times, and on Windows a save
+  whose sizes of variables with initial values are checked needed a restart. Two files
+  whose names differ only in case, such as `A.inc` and `a.inc` on a case-sensitive file
+  system, used to count as one, so hotfpc didn't watch one of them.
 - On Windows, a variable with an initial value in the program file that changes size
   (`Calls: Integer = 0` to `Int64 = 0`) now needs a restart, as on the other systems, and
   so does a typed constant declared in a routine, or with fpc 3.2 in a unit's
