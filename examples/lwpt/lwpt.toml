@@ -12,3 +12,9 @@ greeter = { source = "source/greeter.pas", output = "build/greeter" }
 [hot]
 command = "hotfpc"
 args = ["@lwpt.cfg", "source/greeter.pas"]
+
+# On Windows, `lwpt run hot-windows`: the installer's fpc builds 32-bit programs unless told
+# otherwise, and hotfpc needs a 64-bit one.
+[hot-windows]
+command = "hotfpc"
+args = ["-Twin64", "-Px86_64", "@lwpt.cfg", "source/greeter.pas"]

@@ -15,10 +15,21 @@ command = "hotfpc"
 args = ["@lwpt.cfg", "source/greeter.pas"]
 ```
 
-Then:
+On Windows, hotfpc needs a 64-bit program, and the installer's fpc builds 32-bit ones unless
+told otherwise ([Windows programs](windows.md)). `lwpt run` passes no arguments to a task,
+so give Windows a task of its own with fpc's target options:
+
+```toml
+[hot-windows]
+command = "hotfpc"
+args = ["-Twin64", "-Px86_64", "@lwpt.cfg", "source/greeter.pas"]
+```
+
+Then `lwpt install` writes `lwpt.cfg`, and `lwpt run hot` starts the program, or
+`lwpt run hot-windows` on Windows:
 
 ```sh
-lwpt install     # writes lwpt.cfg
+lwpt install
 lwpt run hot
 ```
 
