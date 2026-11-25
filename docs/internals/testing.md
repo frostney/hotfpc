@@ -55,7 +55,8 @@ end. The program prints a numbered tick every 0.3 s, with what the unit's code r
   restarts, against the case's expected numbers in `EXPECT` and `RESTARTS` (a tuple lists
   the numbers a case may give, where two saves may be compiled together);
 - a clean exit (code 0), and no step whose text didn't apply to the file;
-- no swap that prints the same note twice;
+- no swap that prints the same note twice, and for some cases notes every swap must print
+  (`NOTES`);
 - the ticks, each a line of the program's own: every number from 1 to the last is there,
   so the program's output has no gaps (a restart where none was expected shows in the
   count of restarts);

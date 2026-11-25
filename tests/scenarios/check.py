@@ -89,6 +89,8 @@ SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n
 # once after the swap's line, as its Tick ran the old code or had its result already
 UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
              for name in ("signature", "slowsave")}
+# case: notes every swap of the case gives: these change the main block
+NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")
 SAYS = {
     # the program starts with the units of the build it runs, without one a save left out
@@ -193,17 +195,20 @@ for name in names:
         stale.append(("", "no tick"))
     ok = ok and not stale
     # each note of a swap comes once, though fpc may give what it notes two names (the main
-    # block is PASCALMAIN and main); the program's lines may come between the notes
-    repeated, notes = [], set()
+    # block is PASCALMAIN and main); a swap's notes follow its line, and the program's lines,
+    # whatever they print, may come between them
+    swaps = []
     for line in body.splitlines():
+        if re.search(r"\[hot\] v\d+ swapped: ", line):
+            swaps.append([])
         note = re.search(r"\[hot\]   note: (.*)", line)
-        if note:
-            if note.group(1) in notes:
-                repeated.append(note.group(1))
-            notes.add(note.group(1))
-        elif "[hot]" in line:
-            notes = set()
+        if note and swaps:
+            swaps[-1].append(note.group(1))
+    repeated = [text for notes in swaps for text in sorted(set(notes)) if notes.count(text) > 1]
     ok = ok and not repeated
+    # and the notes every swap of the case must give
+    unnoted = [text for text in NOTES.get(name, []) if not swaps or any(text not in notes for notes in swaps)]
+    ok = ok and not unnoted
     loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
@@ -216,7 +221,8 @@ for name in names:
           + "".join("; a load took %s ms in the program" % x for x in slow)
           + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
                     for tick, text in stale[:1])
-          + "".join("; a swap noted %r twice" % text for text in repeated[:1]))
+          + "".join("; a swap noted %r twice" % text for text in repeated[:1])
+          + "".join("; a swap did not note %r" % text for text in unnoted[:1]))
     if not ok:
         failing.append((name, body))
 for name, body in failing:
