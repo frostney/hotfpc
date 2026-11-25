@@ -38,7 +38,7 @@ PRINTS = {
 }
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
-# so the two numbers stay equal
+# so every tick prints it and the two numbers stay equal
 COUNTERS = {"globals": "hidden", "hidden": "calls"}
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
@@ -86,8 +86,11 @@ for name in names:
     ok = ok and seq
     missing = [text for text in PRINTS.get(name, []) if not re.search(r"tick \d+: " + re.escape(text) + "$", body, re.M)]
     ok = ok and not missing
-    drift = [(tick, count) for tick, count in re.findall(r"tick (\d+): .*\b%s (\d+)" % COUNTERS[name], body)
-             if tick != count] if name in COUNTERS else []
+    drift = []
+    for tick, text in re.findall(r"tick (\d+): (.*)", body) if name in COUNTERS else []:
+        count = re.search(r"\b%s (\d+)" % COUNTERS[name], text)
+        if not count or count.group(1) != tick:
+            drift.append((tick, count and count.group(1)))
     ok = ok and not drift
     loads = [float(x) for x in re.findall(r"of which in the program (-?[\d.]+)\)", body)]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
@@ -95,7 +98,8 @@ for name in names:
     print("%-11s %s  exit %d, %d applied, %d refused, %d failed, %d unchanged, %d restarts; ticks 1..%d %s"
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
           + "".join("; never printed %r" % text for text in missing)
-          + "".join("; tick %s printed %s %s" % (tick, COUNTERS[name], count) for tick, count in drift[:1])
+          + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
+                    for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow))
     if not ok:
         failing.append((name, body))
