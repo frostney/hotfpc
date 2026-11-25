@@ -142,8 +142,9 @@ export default async function HomePage() {
         <h2 className="text-xl font-semibold mb-3 text-center">Install</h2>
         <div className={codeClass} dangerouslySetInnerHTML={{ __html: installHtml }} />
         <p className="mt-3 text-sm text-fd-muted-foreground text-center">
-          Homebrew covers macOS on Apple silicon and Linux on x86-64. Windows and the other
-          systems have release archives, and hotfpc builds from source with nothing but fpc.{' '}
+          Homebrew covers macOS on Apple silicon and Linux on x86-64. Which other systems
+          have a release archive, and from which release, is on the platforms page, and
+          hotfpc builds from source with nothing but fpc.{' '}
           <Link href="/docs/reference/platforms" className="underline">
             Platforms →
           </Link>
