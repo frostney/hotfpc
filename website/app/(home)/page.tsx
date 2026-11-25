@@ -116,12 +116,19 @@ export default async function HomePage() {
       </section>
 
       <section className="w-full max-w-4xl">
-        {/* eslint-disable-next-line @next/next/no-img-element -- a static export serves it as it is */}
-        <img
-          src={`${basePath}/docs-assets/raylib-demo.gif`}
-          alt="hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes each save without losing its balls"
-          className="w-full rounded-lg border"
-        />
+        {/* The raylib recording, docs/raylib-demo.mp4: it plays only when asked, with the
+            browser's own controls, so nothing moves beside the text on its own. A new
+            recording replaces that file and shows here as it is. */}
+        <video
+          controls
+          playsInline
+          preload="metadata"
+          aria-label="hotfpc running examples/raylib: scene.pas is edited in vim on the left, and the game on the right takes each save without losing its balls"
+          className="w-full h-auto rounded-lg border"
+        >
+          <source src={`${basePath}/docs-assets/raylib-demo.mp4`} type="video/mp4" />
+          <a href={`${basePath}/docs-assets/raylib-demo.mp4`}>The recording of the raylib example</a>
+        </video>
         <p className="mt-3 text-sm text-fd-muted-foreground text-center">
           A real run of the raylib example on macOS: four saves to{' '}
           <code>scene.pas</code>, each swapped into the running game in about 100 ms.{' '}
