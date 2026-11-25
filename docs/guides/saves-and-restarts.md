@@ -100,11 +100,14 @@ end hotfpc, which ends with the program's exit code.
 - **A save to a file hotfpc doesn't watch.** Nothing happens. See
   [Your own program](your-program.md#what-hotfpc-watches).
 
-Several saves in quick succession can be compiled together: what you see is always the
-newest text. A save that lands while fpc is compiling, such as the second file of a "save
-all" or the next save, makes hotfpc set that compile aside and compile again once the files
-settle, so it never swaps or reports a mix of old and new files. A file that keeps changing
-faster than fpc compiles holds a save back for three compiles at most, and hotfpc waits a
-second at most for the files to settle before each: the fourth is used as it is, except
-that on Windows a save whose variables with initial values hotfpc checks needs a restart
-then ([how it works](../internals/how-it-works.md#one-save)).
+Several saves in quick succession can be compiled together, and hotfpc acts on the newest
+text. A save that lands while fpc is compiling, such as the second file of a "save all" or
+the next save, makes hotfpc set that compile aside and compile again once the files settle,
+so it doesn't swap or report a mix of old and new files. That holds for three compiles in a
+row, and hotfpc waits a second at most for the files to settle before each. A file that
+keeps changing faster than fpc compiles, such as one a generator keeps rewriting, can't hold
+a save back longer: the fourth compile is used as it is, even when a file changed while fpc
+read it, so what it swaps or reports can mix old and new text. On Windows, a save whose
+variables with initial values hotfpc checks needs a restart then instead. Save again once
+the files have stopped changing
+([how it works](../internals/how-it-works.md#one-save)).
