@@ -17,6 +17,8 @@ unit HotFPC.Agent;
     * a function keeps its first address as its value (@Proc, VMT slots, method
       pointers); that entry is overwritten once with a branch to an island that jumps
       through a slot, and a reload stores the newest address in the slot;
+    * a routine nested in another keeps its old code at its first entry, for the frames
+      of its parent that still run the old code; new code calls its new version;
     * a VMT keeps its address and is updated in place when its shape is unchanged;
     * nothing is ever unmapped.
 
@@ -3306,9 +3308,7 @@ begin
     Symbol := @AObjectFile^.Symbols[I];
     if not Symbol^.Defined or (Symbol^.Kind = 0) then Continue;
     NewAddress := PlacedAddress(AObjectFile, Symbol);
-    // A nested routine binds like a local one: new code calls its new version, and its old
-    // entry stays with the old code for a frame of its parent that still runs that code.
-    if not Symbol^.External or ((Symbol^.Kind = KindCode) and IsNestedRoutineName(Symbol^.Name)) then
+    if not Symbol^.External then
     begin
       Symbol^.ResolvedAddress := NewAddress;
       Symbol^.CallAddress := NewAddress;
@@ -3317,6 +3317,21 @@ begin
     end;
     PreviousSymbol := nil;
     if Previous <> nil then PreviousSymbol := MapGet(Previous^.ByName, Symbol^.Name);
+    // A nested routine binds like a local one: new code calls its new version, and its old
+    // entry stays with the old code for a frame of its parent that still runs that code. It
+    // is one of the unit's functions all the same, changed or new.
+    if (Symbol^.Kind = KindCode) and IsNestedRoutineName(Symbol^.Name) then
+    begin
+      Symbol^.ResolvedAddress := NewAddress;
+      Symbol^.CallAddress := NewAddress;
+      Symbol^.Resolved := True;
+      if PreviousSymbol = nil then
+      begin
+        if Previous <> nil then Inc(ACounts.Added);
+      end
+      else if SymbolDigest(AObjectFile, Symbol, 0) <> SymbolDigest(Previous, PreviousSymbol, 0) then Inc(ACounts.Changed);
+      Continue;
+    end;
     if Symbol^.Kind = KindTLS then
     begin
       // The system lays out every thread's copy when the thread starts: a thread variable

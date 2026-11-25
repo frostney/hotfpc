@@ -54,7 +54,7 @@ v<N> swapped: <units>: <n> functions redirected (<n> with other code, <n> new), 
 | Part | Meaning |
 | --- | --- |
 | `<units>` | The units whose object files changed. The program file is named after its source file, such as `demo` for `demo.pas`. A changed include file can change several. |
-| functions redirected | The program's functions that now jump to their new code. |
+| functions redirected | The program's functions that now jump to their new code. A routine nested in another isn't one: its old code stays for its parent's running frames. |
 | with other code | Of the unit's functions, those whose code differs from the running version. |
 | new | Functions the running version didn't have. |
 | variables and tables kept | Variables, virtual method tables and type information the new code shares with the program: they keep their addresses and values. |

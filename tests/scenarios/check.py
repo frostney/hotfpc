@@ -99,9 +99,11 @@ UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n *
 # and new
 SWAPPED["procvars"] = lambda n: "PLAIN V2 %d, METHOD V2 %d, HIDDEN V4 %d, same address: TRUE TRUE" % (n, n, n)
 UNSWAPPED["procvars"] = lambda n: re.compile(r"PLAIN V2 %d, METHOD V2 %d, HIDDEN V[34] %d, same address: TRUE (TRUE|FALSE)" % (n, n, n))
-# nestedframe: the frame of Run that runs across the swap keeps calling the old Show, with
-# Run's values; the new Show would read Run's old frame with the new layout
-SWAPPED["nestedframe"] = UNSWAPPED["nestedframe"] = lambda n: "base 42 v1"
+# nestedframe: the frame of Run that runs across the swap calls the old Show once more, with
+# Run's values (the new Show would read that frame with the new layout), and the fresh frames
+# of the new Run after it call the new Show
+SWAPPED["nestedframe"] = lambda n: "base 42 v2"
+UNSWAPPED["nestedframe"] = lambda n: "base 42 v1"
 # case: notes every swap of the case gives: these change the main block
 NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")

@@ -138,20 +138,21 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    Type information that nothing uses is never read, because it may refer to things the
    program doesn't have. Then the agent binds every name:
    - A variable the program already has keeps its address and its value.
-   - A function keeps its first address, which gets a jump to the new code. That keeps
-     `@Proc`, method pointers and virtual method tables valid. The jump must end before
-     the next symbol or the end of the section, or it would break the routine after it:
-     when an entry has less room, the save needs a restart. On x86-64 it must not replace
-     a call either: a thread waiting in the routine it called would return into the middle
-     of the jump, whether or not the agent can stop that thread and see where it is. Any
-     bytes there that could be such a call make the save need a restart. Nor may a thread
-     be about to resume inside those bytes: a signal handler, or on Windows an exception
-     handler, keeps where the thread it interrupted resumes in its frame, on the thread's
-     stack. With the threads stopped, the agent reads each one's stack, from its stack
-     pointer to the end of the memory that holds it, for a word that is an address within
-     the bytes a jump replaces. While there is one, it lets the threads run and tries
-     again, as it does for a thread stopped inside them; when one stays, the save needs a
-     restart. A value that only looks like such an address counts too.
+   - A function keeps its first address, which gets a jump to the new code (a nested
+     routine is the exception, below). That keeps `@Proc`, method pointers and virtual
+     method tables valid. The jump must end before the next symbol or the end of the
+     section, or it would break the routine after it: when an entry has less room, the save
+     needs a restart. On x86-64 it must not replace a call either: a thread waiting in the
+     routine it called would return into the middle of the jump, whether or not the agent
+     can stop that thread and see where it is. Any bytes there that could be such a call
+     make the save need a restart. Nor may a thread be about to resume inside those bytes:
+     a signal handler, or on Windows an exception handler, keeps where the thread it
+     interrupted resumes in its frame, on the thread's stack. With the threads stopped, the
+     agent reads each one's stack, from its stack pointer to the end of the memory that
+     holds it, for a word that is an address within the bytes a jump replaces. While there
+     is one, it lets the threads run and tries again, as it does for a thread stopped
+     inside them; when one stays, the save needs a restart. A value that only looks like
+     such an address counts too.
    - A routine nested in another keeps its old code at its first address, and new code
      calls its new version. A nested routine reads and writes its parent's locals in the
      parent's frame, so a frame of the parent that still runs the old code needs the old

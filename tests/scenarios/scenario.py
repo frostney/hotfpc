@@ -608,44 +608,52 @@ end.
 # ---------------------------------------------------------------------------- a nested routine of a running frame
 # Run's frame runs across the swap, and calls its nested Show, which reads Run's locals. The
 # save puts locals around them, so the new Show would read the old frame in the wrong
-# places: the old frame must keep the old Show. The main block keeps running too, and ends
-# with the old frame's finally after the swap.
+# places: the old frame must keep the old Show. The save also gives Done the initial value
+# True, which the swap applies, so the old frame shows once more and returns; the main block
+# then calls the new Run, whose fresh frame calls the new Show. The main block keeps running
+# across the swap too, and ends with its old frame's finally.
 case("nestedframe", {
     "main.pas": r"""program main;
 {$mode objfpc}{$H+}
 uses SysUtils, u;
 begin
-  Run(StrToInt(ParamStr(1)), ParamStr(2));
+  while (Ticks < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do Run(ParamStr(2));
 end.
 """,
     "u.pas": r"""unit u;
 {$mode objfpc}{$H+}
 interface
-procedure Run(AMax: Integer; const AStop: string);
+var
+  Ticks: Integer;
+procedure Run(const AStop: string);
 implementation
 uses SysUtils;
-procedure Run(AMax: Integer; const AStop: string);
 var
-  Count, Base: Integer;
+  Done: Boolean = False;
+procedure Run(const AStop: string);
+var
+  Base: Integer;
   Text: string;
   procedure Show;
   begin
-    WriteLn('tick ', Count, ': ', Text, ' ', Base, ' v1');
+    WriteLn('tick ', Ticks, ': ', Text, ' ', Base, ' v1');
     Flush(Output);
   end;
 begin
-  Count := 0; Base := 42; Text := 'base';
-  while (Count < AMax) and not FileExists(AStop) do
+  Base := 42; Text := 'base';
+  while not Done and not FileExists(AStop) do
   begin
-    Inc(Count); Show; Sleep(300);
+    Inc(Ticks); Sleep(300); Show;
   end;
 end;
 end.
 """}, [
-    ("locals before and after Run's, another text for Show, and managed temporaries in the main block, while both frames keep running",
-     [("u.pas", "var\n  Count, Base: Integer;\n  Text: string;", "var\n  Before: array[0..31] of Integer;\n  Count, Base: Integer;\n  Text: string;\n  After: array[0..31] of Integer;"),
+    ("locals around Run's, another text for Show, Done becomes True, and managed temporaries in the main block, while Run's frame and the main block keep running",
+     [("u.pas", "var\n  Base: Integer;\n  Text: string;", "var\n  Before: array[0..31] of Integer;\n  Base: Integer;\n  Text: string;\n  After: array[0..31] of Integer;"),
       ("u.pas", "' v1'", "' v2'"),
-      ("main.pas", "begin\n  Run(", "begin\n  if ParamStr(3) <> '' then WriteLn('more ' + IntToStr(Length(ParamStr(0))) + ' ' + ParamStr(1) + ' ' + ParamStr(2));\n  Run(")]),
+      ("u.pas", "Done: Boolean = False;", "Done: Boolean = True;"),
+      ("u.pas", "while not Done and not FileExists(AStop) do\n  begin\n    Inc(Ticks); Sleep(300); Show;", "while not FileExists(AStop) do\n  begin\n    Inc(Ticks); Sleep(300); if Done then Show;"),
+      ("main.pas", "begin\n  while", "begin\n  if ParamStr(3) <> '' then WriteLn('more ' + IntToStr(Length(ParamStr(0))) + ' ' + ParamStr(1) + ' ' + ParamStr(2));\n  while")]),
 ])
 
 # ---------------------------------------------------------------------------- records

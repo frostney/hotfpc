@@ -30,7 +30,10 @@ A swap changes code, not state:
   section alike. New code reads and writes the same variables the old code did.
 - **Routines keep their addresses.** The old entry of each changed routine jumps to the new
   code, so procedure variables, method pointers, `@Proc` values and virtual method tables
-  taken before the swap call the new code.
+  taken before the swap call the new code. A routine nested in another is the exception:
+  it works in its parent's frame, so its old entry keeps the old code for the frames of
+  its parent that were running at the swap, and a nested procedure variable made in such
+  a frame calls the old code. The next call of the parent runs the new nested routine.
 - **Objects stay valid.** An object that old code made works with new code: its class and
   virtual method table are the same ones, updated in place.
 - **Constants and literals are new.** The new code uses its own, so a changed `const`
