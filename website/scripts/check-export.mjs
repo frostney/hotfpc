@@ -79,11 +79,14 @@ function markdownFiles(dir) {
 }
 
 const parser = unified().use(remarkParse).use(remarkGfm);
+// the suffix fumadocs-core's remark-heading reads as a custom id: a non-empty id after `[#`
+// and up to the last `]`, so `[#]` is plain text and `[#a]b]` is the id `a]b`
+const suffix = /\s*\[#[^]+?]\s*$/;
 const copies = [...markdownFiles(join(out, 'llms.mdx')), join(out, 'llms-full.txt')];
 for (const file of copies) {
   visit(parser.parse(readFileSync(file, 'utf8')), 'heading', (heading) => {
     const last = heading.children.at(-1);
-    if (last?.type === 'text' && /\[#[^\]]*\]\s*$/.test(last.value)) {
+    if (last?.type === 'text' && suffix.test(last.value)) {
       problems.push(`${file.slice(out.length + 1)}:${heading.position.start.line}: heading ends with an [#id] suffix: ${last.value.trim()}`);
     }
   });
