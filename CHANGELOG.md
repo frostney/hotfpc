@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- On macOS, a variable that grows within the padding before the next one now needs a
+  restart, as on the other systems: `Small: Word` before an `Int64` saved as `LongInt`, in
+  the program file, or in a unit while the check of layouts is off, also when a save removed
+  the variable and a later one brings it back larger. A Mach-O object states no symbol
+  sizes, and the agent took a variable's size from the distance to the next symbol, 8 bytes
+  before and after, so it swapped the new code in on the old storage. hotfpc now has fpc keep
+  the assembler it assembles each object from (`-a`, `<unit>.s` beside `<unit>.o`), and the
+  agent reads each variable's size there. A variable whose size it can't read there needs a
+  restart: `the size of variable <name> is unknown: ...`
+  ([#43](https://github.com/frostney/hotfpc/issues/43)).
+- A variable added or removed next to another no longer needs a restart on macOS and Linux
+  arm64. The agent restarted when the distance from a variable to the next symbol changed
+  (`variable MAIN.FLAG changed size from 8 to 1 bytes`) although its size didn't. The size
+  a datum states, in the ELF symbol or in fpc's assembler on macOS, now decides, and such a
+  swap no longer notes that the variable changed
+  ([#43](https://github.com/frostney/hotfpc/issues/43)).
+
 ## 1.2.0
 
 - A variable that a save removes and a later save brings back now gets the same checks as a

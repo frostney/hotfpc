@@ -142,7 +142,11 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    - A variable the program already has keeps its address and its value. So does one that
      a save removed, a thread variable too: the agent keeps the size of each datum the
      version it replaces had and the new one doesn't, and a save that brings it back at
-     another size needs a restart.
+     another size needs a restart. A datum's size is the one stated for it where both
+     versions state one: an ELF symbol does, and on macOS fpc's assembler does (see [Per
+     system](#per-system)). Then a variable added or removed next to it, which changes the
+     padding after it, changes nothing. Otherwise the size is the distance to the next
+     symbol or the section's end, padding included.
    - A function keeps its first address, which gets a jump to the new code (a nested
      routine is the exception, below). That keeps `@Proc`, method pointers and virtual
      method tables valid. The jump must end before the next symbol or the end of the
@@ -207,7 +211,15 @@ after its agent connected, and the first program in every case, end hotfpc.
 
 ## Per system
 
-- **macOS.** The agent stops the other threads with `thread_suspend`. A thread that runs
+- **macOS.** A Mach-O symbol has no size, and the distance to the next symbol counts the
+  padding before it: a `Word` before an `Int64` spans 8 bytes, and so does the `LongInt` it
+  becomes. fpc assembles every object for macOS with the system's assembler, from assembler
+  it writes first. hotfpc passes `-a`, so fpc keeps that file beside each object
+  (`.hot/units/<unit>.s`), and hands it to the agent with the object. The agent counts each
+  datum's bytes there: the data its label lists, up to the next label, alignment or section,
+  or the size that `.lcomm` or `.zerofill` names. A variable whose size it can't count there
+  needs a restart. That costs no compile: fpc writes the file for every object anyway.
+- **macOS, threads.** The agent stops the other threads with `thread_suspend`. A thread that runs
   until it's suspended can start another after the agent listed them, so the agent lists
   the threads again until a list has none it hasn't suspended. A thread that ended after
   the list was taken is left out. When a thread can't be suspended for another reason, or

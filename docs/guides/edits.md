@@ -4,7 +4,7 @@ Every kind of edit hotfpc has a test for, and what it does. Each row is a step o
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
 small program that runs while the test saves the edit into it, run by CI on pull requests
 and on pushes to main. The
-outcomes are from runs of all 42 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-26, and they are what `check.py` expects on macOS and Linux. Where a Windows
+outcomes are from runs of all 44 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-26, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.
 
 In a swap, the program keeps running with its state; in a restart, hotfpc starts it over
@@ -53,6 +53,12 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | A later save adds both back as `Single`, the same size | restart: `u.Hits: the declaration changed its layout or type`, and the same for `u.Calls` | `readdtype` |
 | Then both as `Integer`, their first type | swap, with the note `U.HITS is back after a save removed it; it keeps its running value`, and the same for `U.CALLS` | `readdtype` |
 | A typed constant in a routine, `Calls: Integer = 0`, becomes `Int64 = 0` | restart: `variable U.TICK(LONGINT):ANSISTRING.CALLS changed size from 4 to 8 bytes` | `localconst` |
+| `Small: Word = 1` in the program file, before `Big: Int64 = 2`, becomes `LongInt = 1`: it grows within the padding before `Big` | restart: `variable MAIN.SMALL changed size from 2 to 4 bytes` | `padvar` |
+| Then `Small` is a `Word` again, and `Flag: Byte`, before `Wide: Int64`, becomes `Word` | restart: `variable MAIN.FLAG changed size from 1 to 2 bytes` | `padvar` |
+| Then `Flag` is a `Byte` again, with a new `Flag2: Byte` after it | swap | `padvar` |
+| A save removes `Small` and its uses | swap | `padvar` |
+| A later save brings `Small` back as `LongInt = 1`, with its uses | restart: `variable MAIN.SMALL changed size from 2 to 4 bytes` | `padvar` |
+| The first three of those saves in a unit's implementation section, without the check of layouts (`--ppudump` names a ppudump that doesn't exist) | restart, restart and swap: `variable U.SMALL changed size from 2 to 4 bytes`, then `variable U.FLAG changed size from 1 to 2 bytes` | `padunit` |
 
 The program's variables keep their values through every swap: the scenarios `globals` and
 `hidden` check that a counter in a unit's implementation section keeps counting.
