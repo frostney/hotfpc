@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.2.1
 
-- A variable of a unit's interface that only other units' code uses now needs a restart
-  when it changes its type at the same size (`Integer` to `Single`), on every system while
-  the check of layouts is on (a ppudump that reads the units), and on
-  Windows when it grows within its padding (`Word = 1` to `LongInt = 1` before an `Int64`).
+- A variable of a unit's interface that only code outside the unit uses, such as the
+  program's, now needs a restart when it changes its type at the same size (`Integer` to
+  `Single`), on every system while the check of layouts is on (a ppudump that reads the
+  units), and on Windows when it grows within its padding (`Word = 1` to `LongInt = 1`
+  before an `Int64`).
   The unit's object file came out the same, and the driver checked layouts, and on Windows
   sizes, only for units whose object file changed, so the program's recompiled code was
   swapped in on the variable's old storage and read it as the new type. Every unit fpc
@@ -22,8 +23,8 @@
   before and after, so it swapped the new code in on the old storage. hotfpc now has fpc keep
   the assembler it assembles each object from (`-a`, `<unit>.s` beside `<unit>.o`), and the
   agent reads each variable's size there. A variable the new code would share with the
-  program, whose size it can't read there for either version, needs a restart: `the size of
-  variable <name> is unknown: ...`
+  program needs a restart when its size can't be read there for the version the program
+  runs, the new one or both: `the size of variable <name> is unknown: ...`
   ([#43](https://github.com/frostney/hotfpc/issues/43)).
 - A variable added or removed next to another no longer needs a restart on macOS and Linux
   arm64. The agent restarted when the distance from a variable to the next symbol changed
