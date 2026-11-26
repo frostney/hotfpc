@@ -4,7 +4,7 @@ Every kind of edit hotfpc has a test for, and what it does. Each row is a step o
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
 small program that runs while the test saves the edit into it, run by CI on pull requests
 and on pushes to main. The
-outcomes are from runs of all 44 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-26, and they are what `check.py` expects on macOS and Linux. Where a Windows
+outcomes are from runs of all 47 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-26, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.
 
 In a swap, the program keeps running with its state; in a restart, hotfpc starts it over
@@ -59,7 +59,14 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | A save removes `Small` and its uses | swap | `padvar` |
 | A later save brings `Small` back as `LongInt = 1`, with its uses | restart: `variable MAIN.SMALL changed size from 2 to 4 bytes` | `padvar` |
 | The first three of those saves in a unit's implementation section, without the check of layouts (`--ppudump` names a ppudump that doesn't exist) | restart, restart and swap: `variable U.SMALL changed size from 2 to 4 bytes`, then `variable U.FLAG changed size from 1 to 2 bytes` | `padunit` |
-| Then `Shared: Word = 1` in the unit's interface, before `SharedNext: Int64`, which only the program's code uses, becomes `LongInt = 1`: on macOS the unit's object file comes out the same | restart: `variable U.SHARED changed size from 2 to 4 bytes`; on Windows, swap, as the unit's COFF object comes out the same too ([#45](https://github.com/frostney/hotfpc/issues/45)) | `padunit` |
+| Then `Shared: Word = 1` in the unit's interface, before `SharedNext: Int64`, which only the program's code uses, becomes `LongInt = 1`: on macOS the unit's object file comes out the same | restart: `variable U.SHARED changed size from 2 to 4 bytes`, also on Windows, where the unit's COFF object comes out the same too | `padunit` |
+| `Shared: Integer` in a unit's interface, which only the program's code uses, becomes `Single`, the same size: the unit's object file comes out the same | restart: `u.Shared: the declaration changed its layout or type`, with a ppudump that reads the units; without one, swap | `sharedtype` |
+| `Shared: Integer` in a unit that only another unit's code reads becomes `Single`, with an error in the program | the compile fails | `dropunit` |
+| Then the error is gone, and the unit that read `Shared` no longer uses the first one | swap: the first unit's unit file from the failed compile is gone | `dropunit` |
+| Then it reads `Shared` again, now a `Single` | restart: `u.Shared: the declaration changed its layout or type` | `dropunit` |
+| Then it no longer uses the first unit again | swap: the refused unit file is gone too | `dropunit` |
+| A comment in a unit with a variable with an initial value | not swapped: `the generated code is the same` | `recheck` |
+| Then another text in another unit, which has no variable with an initial value, while fpc can't write the program's assembler | swap: the unit with the comment isn't checked again, also on Windows | `recheck` |
 
 The program's variables keep their values through every swap: the scenarios `globals` and
 `hidden` check that a counter in a unit's implementation section keeps counting.

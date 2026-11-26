@@ -1365,6 +1365,151 @@ case("padunit", {
      [("u.pas", "  Shared: Word = 1;", "  Shared: LongInt = 1;")]),
 ], opts=("--ppudump", "no-such-ppudump"))
 
+# ---------------------------------------------------------------------------- a unit's variable only the program uses changes type
+# Shared, in the interface of u, changes its type but not its size, and only the program's code
+# uses it: u's object file comes out the same, and only its unit file shows the change, to
+# the check of layouts
+# the program prints Shared through an Extended, so that both types call the same FloatToStr:
+# fpc's Windows linker leaves out the Single one the running program never called
+SHAREDTYPE_MAIN = PADUNIT_MAIN.replace("function Line(n: Integer): string;\nbegin",
+    "function Line(n: Integer): string;\nvar\n  Value: Extended;\nbegin").replace(
+    "Inc(Shared);", "Shared := Shared + 1;\n  Value := Shared;").replace(
+    "Format(' shared %d', [Shared])", "' shared ' + FloatToStr(Value)")
+
+case("sharedtype", {
+    "main.pas": SHAREDTYPE_MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+var
+  Shared: Integer;
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+function Tick(n: Integer): string;
+begin
+  Result := Format('one %d', [n]);
+end;
+end.
+"""}, [
+    ("Shared: Integer becomes Shared: Single", [("u.pas", "  Shared: Integer;", "  Shared: Single;")]),
+])
+
+# ---------------------------------------------------------------------------- unit files nothing accepted, then a unit the program drops
+# v reads Shared of u. A save changes Shared's type with an error in the program, so fpc
+# writes u's unit file and fails. The next save fixes the error, and v no longer uses u: fpc
+# no longer compiles u, its unit file from the failed compile is gone, and the save swaps.
+# Then v uses u again: fpc compiles u again, and the check of layouts refuses, as in
+# sharedtype. And once v no longer uses u, that refused unit file is gone too
+DROPUNIT_MAIN = r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, v;
+var
+  Count: Integer = 0;
+begin
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Line(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+"""
+
+case("dropunit", {
+    "main.pas": DROPUNIT_MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+var
+  Shared: Integer;
+implementation
+end.
+""",
+    "v.pas": r"""unit v;
+{$mode objfpc}{$H+}
+interface
+function Line(n: Integer): string;
+implementation
+uses SysUtils, u;
+function Line(n: Integer): string;
+var
+  Value: Extended;
+begin
+  Shared := Shared + 1;
+  Value := Shared;
+  Result := 'one ' + FloatToStr(Value);
+end;
+end.
+"""}, [
+    ("Shared: Integer in u, which v reads, becomes Shared: Single, with an error in the program",
+     [("u.pas", "  Shared: Integer;", "  Shared: Single;"), ("main.pas", "    Inc(Count);\n", "    Inc(Count);\n    NoSuchRoutine;\n")]),
+    ("the error is gone, and v no longer uses u, with another text",
+     [("main.pas", "    NoSuchRoutine;\n", ""), ("v.pas", "uses SysUtils, u;", "uses SysUtils;"),
+      ("v.pas", "  Shared := Shared + 1;\n  Value := Shared;\n", "  Value := n;\n"), ("v.pas", "'one '", "'two '")]),
+    ("v reads Shared of u again, now a Single, with another text",
+     [("v.pas", "uses SysUtils;", "uses SysUtils, u;"), ("v.pas", "  Value := n;\n", "  Shared := Shared + 1;\n  Value := Shared;\n"),
+      ("v.pas", "'two '", "'three '")]),
+    ("v no longer uses u, with another text",
+     [("v.pas", "uses SysUtils, u;", "uses SysUtils;"), ("v.pas", "  Shared := Shared + 1;\n  Value := Shared;\n", "  Value := n;\n"),
+      ("v.pas", "'three '", "'four '")]),
+])
+
+# ---------------------------------------------------------------------------- a unit checked once after a save that changes no code
+# A comment in u, which has a variable with an initial value: fpc compiles u again, and its
+# object file comes out the same, so the save changes no code, and u's new unit file becomes
+# the running program's. The next save changes only v, which has none, while fpc can't write
+# the program's assembler: u isn't checked again, so on Windows that save needs no compile to
+# assembler, and is swapped
+RECHECK_MAIN = r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u, v;
+var
+  Count: Integer = 0;
+begin
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Tick(Count), ' ', Note(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+"""
+
+case("recheck", {
+    "main.pas": RECHECK_MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+var
+  Speed: Integer = 5;
+function Tick(n: Integer): string;
+begin
+  Result := Format('one %d', [Speed]);
+end;
+end.
+""",
+    "v.pas": r"""unit v;
+{$mode objfpc}{$H+}
+interface
+function Note(n: Integer): string;
+implementation
+function Note(n: Integer): string;
+begin
+  Result := 'v one';
+end;
+end.
+"""}, [
+    ("a comment in u, which has a variable with an initial value", [("u.pas", "implementation\n", "implementation\n{ a comment }\n")]),
+    ("another text in v, which has none, while fpc cannot write the program's assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("v.pas", "'v one'", "'v two'")]),
+])
+
 # ---------------------------------------------------------------------------- restarts
 # One unit whose text and call count the program prints. A restart starts the count over.
 # Calls has no initial value: with fpc 3.2.2 on Linux and Windows, a variable with one that

@@ -11,11 +11,11 @@ which way and what happens to the program's state. The exact lines are in
 flowchart TD
     save[You save a file] --> compile[fpc compiles the changed units]
     compile -->|errors| error["error: ... (nothing changed)"]
-    compile --> same{Code changed?}
-    same -->|no| notswapped["not swapped"]
-    same -->|yes| check{Does the running state still fit?}
-    check -->|yes| swap["vN swapped: the new code runs, the state stays"]
+    compile --> check{Does the running state still fit?}
     check -->|no| needed["restart needed: names the declaration"]
+    check -->|yes| same{Code changed?}
+    same -->|no| notswapped["not swapped"]
+    same -->|yes| swap["vN swapped: the new code runs, the state stays"]
     needed -->|"with --no-restart"| old[The program keeps its old code]
     needed --> link[fpc links the program again]
     link -->|link fails| linkerror["error: ... the program keeps running"]

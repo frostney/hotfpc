@@ -49,6 +49,15 @@ EXPECT = {
     # the check of layouts, and a variable of its interface that only the program uses, whose
     # unit's Mach-O object comes out the same
     "padvar": (2, 3, 0), "padunit": (1, 3, 0),
+    # a variable of a unit's interface that only the program uses changes its type, not its
+    # size: the unit's object file is the same, and its unit file shows the change
+    "sharedtype": (0, 1, 0),
+    # a save that changes no code, and one after it while fpc cannot write the program's
+    # assembler, which a unit checked before doesn't need: swapped
+    "recheck": (1, 0, 0),
+    # a type change in a unit only another unit reads: a failed compile, then a swap once that
+    # unit no longer uses it, a refusal when it reads it again, and a swap once it doesn't
+    "dropunit": (2, 1, 1),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -72,6 +81,9 @@ EXPECT = {
     # restart again
     "newconst": (0, 2, 0),
 }
+# case: saves that change no code ("not swapped"); every other case expects none. recheck: a
+# comment in a unit with a variable with an initial value
+UNCHANGED = {"recheck": 1}
 # case: restarts; every other case passes --no-restart and expects none
 RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1,
             "sighandler": 1, "sigmasked": 1, "newconst": 2}
@@ -102,6 +114,8 @@ PRINTS = {
     "readdvar": [re.compile(r"n \d+ main two")], "readdtype": ["two"],
     # the new Flag2 is swapped in, and so is the save that removes Small
     "padvar": [re.compile(r"n \d+ main two \d+ 2 \d+ \d+"), re.compile(r"n \d+ main three 2 \d+ \d+")],
+    "recheck": ["one 5 v two"],
+    "dropunit": [re.compile(r"two \d+"), re.compile(r"four \d+")],
     "padunit": [re.compile(r"two \d+ 2 \d+ \d+ shared \d+")],
     "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
@@ -141,6 +155,8 @@ SAYS = {
     "padvar": [r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
                r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
                r"restart needed: variable MAIN\.FLAG changed size from 1 to 2 bytes"],
+    "sharedtype": [r"restart needed: u\.Shared: the declaration changed its layout or type"],
+    "dropunit": [r"restart needed: u\.Shared: the declaration changed its layout or type"],
     "padunit": [r"restart needed: variable U\.SMALL changed size from 2 to 4 bytes",
                 r"restart needed: variable U\.FLAG changed size from 1 to 2 bytes",
                 r"restart needed: variable U\.SHARED changed size from 2 to 4 bytes"],
@@ -188,11 +204,6 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # type, and the check of layouts finds it first), unknown after the sources kept changing
     # during the builds at the start (startcap), and unknown when fpc wrote no assembler for
     # the build the program started from, with the check still on (startnoasm)
-    # padunit's last save, Shared growing within its padding in a unit only the program's code
-    # uses it from, is swapped on Windows: the unit's COFF object comes out the same, so
-    # nothing checks the unit (#45)
-    EXPECT["padunit"] = (2, 2, 0)
-    SAYS["padunit"] = SAYS["padunit"][:2]
     SAYS["startblock"] = [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes"]
     SAYS["newconst"] = [r"restart needed: (variable W\.LIMIT changed size from 4 to 8 bytes|w\.Limit: the declaration changed its layout or type)"]
     SAYS["startcap"] = [r"restart needed: the sizes of variables with initial values are unknown: the sources changed while fpc compiled them"]
@@ -243,7 +254,7 @@ for name in names:
     # during it, so none finds the same code ("not swapped")
     # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
     # gave no outcome for
-    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and not any(line.startswith("!!! ") for line in lines)
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == UNCHANGED.get(name, 0) and restarts == RESTARTS.get(name, 0) and not any(line.startswith("!!! ") for line in lines)
     # the program's tick records: the same records count toward continuity and carry the
     # counters
     def tick_records(lines):
