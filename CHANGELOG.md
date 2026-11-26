@@ -2,10 +2,11 @@
 
 ## 1.2.1
 
-- A variable of a unit's interface that only other units' code uses now needs a restart
-  when it changes its type at the same size (`Integer` to `Single`), on every system while
-  the check of layouts is on (a ppudump that reads the units), and on
-  Windows when it grows within its padding (`Word = 1` to `LongInt = 1` before an `Int64`).
+- A variable of a unit's interface that only code outside the unit uses, such as the
+  program's, now needs a restart when it changes its type at the same size (`Integer` to
+  `Single`), on every system while the check of layouts is on (a ppudump that reads the
+  units), and on Windows when it grows within its padding (`Word = 1` to `LongInt = 1`
+  before an `Int64`).
   The unit's object file came out the same, and the driver checked layouts, and on Windows
   sizes, only for units whose object file changed, so the program's recompiled code was
   swapped in on the variable's old storage and read it as the new type. Every unit fpc
