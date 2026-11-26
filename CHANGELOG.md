@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- hotfpc now finds the `ppudump` of a compiler that fpc runs through a wrapper script, such
+  as one from a version manager, in another directory. It looks next to the compiler
+  binary that `fpc -PB` names, with the options that choose it (`-V`, `-P`, `-Xp`), and
+  then next to fpc. It looked only next to fpc, so with such a wrapper it printed `no
+  ppudump next to the compiler (--ppudump): the check of interface layouts is off` and
+  swapped edits that change a type without changing its size. The scenarios' `check.py`
+  now fails a case whose run has that check off, as cases such as `records` and `hidden`
+  then give other outcomes than in CI.
 - A swap no longer overwrites a value the program writes while the swap loads with a
   changed initial value. The agent compared the variable with its old initial value
   before it stopped the program's threads, and copied the new one in unconditionally once

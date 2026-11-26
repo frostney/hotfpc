@@ -260,7 +260,7 @@ ppudump only turn a check off:
 | `cannot tell which version <fpc> is (-iV printed <text>); hotfpc requires 3.2.2 or later` | `--fpc` names something that isn't fpc, or a wrapper that prints something else first. |
 | `cannot run <fpc>; hotfpc requires 3.2.2 or later` | fpc isn't on `PATH`, or `--fpc` names a file that doesn't run. |
 | `cannot run <fpc> (<reason>); hotfpc requires 3.2.2 or later` | The same, with the system's reason. |
-| `no ppudump next to the compiler (--ppudump): the check of interface layouts is off` | hotfpc carries on, without the check of layouts. Name ppudump with `--ppudump`. |
+| `no ppudump next to the compiler (--ppudump): the check of interface layouts is off` | There is none next to the compiler that fpc runs (`fpc -PB`) or next to fpc. hotfpc carries on, without the check of layouts. Name ppudump with `--ppudump`. |
 | `<ppudump> cannot read this compiler's units (<reason>): the check of interface layouts is off; --ppudump names one that can` | The ppudump found belongs to another fpc. hotfpc carries on without the check. |
 | `the agent did not compile:` | fpc's output follows. Your options for the target or paths may not suit a unit compiled on its own. |
 | `cannot listen on 127.0.0.1` | hotfpc couldn't open a TCP port on the loopback interface. |

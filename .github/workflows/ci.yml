@@ -53,6 +53,7 @@ jobs:
       - name: Show the tools
         run: |
           fpc -iV
+          fpc -PB
           command -v fpcres ppudump
 
       - name: Build hotfpc and run the unit tests
@@ -102,7 +103,8 @@ jobs:
       - name: Show the tools
         run: |
           fpc -iV
-          command -v fpcres
+          fpc -Px86_64 -PB
+          command -v fpcres ppudump
 
       - name: Build hotfpc.exe and run the unit tests
         shell: cmd

@@ -77,6 +77,10 @@ start, so a line the program prints is never taken for one of hotfpc's:
   restarts, against the case's expected numbers in `EXPECT` and `RESTARTS` (a tuple lists
   the numbers a case may give, where two saves may be compiled together);
 - a clean exit (code 0), and no step whose text didn't apply to the file;
+- hotfpc's check of interface layouts on: without ppudump, or with one that can't read the
+  compiler's units, cases such as `records` and `hidden` give other outcomes than in CI, so
+  a run that says `the check of interface layouts is off` fails (name ppudump with
+  `--ppudump` in `HOT_DRIVER_OPTS`);
 - no swap that prints the same note twice, and for some cases notes every swap must print
   (`NOTES`);
 - the ticks, each a line of the program's own: every number from 1 to the last is there,

@@ -3,7 +3,8 @@
 compares each case's closing line with the outcome established for it. Prints the run of
 each case that failed after the summary lines, so a CI log shows why. Writes the full
 transcript to $HOT_TRANSCRIPT when set. $HOT_DRIVER picks the driver (default: build/hotfpc),
-$HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
+$HOT_DRIVER_OPTS adds options to it (--fpc, fpc options). A case whose run has hotfpc's check
+of interface layouts off fails: without it a case can pass or fail other than in CI.
 
   check.py [case ...]
 """
@@ -218,6 +219,10 @@ for name in names:
     ok = ok and not missing
     unsaid = [pattern for pattern in SAYS.get(name, []) if not any(re.match(r"\[hot\] " + pattern, line) for line in lines)]
     ok = ok and not unsaid
+    # the check of layouts decides several cases (records, hidden), so a run without it tests
+    # less than CI does: hotfpc found no ppudump that reads the compiler's units
+    layouts_off = any(re.match(r"\[hot\] .*the check of interface layouts is off", line) for line in lines)
+    ok = ok and not layouts_off
     drift = []
     for tick, text in records if name in COUNTERS else []:
         count = re.search(r"\b%s (\d+)" % COUNTERS[name], text)
@@ -276,6 +281,7 @@ for name in names:
           % (name, "ok  " if ok else "FAIL", rc, applied, refused, failed, unchanged, restarts, max(ticks) if ticks else 0, "all present" if seq else "WITH GAPS")
           + "".join("; never printed %r" % getattr(text, "pattern", text) for text in missing)
           + "".join("; hotfpc never said %r" % pattern for pattern in unsaid)
+          + ("; the check of interface layouts was off: name ppudump with --ppudump in HOT_DRIVER_OPTS" if layouts_off else "")
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
           + "".join("; a load took %s ms in the program" % x for x in slow)

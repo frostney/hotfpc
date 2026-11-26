@@ -17,8 +17,9 @@ have a shorter `PATH` than your shell: name fpc with `--fpc`.
 
 ### `no ppudump next to the compiler (--ppudump): the check of interface layouts is off`
 
-hotfpc looks for `ppudump` in the directory of the fpc it runs. A wrapper script, such as
-one from a version manager, lives somewhere else. hotfpc carries on, but without the check
+hotfpc looks for `ppudump` next to the compiler that fpc runs, the one `fpc -PB` names,
+and then next to fpc. Neither has one when ppudump was installed somewhere else, or when a
+wrapper script doesn't pass `-PB` on to fpc. hotfpc carries on, but without the check
 of layouts, so an edit that changes a type without changing its size (`Integer` to
 `Single`, two fields swapped) is swapped instead of restarted, and the program then reads
 its old values wrongly. Name it:
