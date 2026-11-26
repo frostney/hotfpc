@@ -42,6 +42,12 @@ EXPECT = {
     # a unit, variables back with another type of the same size: the check of layouts keeps
     # their first types
     "readdvar": (2, 1, 0), "readdtype": (2, 1, 0),
+    # padvar: variables of the program that grow inside the padding before an aligned
+    # neighbour, in place and when a removed one comes back: a Mach-O object states no symbol
+    # sizes, and the distance to the next symbol stays 8 bytes. A new variable after one of
+    # them changes that distance, not a size: it swaps. padunit: the same in a unit, without
+    # the check of layouts
+    "padvar": (2, 3, 0), "padunit": (1, 2, 0),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -93,6 +99,9 @@ PRINTS = {
     "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"], "startnoasm": ["n 1 main four 1"],
     # the version that removed the variable ran
     "readdvar": [re.compile(r"n \d+ main two")], "readdtype": ["two"],
+    # the new Flag2 is swapped in, and so is the save that removes Small
+    "padvar": [re.compile(r"n \d+ main two \d+ 2 \d+ \d+"), re.compile(r"n \d+ main three 2 \d+ \d+")],
+    "padunit": [re.compile(r"two \d+ 2 \d+ \d+")],
     "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
@@ -127,6 +136,10 @@ SAYS = {
     # written during the load: the commit finds it so and keeps the program's value
     "initrace": [r"  note: the initial value of U\.SPEED changed; the running value is kept",
                  r"  note: the initial value of U\.PAIR changed; the running value is kept"],
+    "padvar": [r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
+               r"restart needed: variable MAIN\.FLAG changed size from 1 to 2 bytes"],
+    "padunit": [r"restart needed: variable U\.SMALL changed size from 2 to 4 bytes",
+                r"restart needed: variable U\.FLAG changed size from 1 to 2 bytes"],
     "readdvar": [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes",
                  r"  note: MAIN\.CALLS is back after a save removed it; it keeps its running value"],
     "readdtype": [r"restart needed: u\.Hits: the declaration changed its layout or type",
