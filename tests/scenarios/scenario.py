@@ -1395,11 +1395,12 @@ end.
     ("Shared: Integer becomes Shared: Single", [("u.pas", "  Shared: Integer;", "  Shared: Single;")]),
 ])
 
-# ---------------------------------------------------------------------------- a refused unit file, then a unit the program drops
-# v reads Shared of u, and changes its type with it: the check of layouts refuses, as in
-# sharedtype. A save after it that still uses u is refused again: fpc compiles u again, and
-# its unit file still shows the change. Then v no longer uses u, so fpc no longer compiles u:
-# its refused unit file is gone, and the save is swapped
+# ---------------------------------------------------------------------------- unit files nothing accepted, then a unit the program drops
+# v reads Shared of u. A save changes Shared's type with an error in the program, so fpc
+# writes u's unit file and fails. The next save fixes the error, and v no longer uses u: fpc
+# no longer compiles u, its unit file from the failed compile is gone, and the save swaps.
+# Then v uses u again: fpc compiles u again, and the check of layouts refuses, as in
+# sharedtype. And once v no longer uses u, that refused unit file is gone too
 DROPUNIT_MAIN = r"""program main;
 {$mode objfpc}{$H+}
 uses SysUtils, v;
@@ -1442,11 +1443,17 @@ begin
 end;
 end.
 """}, [
-    ("Shared: Integer in u, which v reads, becomes Shared: Single", [("u.pas", "  Shared: Integer;", "  Shared: Single;")]),
-    ("another text in v, which still uses u", [("v.pas", "'one '", "'two '")]),
+    ("Shared: Integer in u, which v reads, becomes Shared: Single, with an error in the program",
+     [("u.pas", "  Shared: Integer;", "  Shared: Single;"), ("main.pas", "    Inc(Count);\n", "    Inc(Count);\n    NoSuchRoutine;\n")]),
+    ("the error is gone, and v no longer uses u, with another text",
+     [("main.pas", "    NoSuchRoutine;\n", ""), ("v.pas", "uses SysUtils, u;", "uses SysUtils;"),
+      ("v.pas", "  Shared := Shared + 1;\n  Value := Shared;\n", "  Value := n;\n"), ("v.pas", "'one '", "'two '")]),
+    ("v reads Shared of u again, now a Single, with another text",
+     [("v.pas", "uses SysUtils;", "uses SysUtils, u;"), ("v.pas", "  Value := n;\n", "  Shared := Shared + 1;\n  Value := Shared;\n"),
+      ("v.pas", "'two '", "'three '")]),
     ("v no longer uses u, with another text",
      [("v.pas", "uses SysUtils, u;", "uses SysUtils;"), ("v.pas", "  Shared := Shared + 1;\n  Value := Shared;\n", "  Value := n;\n"),
-      ("v.pas", "'two '", "'three '")]),
+      ("v.pas", "'three '", "'four '")]),
 ])
 
 # ---------------------------------------------------------------------------- a unit checked once after a save that changes no code

@@ -61,9 +61,10 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | The first three of those saves in a unit's implementation section, without the check of layouts (`--ppudump` names a ppudump that doesn't exist) | restart, restart and swap: `variable U.SMALL changed size from 2 to 4 bytes`, then `variable U.FLAG changed size from 1 to 2 bytes` | `padunit` |
 | Then `Shared: Word = 1` in the unit's interface, before `SharedNext: Int64`, which only the program's code uses, becomes `LongInt = 1`: on macOS the unit's object file comes out the same | restart: `variable U.SHARED changed size from 2 to 4 bytes`, also on Windows, where the unit's COFF object comes out the same too | `padunit` |
 | `Shared: Integer` in a unit's interface, which only the program's code uses, becomes `Single`, the same size: the unit's object file comes out the same | restart: `u.Shared: the declaration changed its layout or type`, with a ppudump that reads the units; without one, swap | `sharedtype` |
-| `Shared: Integer` in a unit that only another unit's code reads becomes `Single` | restart: `u.Shared: the declaration changed its layout or type` | `dropunit` |
-| Then another text in the unit that reads it | restart again: fpc compiles the first unit again, and its unit file still shows the change | `dropunit` |
-| Then that unit no longer uses the first one, with another text | swap: the first unit's refused unit file is gone | `dropunit` |
+| `Shared: Integer` in a unit that only another unit's code reads becomes `Single`, with an error in the program | the compile fails | `dropunit` |
+| Then the error is gone, and the unit that read `Shared` no longer uses the first one | swap: the first unit's unit file from the failed compile is gone | `dropunit` |
+| Then it reads `Shared` again, now a `Single` | restart: `u.Shared: the declaration changed its layout or type` | `dropunit` |
+| Then it no longer uses the first unit again | swap: the refused unit file is gone too | `dropunit` |
 | A comment in a unit with a variable with an initial value | not swapped: `the generated code is the same` | `recheck` |
 | Then another text in another unit, which has no variable with an initial value, while fpc can't write the program's assembler | swap: the unit with the comment isn't checked again, also on Windows | `recheck` |
 

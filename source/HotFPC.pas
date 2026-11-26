@@ -3406,7 +3406,9 @@ type
     function CompileSources(out ACompileSeconds: Double): Boolean;
     function CollectChangedObjects(const AChanged, AUnchanged: TStrings; const ACompileSeconds: Double): Boolean;
     procedure AcceptRecord(const AObjectName: string);
-    procedure ForgetRecords(const AUnits: TStrings);
+    function ObjectChanged(const AObjectName: string): Boolean;
+    function RecordChanged(const AObjectName: string): Boolean;
+    procedure ForgetUnacceptedRecords;
     procedure AcceptRecords(const AUnits: TStrings);
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
@@ -3769,6 +3771,49 @@ begin
   end;
 end;
 
+{ Whether a unit's object file (a name in the units directory) differs from the running
+  program's. A Mach-O object can come out the same when a variable grows within its padding,
+  as it states no sizes: its assembler shows it, so the unit is loaded for the agent to see. }
+function TDriver.ObjectChanged(const AObjectName: string): Boolean;
+begin
+  Result := not SameFileContents(FWorkspace.UnitsDirectory + AObjectName, FWorkspace.LiveDirectory + AObjectName)
+    or (FOptions.KeepAssembler and not SameAssembler(
+      FWorkspace.UnitsDirectory + ChangeFileExt(AObjectName, AssemblerExtension),
+      FWorkspace.LiveDirectory + ChangeFileExt(AObjectName, AssemblerExtension)));
+end;
+
+{ Whether a unit's unit file differs from the running program's: fpc compiled it again. }
+function TDriver.RecordChanged(const AObjectName: string): Boolean;
+var
+  RecordName: string;
+begin
+  RecordName := ChangeFileExt(AObjectName, RecordExtension);
+  Result := FileExists(FWorkspace.UnitsDirectory + RecordName) and FileExists(FWorkspace.LiveDirectory + RecordName)
+    and not SameFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName);
+end;
+
+{ Before a save's compile, removes the unit file of each unit whose object file is the
+  running program's but whose unit file isn't: one an earlier save wrote and nothing
+  accepted, because its checks refused it, its compile failed or the save was given up. Such
+  a unit file would keep every later save from swapping, even once the program no longer uses
+  the unit. fpc compiles the unit again for a save that still uses it, and the checks see it
+  again. }
+procedure TDriver.ForgetUnacceptedRecords;
+var
+  Objects: TStringList;
+  I: Integer;
+begin
+  Objects := FWorkspace.UnitObjects;
+  try
+    for I := 0 to Objects.Count - 1 do
+      if FileExists(FWorkspace.LiveDirectory + Objects[I]) and not ObjectChanged(Objects[I])
+        and RecordChanged(Objects[I]) then
+        DeleteFile(FWorkspace.UnitsDirectory + ChangeFileExt(Objects[I], RecordExtension));
+  finally
+    Objects.Free;
+  end;
+end;
+
 { The object files that differ from the running program's (AChanged), and the units fpc
   compiled again whose object files came out the same, as their unit files show (AUnchanged;
   a unit fpc didn't compile keeps its unit file). A variable of a unit's interface that only
@@ -3780,7 +3825,7 @@ function TDriver.CollectChangedObjects(const AChanged, AUnchanged: TStrings; con
 var
   Objects: TStringList;
   I: Integer;
-  ObjectName, RecordName: string;
+  ObjectName: string;
 begin
   Objects := FWorkspace.UnitObjects;
   try
@@ -3797,19 +3842,9 @@ begin
         DeleteFile(FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, RecordExtension));
         Exit(False);
       end;
-      { A Mach-O object can come out the same when a variable grows within its padding, as it
-        states no sizes: its assembler shows it, so the unit is loaded for the agent to see. }
-      if not SameFileContents(FWorkspace.UnitsDirectory + ObjectName, FWorkspace.LiveDirectory + ObjectName)
-        or (FOptions.KeepAssembler and not SameAssembler(
-          FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, AssemblerExtension),
-          FWorkspace.LiveDirectory + ChangeFileExt(ObjectName, AssemblerExtension))) then
-      begin
-        AChanged.Add(ObjectName);
-        Continue;
-      end;
-      RecordName := ChangeFileExt(ObjectName, RecordExtension);
-      if FileExists(FWorkspace.UnitsDirectory + RecordName) and FileExists(FWorkspace.LiveDirectory + RecordName)
-        and not SameFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName) then
+      if ObjectChanged(ObjectName) then
+        AChanged.Add(ObjectName)
+      else if RecordChanged(ObjectName) then
         AUnchanged.Add(ObjectName);
     end;
   finally
@@ -3827,18 +3862,6 @@ var
 begin
   for I := 0 to AUnits.Count - 1 do
     AcceptRecord(AUnits[I]);
-end;
-
-{ After a save the checks refused, removes the unit files of the units fpc compiled again
-  whose objects came out the same: such a unit file differs from the running program's, and
-  would keep every later save from swapping, even once the program no longer uses the unit.
-  fpc compiles the unit again for a save that still uses it, and the checks see it again. }
-procedure TDriver.ForgetRecords(const AUnits: TStrings);
-var
-  I: Integer;
-begin
-  for I := 0 to AUnits.Count - 1 do
-    DeleteFile(FWorkspace.UnitsDirectory + ChangeFileExt(AUnits[I], RecordExtension));
 end;
 
 { The unit file of a unit (named by its object file) becomes the running program's, with its
@@ -4220,6 +4243,8 @@ var
   CompileSeconds, InterfaceSeconds: Double;
 begin
   Result := False;
+  { a unit file an earlier save left that nothing accepted }
+  ForgetUnacceptedRecords;
   if not CompileSources(CompileSeconds) then
     Exit;
   Changed := TStringList.Create;
@@ -4231,12 +4256,10 @@ begin
     { the checks cover the units fpc compiled again whose objects came out the same, too }
     Checked.AddStrings(Changed);
     Checked.AddStrings(Unchanged);
-    if not LayoutsAllowSwap(Checked, CompileSeconds, InterfaceSeconds)
-      or not SizesAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
-    begin
-      ForgetRecords(Unchanged);
+    if not LayoutsAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
       Exit(True);
-    end;
+    if not SizesAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
+      Exit(True);
     if FStale then
       Exit;
     if Changed.Count = 0 then

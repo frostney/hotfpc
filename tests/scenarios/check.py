@@ -55,9 +55,9 @@ EXPECT = {
     # a save that changes no code, and one after it while fpc cannot write the program's
     # assembler, which a unit checked before doesn't need: swapped
     "recheck": (1, 0, 0),
-    # a type change in a unit only another unit reads, refused, and refused again while that
-    # unit still uses it; swapped once it doesn't
-    "dropunit": (1, 2, 0),
+    # a type change in a unit only another unit reads: a failed compile, then a swap once that
+    # unit no longer uses it, a refusal when it reads it again, and a swap once it doesn't
+    "dropunit": (2, 1, 1),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -115,7 +115,7 @@ PRINTS = {
     # the new Flag2 is swapped in, and so is the save that removes Small
     "padvar": [re.compile(r"n \d+ main two \d+ 2 \d+ \d+"), re.compile(r"n \d+ main three 2 \d+ \d+")],
     "recheck": ["one 5 v two"],
-    "dropunit": [re.compile(r"three \d+")],
+    "dropunit": [re.compile(r"two \d+"), re.compile(r"four \d+")],
     "padunit": [re.compile(r"two \d+ 2 \d+ \d+ shared \d+")],
     "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
@@ -156,8 +156,7 @@ SAYS = {
                r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
                r"restart needed: variable MAIN\.FLAG changed size from 1 to 2 bytes"],
     "sharedtype": [r"restart needed: u\.Shared: the declaration changed its layout or type"],
-    "dropunit": [r"restart needed: u\.Shared: the declaration changed its layout or type",
-                 r"restart needed: u\.Shared: the declaration changed its layout or type"],
+    "dropunit": [r"restart needed: u\.Shared: the declaration changed its layout or type"],
     "padunit": [r"restart needed: variable U\.SMALL changed size from 2 to 4 bytes",
                 r"restart needed: variable U\.FLAG changed size from 1 to 2 bytes",
                 r"restart needed: variable U\.SHARED changed size from 2 to 4 bytes"],
