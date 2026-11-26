@@ -1,17 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
-- A variable that a save removes and a later save brings back with another type now needs
-  a restart, as one that changes its type in place does. The program keeps the variable at
-  its first address, and the agent swapped the new code in with the note `kept without a
-  check`, so it used the old storage as the new type: a larger one ran past it. Only for a
-  Windows program did hotfpc already find a variable with an initial value that came back
-  larger. The agent now keeps the sizes of what a save removes, thread variables included,
-  and the check of layouts in units the declarations a save removes, so a type that comes
-  back with another layout needs a restart too. A variable that comes back as it was is
-  swapped, with the note `<name> is back after a save removed it; it keeps its running
-  value`.
+- A variable that a save removes and a later save brings back now gets the same checks as a
+  variable that changes in place, and needs a restart when they find another size, or in a
+  unit, while the check of layouts is on, another type of the same size (`Integer` to
+  `Single`). The program keeps the variable at its first address, and the agent swapped the
+  new code in with the note `kept without a check`, so it used the old storage as the new
+  type: a larger one ran past it. The agent now keeps the sizes of what a save removes,
+  thread variables included, and the check of layouts in units the declarations a save
+  removes. In the program file, which has no unit file for ppudump to read, only a change
+  of size is found ([limits](https://frostney.github.io/hotfpc/docs/reference/limits/)). A
+  variable that comes back as it was is swapped, with the note `<name> is back after a save
+  removed it; it keeps its running value`.
 - A swap no longer overwrites a value the program writes while the swap loads with a
   changed initial value. The agent compared the variable with its old initial value
   before it stopped the program's threads, and copied the new one in unconditionally once
@@ -27,13 +28,13 @@
   the signal that stops it but before the thread took it. The agent now leaves out a thread
   that has ended, as it already did when the thread ended before the signal.
 - On Windows with fpc 3.2, a swap now applies a changed initial value of a variable in a
-  unit's implementation section by the same rule as on the other systems
-  ([What a swap keeps](docs/guides/saves-and-restarts.md#what-a-swap-keeps)): while the
-  variable still holds the old one, and neither contains an address the linker fills in.
-  It prints `note: U.SPEED still had its initial value; set to the new one`. It kept the
-  running value and printed `note: U.SPEED changed; the running copy is kept`: fpc 3.2
-  names such a variable only by its section, and the agent recognised a variable with an
-  initial value only by the `TC_$` prefix of a symbol's name.
+  unit's implementation section by the same rule as on the other systems ([What a swap
+  keeps](https://frostney.github.io/hotfpc/docs/guides/saves-and-restarts/#what-a-swap-keeps)):
+  while the variable still holds the old one, and neither contains an address the linker
+  fills in. It prints `note: U.SPEED still had its initial value; set to the new one`. It
+  kept the running value and printed `note: U.SPEED changed; the running copy is kept`: fpc
+  3.2 names such a variable only by its section, and the agent recognised a variable with
+  an initial value only by the `TC_$` prefix of a symbol's name.
 - A swap no longer breaks a running routine that calls a routine nested in it. When a save
   moved the parent's locals, the frame that was still running called the new nested
   routine, which read that frame with the new layout: in the `nestedframe` scenario, the
@@ -48,7 +49,8 @@
   `/proc/self/task` couldn't be read, nor on Windows when the list of threads couldn't be
   made. On Windows the agent resumes only the threads it suspended. Under Wine before 6.8,
   which lacks a call the agent needs for this, every swap is now refused; on Linux a thread
-  that blocks the agent's signal and sleeps isn't stopped ([limits](docs/reference/limits.md)).
+  that blocks the agent's signal and sleeps isn't stopped
+  ([limits](https://frostney.github.io/hotfpc/docs/reference/limits/)).
 - On Windows with fpc 3.2, a swap now redirects the old entry of a routine declared only
   in a unit's implementation section, other than a method, to its new code, as it does on
   macOS and Linux and with fpc 3.3.1. fpc 3.2 gives such a routine no symbol in a Windows
@@ -106,19 +108,20 @@
   the link of a restart. A save that landed during the first build, after fpc had read the
   file, used to be left out until the next save; hotfpc now builds the program again before
   it starts it, also when the build failed on it, and waits for a file that save emptied
-  first, as it does once the program runs, for about a second and a half at most. After three such compiles, links or compiles to assembler in a row, hotfpc
-  uses the next one as it is, and it waits at most a second for the files to settle before
-  a compile, so a file that keeps changing can't hold back every save, nor keep hotfpc
-  running after the program has ended. On Windows a save whose sizes of variables with
-  initial values are checked then needs a restart, as its compile and its compile to
-  assembler may have read different sources; when that happens to the build a program
-  starts from, every such save needs a restart until it starts over. hotfpc reads the
-  times of the sources as finely as the file system keeps them, so a save that came and
-  was put back during a compile, at the same size and within the same second, shows too.
-  On Windows such a save needs a restart where the times can't show it, as on a file
-  system that keeps whole seconds, and so does every save that needs the sizes when the
-  times couldn't show it for the build the program starts from; hotfpc waits 22 ms for a
-  save to settle instead of 4.
+  first, as it does once the program runs, by default for about a second and a half at
+  most. After three such compiles, links or compiles to assembler in a row, hotfpc uses the
+  next one as it is, and it waits at most a second for the files to settle before a
+  compile, or one `--settle` wait when that is longer, so a file that keeps changing can't
+  hold back every save, nor keep hotfpc running after the program has ended. On Windows a
+  save whose sizes of variables with initial values are checked then needs a restart, as
+  its compile and its compile to assembler may have read different sources; when that
+  happens to the build a program starts from, every such save needs a restart until it
+  starts over. hotfpc reads the times of the sources as finely as the file system keeps
+  them, so a save that came and was put back during a compile, at the same size and within
+  the same second, shows too. On Windows such a save needs a restart where the times can't
+  show it, as on a file system that keeps whole seconds, and so does every save that needs
+  the sizes when the times couldn't show it for the build the program starts from; hotfpc
+  waits 22 ms for a save to settle instead of 4.
 - hotfpc keeps each source file by its whole path, with its case. In a directory whose
   path has `=` in it, the files used to share one entry, so unchanged sources looked
   changed after every compile: each save was compiled four times, and on Windows a save
@@ -144,12 +147,14 @@
   lost and the program could crash: gas refers to such a variable through the symbol of
   its section, and the agent placed that section again. The scenarios now check that such
   a counter keeps counting across swaps.
-- The documentation is a tree under `docs/`: guides from an introduction to
-  troubleshooting, a reference for the command line, every `[hot]` line, the environment
-  variables, the platforms and the limits, and pages for contributors. The README shows the
-  Homebrew install and a recording of `examples/raylib`: four saves swapped into the
-  running game, then a fifth that grows a variable, after which hotfpc starts the game over
-  by itself. CONTRIBUTING.md is new.
+- The documentation is published at
+  [frostney.github.io/hotfpc](https://frostney.github.io/hotfpc/), with search, a Markdown
+  copy of each page and an `llms.txt`, and is a tree under `docs/` in the repository:
+  guides from an introduction to troubleshooting, a reference for the command line, every
+  `[hot]` line, the environment variables, the platforms and the limits, and pages for
+  contributors. The README shows the Homebrew install and a recording of `examples/raylib`:
+  four saves swapped into the running game, then a fifth that grows a variable, after which
+  hotfpc starts the game over by itself. CONTRIBUTING.md is new.
 
 ## 1.1.0
 
