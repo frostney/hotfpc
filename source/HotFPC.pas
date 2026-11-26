@@ -3404,8 +3404,8 @@ type
     function SourcesChangedDuringCompile: Boolean;
     procedure ForgetNewUnits;
     function CompileSources(out ACompileSeconds: Double): Boolean;
-    function CollectChangedObjects(const AChanged: TStrings; const ACompileSeconds: Double): Boolean;
-    procedure CollectRecompiledUnits(const AChanged, AUnchanged: TStrings);
+    function CollectChangedObjects(const AChanged, AUnchanged: TStrings; const ACompileSeconds: Double): Boolean;
+    procedure AcceptRecord(const AObjectName: string);
     procedure AcceptRecords(const AUnits: TStrings);
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
@@ -3770,11 +3770,18 @@ end;
 
 { The object files that differ from the running program's. False when the compile made one
   of a unit the program does not have. }
-function TDriver.CollectChangedObjects(const AChanged: TStrings; const ACompileSeconds: Double): Boolean;
+{ The object files that differ from the running program's (AChanged), and the units fpc
+  compiled again whose object files came out the same, as their unit files show (AUnchanged;
+  a unit fpc didn't compile keeps its unit file). A variable of a unit's interface that only
+  other units' code uses can change its type, or grow within its padding, and leave the
+  unit's object file as it was: the checks of layouts and sizes cover AUnchanged too, though
+  nothing of it is loaded. False when the compile made an object file of a unit the program
+  does not have. }
+function TDriver.CollectChangedObjects(const AChanged, AUnchanged: TStrings; const ACompileSeconds: Double): Boolean;
 var
   Objects: TStringList;
   I: Integer;
-  ObjectName: string;
+  ObjectName, RecordName: string;
 begin
   Objects := FWorkspace.UnitObjects;
   try
@@ -3797,39 +3804,19 @@ begin
         or (FOptions.KeepAssembler and not SameAssembler(
           FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, AssemblerExtension),
           FWorkspace.LiveDirectory + ChangeFileExt(ObjectName, AssemblerExtension))) then
+      begin
         AChanged.Add(ObjectName);
+        Continue;
+      end;
+      RecordName := ChangeFileExt(ObjectName, RecordExtension);
+      if FileExists(FWorkspace.UnitsDirectory + RecordName) and FileExists(FWorkspace.LiveDirectory + RecordName)
+        and not SameFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName) then
+        AUnchanged.Add(ObjectName);
     end;
   finally
     Objects.Free;
   end;
   Result := True;
-end;
-
-{ The units fpc compiled again in this save whose object files came out the same, as their
-  unit files show (a unit fpc didn't compile keeps its unit file). A variable of a unit's
-  interface that only other units' code uses can change its type, or grow within its padding,
-  and leave the unit's object file as it was: the checks of layouts and sizes cover these
-  units too, though nothing of them is loaded. }
-procedure TDriver.CollectRecompiledUnits(const AChanged, AUnchanged: TStrings);
-var
-  Objects: TStringList;
-  I: Integer;
-  RecordName: string;
-begin
-  Objects := FWorkspace.UnitObjects;
-  try
-    for I := 0 to Objects.Count - 1 do
-    begin
-      if AChanged.IndexOf(Objects[I]) >= 0 then
-        Continue;
-      RecordName := ChangeFileExt(Objects[I], RecordExtension);
-      if FileExists(FWorkspace.UnitsDirectory + RecordName) and FileExists(FWorkspace.LiveDirectory + RecordName)
-        and not SameFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName) then
-        AUnchanged.Add(Objects[I]);
-    end;
-  finally
-    Objects.Free;
-  end;
 end;
 
 { The unit files of units the checks found the same as the running program's, with object
@@ -3838,15 +3825,22 @@ end;
 procedure TDriver.AcceptRecords(const AUnits: TStrings);
 var
   I: Integer;
-  RecordName: string;
 begin
   for I := 0 to AUnits.Count - 1 do
-  begin
-    RecordName := ChangeFileExt(AUnits[I], RecordExtension);
+    AcceptRecord(AUnits[I]);
+end;
+
+{ The unit file of a unit (named by its object file) becomes the running program's, with its
+  layouts; the program file has none. }
+procedure TDriver.AcceptRecord(const AObjectName: string);
+var
+  RecordName: string;
+begin
+  RecordName := ChangeFileExt(AObjectName, RecordExtension);
+  if FileExists(FWorkspace.UnitsDirectory + RecordName) then
     CopyFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName);
-    if FLayouts <> nil then
-      FLayouts.Accept(RecordName);
-  end;
+  if FLayouts <> nil then
+    FLayouts.Accept(RecordName);
 end;
 
 { Each changed unit as the compiler wrote it down: a field that moved or a variable that
@@ -4099,7 +4093,6 @@ end;
 procedure TDriver.Accept(const AChanged, AUnchanged: TStrings; const AStage: string);
 var
   I: Integer;
-  RecordName: string;
   Added: TStringList;
   Problem: string;
 begin
@@ -4116,11 +4109,7 @@ begin
   for I := 0 to AChanged.Count - 1 do
   begin
     CopyObjectFile(AStage + AChanged[I], FWorkspace.LiveDirectory + AChanged[I]);
-    RecordName := ChangeFileExt(AChanged[I], RecordExtension);
-    if FileExists(FWorkspace.UnitsDirectory + RecordName) then
-      CopyFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName);
-    if FLayouts <> nil then
-      FLayouts.Accept(RecordName);
+    AcceptRecord(AChanged[I]);
     if FBased.IndexOf(AChanged[I]) < 0 then
       FBased.Add(AChanged[I]);
   end;
@@ -4226,10 +4215,9 @@ begin
   Unchanged := TStringList.Create;
   Checked := TStringList.Create;
   try
-    if not CollectChangedObjects(Changed, CompileSeconds) then
+    if not CollectChangedObjects(Changed, Unchanged, CompileSeconds) then
       Exit(True);
     { the checks cover the units fpc compiled again whose objects came out the same, too }
-    CollectRecompiledUnits(Changed, Unchanged);
     Checked.AddStrings(Changed);
     Checked.AddStrings(Unchanged);
     if not LayoutsAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then

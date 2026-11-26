@@ -52,6 +52,9 @@ EXPECT = {
     # a variable of a unit's interface that only the program uses changes its type, not its
     # size: the unit's object file is the same, and its unit file shows the change
     "sharedtype": (0, 1, 0),
+    # a save that changes no code, and one after it while fpc cannot write the program's
+    # assembler, which a unit checked before doesn't need: swapped
+    "recheck": (1, 0, 0),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -75,6 +78,9 @@ EXPECT = {
     # restart again
     "newconst": (0, 2, 0),
 }
+# case: saves that change no code ("not swapped"); every other case expects none. recheck: a
+# comment in a unit with a variable with an initial value
+UNCHANGED = {"recheck": 1}
 # case: restarts; every other case passes --no-restart and expects none
 RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall": 1,
             "sighandler": 1, "sigmasked": 1, "newconst": 2}
@@ -105,6 +111,7 @@ PRINTS = {
     "readdvar": [re.compile(r"n \d+ main two")], "readdtype": ["two"],
     # the new Flag2 is swapped in, and so is the save that removes Small
     "padvar": [re.compile(r"n \d+ main two \d+ 2 \d+ \d+"), re.compile(r"n \d+ main three 2 \d+ \d+")],
+    "recheck": ["one 5 v two"],
     "padunit": [re.compile(r"two \d+ 2 \d+ \d+ shared \d+")],
     "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
@@ -242,7 +249,7 @@ for name in names:
     # during it, so none finds the same code ("not swapped")
     # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
     # gave no outcome for
-    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and not any(line.startswith("!!! ") for line in lines)
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == UNCHANGED.get(name, 0) and restarts == RESTARTS.get(name, 0) and not any(line.startswith("!!! ") for line in lines)
     # the program's tick records: the same records count toward continuity and carry the
     # counters
     def tick_records(lines):

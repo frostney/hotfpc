@@ -86,7 +86,7 @@ x86-64, and on
 Windows x86-64 with `hotfpc.exe` ([tooling](../internals/tooling.md#ci)). Release 1.2.0's
 commit passed on all five in
 [run 45824842999](https://github.com/frostney/hotfpc/actions/runs/45824842999)
-(2026-11-26). On 2026-11-26, all 45 scenarios passed at this version of the repository on
+(2026-11-26). On 2026-11-26, all 46 scenarios passed at this version of the repository on
 Linux x86-64 with fpc 3.2.2.
 
 ## Timings

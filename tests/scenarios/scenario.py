@@ -1391,6 +1391,60 @@ end.
     ("Shared: Integer becomes Shared: Single", [("u.pas", "  Shared: Integer;", "  Shared: Single;")]),
 ])
 
+# ---------------------------------------------------------------------------- a unit checked once after a save that changes no code
+# A comment in u, which has a variable with an initial value: fpc compiles u again, and its
+# object file comes out the same, so the save changes no code, and u's new unit file becomes
+# the running program's. The next save changes only v, which has none, while fpc can't write
+# the program's assembler: u isn't checked again, so on Windows that save needs no compile to
+# assembler, and is swapped
+RECHECK_MAIN = r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u, v;
+var
+  Count: Integer = 0;
+begin
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Tick(Count), ' ', Note(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+"""
+
+case("recheck", {
+    "main.pas": RECHECK_MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+var
+  Speed: Integer = 5;
+function Tick(n: Integer): string;
+begin
+  Result := Format('one %d', [Speed]);
+end;
+end.
+""",
+    "v.pas": r"""unit v;
+{$mode objfpc}{$H+}
+interface
+function Note(n: Integer): string;
+implementation
+function Note(n: Integer): string;
+begin
+  Result := 'v one';
+end;
+end.
+"""}, [
+    ("a comment in u, which has a variable with an initial value", [("u.pas", "implementation\n", "implementation\n{ a comment }\n")]),
+    ("another text in v, which has none, while fpc cannot write the program's assembler",
+     [(".hot/asm/main.s", None, BLOCKED), ("v.pas", "'v one'", "'v two'")]),
+])
+
 # ---------------------------------------------------------------------------- restarts
 # One unit whose text and call count the program prints. A restart starts the count over.
 # Calls has no initial value: with fpc 3.2.2 on Linux and Windows, a variable with one that
