@@ -147,12 +147,12 @@
   a counter keeps counting across swaps.
 - The documentation is published at
   [frostney.github.io/hotfpc](https://frostney.github.io/hotfpc/), with search, a Markdown
-  copy of each page and an `llms.txt`, and is a tree under `docs/` in the repository: guides from an introduction to troubleshooting, a reference for the
-  command line, every `[hot]` line, the environment variables, the platforms and the
-  limits, and pages for contributors. The README shows the
-  Homebrew install and a recording of `examples/raylib`: four saves swapped into the
-  running game, then a fifth that grows a variable, after which hotfpc starts the game over
-  by itself. CONTRIBUTING.md is new.
+  copy of each page and an `llms.txt`, and is a tree under `docs/` in the repository:
+  guides from an introduction to troubleshooting, a reference for the command line, every
+  `[hot]` line, the environment variables, the platforms and the limits, and pages for
+  contributors. The README shows the Homebrew install and a recording of `examples/raylib`:
+  four saves swapped into the running game, then a fifth that grows a variable, after which
+  hotfpc starts the game over by itself. CONTRIBUTING.md is new.
 
 ## 1.1.0
 
