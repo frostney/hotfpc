@@ -5,11 +5,12 @@
 - A scenario that has failed now ends within seconds. In `nestedframe` run against a build
   without the fix for nested routines, the program printed a string of a wrong length,
   gigabytes on one line, which `scenario.py` passed on and `check.py` held and searched:
-  the run took a minute or more. The script now stops hotfpc and the program, by hotfpc's
-  process group, when a line is longer than 64 KiB or the run prints more than 1 MiB, when
-  the program hasn't ended 30 s after the stop file, and when a case takes more than 300 s.
-  It saves no step after its first complaint, which names the step it was at.
-  `check.py` prints that complaint and how long each case took.
+  the run took a minute or more. The script now stops hotfpc and every process it started,
+  by hotfpc's process group (a job object on Windows), when a line is longer than 64 KiB or
+  the run prints more than 1 MiB, when the program hasn't ended 30 s after the stop file,
+  and when a case takes more than 300 s, and at the end of every case. It saves no step
+  after its first complaint, which names the step it was at. `check.py` prints that
+  complaint and how long each case took.
 - A swap no longer overwrites a value the program writes while the swap loads with a
   changed initial value. The agent compared the variable with its old initial value
   before it stopped the program's threads, and copied the new one in unconditionally once

@@ -172,7 +172,11 @@ if platform.machine().lower() not in ("x86_64", "amd64"):
         EXPECT[name] = (1, 0, 0)
         RESTARTS[name] = 0
 names = sys.argv[1:] or list(EXPECT)
-run = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True)
+# scenario.py writes UTF-8 to this script whatever the console's encoding, and this script
+# prints what its console can't show escaped
+run = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True,
+                     encoding="utf-8", errors="backslashreplace", env=dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace"))
+sys.stdout.reconfigure(errors="backslashreplace")
 out = run.stdout
 if os.environ.get("HOT_TRANSCRIPT"):
     with open(os.environ["HOT_TRANSCRIPT"], "w") as f:
@@ -190,11 +194,10 @@ for name in names:
     # matches a whole record from its start, so a line of the program that has a driver's
     # words in it is no record of the driver's
     lines = re.findall(r"^ *\d+\.\d+s  (.*)$", body or "", re.M)
-    # the script's first complaint, such as a step it gave up waiting at, and how long the
-    # case took (the time of its last line)
+    # the script's first complaint, with the step it was at, and how long the case took, its
+    # end included
     complaint = next((line[4:] for line in lines if line.startswith("!!! ")), None)
-    times = re.findall(r"^ *(\d+\.\d+)s  ", body or "", re.M)
-    took = "; took %s s" % times[-1] if times else ""
+    took = next(("; took %s s" % m.group(1) for m in (re.match(r"--- the case took ([\d.]+) s$", line) for line in lines) if m), "")
     ends = [m for m in (re.match(r"\[hot\] the program ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts$", line) for line in lines) if m]
     end = ends[-1] if ends else None
     if not end:
