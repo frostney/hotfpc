@@ -1572,9 +1572,9 @@ MAX_TICKS = 1000
 # close: it looks for the stop file before every tick, 0.3 s apart, and the driver then prints
 # its closing line. The same again bounds stopping them all at the end of a case.
 STOP_TIMEOUT = 30
-# The longest a case may take, from the driver's start to the stop file. The slowest system in
-# CI runs all the cases in under 4 minutes, none in more than 10 s; a case that takes longer
-# hangs, and the script stops it at the step it is at.
+# The longest a case may take, from the driver's start. The slowest system in CI, macOS
+# x86-64, runs all the cases in under 4 minutes, the slowest of them in under 15 s; a case that
+# takes longer hangs, and the script stops it at the step it is at.
 CASE_TIMEOUT = 300
 # The longest line, without its line ending, and the most output of a case. A program whose
 # memory a swap broke can print a string of a wrong length: gigabytes on one line, which the
@@ -1638,29 +1638,26 @@ class Processes:
 
     def start(self, command, env):
         if sys.platform == "win32":
-            # suspended until it is in the job, so that every process it starts is in it too
-            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
-                                            creationflags=0x4)   # CREATE_SUSPENDED
+            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
             self.job = self.windows_job()
         else:
             self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
                                             start_new_session=True)
 
     def windows_job(self):
-        """A job object that ends its processes when its last handle closes, with the suspended
-        driver in it, which then runs."""
+        """A job object that ends its processes when its last handle closes, with the driver in
+        it; the processes the driver starts join it. The driver is in it before it starts any
+        but its first, fpc -iV, which may start a few milliseconds earlier: should that one hang,
+        stopping the job ends the driver but not it."""
         import ctypes
         from ctypes import wintypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        ntdll = ctypes.WinDLL("ntdll")
         kernel32.CreateJobObjectW.restype = wintypes.HANDLE
         kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
         kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
         kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
         kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
         kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-        ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
-        ntdll.NtResumeProcess.restype = ctypes.c_long
 
         class Basic(ctypes.Structure):
             _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
@@ -1681,15 +1678,12 @@ class Processes:
             limits.BasicLimitInformation.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             if kernel32.SetInformationJobObject(job, 9, ctypes.addressof(limits), ctypes.sizeof(limits)) \
                     and kernel32.AssignProcessToJobObject(job, int(self.process._handle)):
-                if ntdll.NtResumeProcess(int(self.process._handle)) == 0:
-                    return job
-                error = 0
-            else:
-                error = ctypes.get_last_error()
+                return job
+            error = ctypes.get_last_error()
             kernel32.CloseHandle(job)
         self.process.kill()
         self.process.wait()
-        raise ctypes.WinError(error) if error else OSError("the driver did not start: NtResumeProcess failed")
+        raise ctypes.WinError(error)
 
     def stop(self, gently=False):
         """Stops every one of them that still runs. Gently: SIGTERM first, and SIGKILL to what

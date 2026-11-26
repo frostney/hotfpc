@@ -80,7 +80,8 @@ case was at, after which it saves no more files. It complains when:
 - the run prints a line longer than 64 KiB, or more than 1 MiB in all (a case prints a few
   kilobytes; a program whose memory a swap broke can print a string of a wrong length,
   gigabytes on one line);
-- the case runs for more than 300 s from hotfpc's start (in CI no case takes more than 10 s).
+- the case runs for more than 300 s from hotfpc's start (in CI the slowest case takes under
+  15 s).
 
 Ctrl+C stops them too, and so do `SIGTERM` and `SIGHUP` to `check.py` or `scenario.py` on
 macOS and Linux; on Windows the job object ends them when the script ends.
