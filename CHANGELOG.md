@@ -23,8 +23,8 @@
   before and after, so it swapped the new code in on the old storage. hotfpc now has fpc keep
   the assembler it assembles each object from (`-a`, `<unit>.s` beside `<unit>.o`), and the
   agent reads each variable's size there. A variable the new code would share with the
-  program, whose size it can't read there for either version, needs a restart: `the size of
-  variable <name> is unknown: ...`
+  program needs a restart when its size can't be read there for the version the program
+  runs, the new one or both: `the size of variable <name> is unknown: ...`
   ([#43](https://github.com/frostney/hotfpc/issues/43)).
 - A variable added or removed next to another no longer needs a restart on macOS and Linux
   arm64. The agent restarted when the distance from a variable to the next symbol changed
