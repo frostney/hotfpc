@@ -18,12 +18,19 @@ The [releases](https://github.com/frostney/hotfpc/releases) have an archive per 
 on they have all five; 1.1.0 has `macos-arm64`, `linux-x64` and `windows-x64`.
 
 The Homebrew formula, `frostney/tap/hotfpc`, installs the release binary for macOS and
-Linux, on arm64 and x86-64. It doesn't install fpc, and Homebrew has no prebuilt fpc for
-Intel Macs, so there fpc comes from the
-[freepascal.org](https://www.freepascal.org/download.html) installer:
+Linux, on arm64 and x86-64. It doesn't install fpc. On macOS on Apple silicon and on
+Linux, install both:
 
 ```sh
-brew install fpc frostney/tap/hotfpc    # an Intel Mac: brew install frostney/tap/hotfpc
+brew install fpc frostney/tap/hotfpc
+```
+
+Homebrew has no prebuilt fpc for Intel Macs, so there fpc comes from the
+[freepascal.org](https://www.freepascal.org/download.html) installer, and Homebrew installs
+only hotfpc:
+
+```sh
+brew install frostney/tap/hotfpc
 ```
 
 ## Compilers

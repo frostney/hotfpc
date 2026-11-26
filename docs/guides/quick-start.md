@@ -41,6 +41,11 @@ into a directory on your `PATH`, here `~/.local/bin`:
 curl -LO https://github.com/frostney/hotfpc/releases/download/1.2.0/hotfpc-1.2.0-linux-x64.tar.gz
 curl -LO https://github.com/frostney/hotfpc/releases/download/1.2.0/hotfpc-1.2.0-checksums.txt
 grep linux-x64 hotfpc-1.2.0-checksums.txt | sha256sum -c    # hotfpc-1.2.0-linux-x64.tar.gz: OK
+```
+
+Go on only once it prints `OK`:
+
+```sh
 tar -xzf hotfpc-1.2.0-linux-x64.tar.gz
 mkdir -p ~/.local/bin
 cp hotfpc-1.2.0-linux-x64/hotfpc ~/.local/bin/
