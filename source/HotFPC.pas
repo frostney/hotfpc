@@ -16,8 +16,9 @@ program HotFPC;
   fpc 3.2.2 or later.
 
   --fpc       the compiler (default: fpc)
-  --ppudump   ppudump of the same compiler, for the check of layouts
-              (default: next to the compiler; without one the check is off)
+  --ppudump   ppudump of the same compiler, for the check of layouts (default: next to
+              the compiler fpc runs, as fpc -PB names it, or else next to fpc; without
+              one the check is off)
   --run       a program to start the built program with, such as wine (default: wine
               when the target is Windows and this is not)
   --settle    how long a save must stay unchanged before it is compiled (default 2 ms)
@@ -1109,15 +1110,26 @@ type
     function DumpText(const APPUPath: string): string; virtual;
   public
     constructor Create(const APPUDump: string);
-    { The ppudump next to the compiler (the named one's folder, or the first in ASearchPath
-      when the compiler is a bare name), or '' when there is none. AExecutableExtension is
-      '.exe' on Windows, where a bare name such as fpc is found as fpc.exe. }
-    class function Locate(const ACompiler, AExecutableExtension, ASearchPath: string): string;
+    { The ppudumps that may be the compiler's, in the order to try them, each once: the one
+      next to ABinary, the compiler binary that fpc runs (ppcx64, as TCompiler.CompilerBinary
+      finds it; may be ''), then the one next to ACompiler, the fpc that hotfpc runs (the
+      named one's folder; for a bare name, the file of that name in the current directory, as
+      the system runs it, or else the first in ASearchPath). A wrapper script for fpc, such as
+      one from a version manager, lives in another folder than the compiler and its ppudump.
+      AExecutableExtension is '.exe' on Windows, where a bare name such as fpc is found as
+      fpc.exe. The caller frees the list. }
+    class function Locate(const ABinary, ACompiler, AExecutableExtension, ASearchPath: string): TStringList;
     { A ppudump that cannot read this compiler's units (another version: "Unsupported PPU
       version") would make every interface look unchanged. Tries it on one of the units in
       AUnitsDirectory; True when it works or there is no unit yet, otherwise False and
       AReason is the first line it printed. }
     function Probe(const AUnitsDirectory: string; out AReason: string): Boolean;
+    { Whether AUnitsDirectory holds a unit file to try a ppudump on. }
+    class function HasUnits(const AUnitsDirectory: string): Boolean;
+    { A reader of the first of ACandidates that Probe accepts on AUnitsDirectory, or nil when
+      none does; AFirstReason is then Probe's reason for the first. The caller frees it. }
+    class function Choose(const ACandidates: TStrings; const AUnitsDirectory: string;
+      out AFirstReason: string): TLayoutReader;
     { The layout of a unit file, its interface and its implementation section. Units of the
       program that it refers to are looked for in AOwnDirectory: their numbering moves
       between compiles, their names do not. The caller frees the layout. }
@@ -1813,21 +1825,73 @@ begin
   RunCommand(FPPUDump, [APPUPath], Result, [poStderrToOutPut]);
 end;
 
-class function TLayoutReader.Locate(const ACompiler, AExecutableExtension, ASearchPath: string): string;
+class function TLayoutReader.Locate(const ABinary, ACompiler, AExecutableExtension, ASearchPath: string): TStringList;
 var
-  Directory, Found: string;
-begin
-  Result := '';
-  Directory := ExtractFilePath(ACompiler);
-  if Directory = '' then
+  Candidates: TStringList;
+
+  procedure AddNextTo(const AFile: string);
+  var
+    Name: string;
   begin
-    Found := ExeSearch(ACompiler, ASearchPath);
-    if (Found = '') and (ExtractFileExt(ACompiler) = '') then
-      Found := ExeSearch(ACompiler + AExecutableExtension, ASearchPath);
-    Directory := ExtractFilePath(Found);
+    if AFile = '' then
+      Exit;
+    Name := ExtractFilePath(ExpandFileName(AFile)) + PPUDumpName + AExecutableExtension;
+    if FileExists(Name) and (Candidates.IndexOf(Name) < 0) then
+      Candidates.Add(Name);
   end;
-  if FileExists(Directory + PPUDumpName + AExecutableExtension) then
-    Result := Directory + PPUDumpName + AExecutableExtension;
+
+  { the file a bare name runs: TProcess runs one of that name in the current directory }
+  function Resolve(const AName: string): string;
+  begin
+    if FileExists(AName) then
+      Result := AName
+    else
+      Result := ExeSearch(AName, ASearchPath);
+  end;
+
+var
+  Found: string;
+begin
+  Candidates := TStringList.Create;
+  { two folders whose names differ only in case are two on most file systems }
+  Candidates.CaseSensitive := True;
+  AddNextTo(ABinary);
+  Found := ACompiler;
+  if ExtractFilePath(ACompiler) = '' then
+  begin
+    Found := Resolve(ACompiler);
+    if (Found = '') and (ExtractFileExt(ACompiler) = '') then
+      Found := Resolve(ACompiler + AExecutableExtension);
+  end;
+  AddNextTo(Found);
+  Result := Candidates;
+end;
+
+class function TLayoutReader.HasUnits(const AUnitsDirectory: string): Boolean;
+var
+  Search: TSearchRec;
+begin
+  Result := FindFirst(AUnitsDirectory + '*' + PPUExtension, faAnyFile, Search) = 0;
+  FindClose(Search);
+end;
+
+class function TLayoutReader.Choose(const ACandidates: TStrings; const AUnitsDirectory: string;
+  out AFirstReason: string): TLayoutReader;
+var
+  Reason: string;
+  I: Integer;
+begin
+  AFirstReason := '';
+  for I := 0 to ACandidates.Count - 1 do
+  begin
+    Result := TLayoutReader.Create(ACandidates[I]);
+    if Result.Probe(AUnitsDirectory, Reason) then
+      Exit;
+    if I = 0 then
+      AFirstReason := Reason;
+    FreeAndNil(Result);
+  end;
+  Result := nil;
 end;
 
 function TLayoutReader.Probe(const AUnitsDirectory: string; out AReason: string): Boolean;
@@ -2718,6 +2782,10 @@ type
     { Runs "<compiler> -iV". False, with the one-line reason in AProblem, when the compiler
       cannot be run, its version cannot be read, or it is older than MinimumVersion. }
     function VerifyVersion(out AProblem: string): Boolean;
+    { The compiler binary that fpc runs for the program, such as /usr/lib/fpc/3.2.2/ppcx64:
+      runs "<compiler> -PB" after the program's options that choose it (-V, -P, -Xp), as
+      fpc reads them in order. '' when that does not name a file (see ReadBinary). }
+    function CompilerBinary: string;
     { Writes out the agent's source and compiles it once into the workspace's agent
       directory. fpc 3.3.1's -Fa cannot load a unit it would recompile, so the source is not on
       the program's search path. False when it did not compile; AOutput is then fpc's output. }
@@ -2765,6 +2833,11 @@ type
     class function AffectsUnit(const AChangedFile, AUnitRecord: string): Boolean;
     { What VerifyVersion decides from the output of -iV. }
     class function JudgeVersion(const ACompiler, AOutput: string; out AProblem: string): Boolean;
+    { The file that the output of -PB names, with its whole path: its last line that names a
+      file, otherwise ''.
+      fpc 3.2.2 prints the bare name, such as ppcx64, of a compiler it cannot find, and a
+      wrapper may print lines of its own before or after fpc's. }
+    class function ReadBinary(const AOutput: string): string;
   end;
 
 const
@@ -2791,6 +2864,7 @@ const
   AssemblerOnlyOption = '-s';
   GNUAssemblerOption = '-Aas';
   VersionOption = '-iV';
+  CompilerBinaryOption = '-PB';
   UnitDirectoryOption = '-FU';
   UnitPathOption = '-Fu';
   OutputOption = '-o';
@@ -2809,6 +2883,9 @@ const
     built with them too. }
   AgentOptionPrefixes: array[0..13] of string = ('-T', '-P', '-Cp', '-Cf', '-Ca', '-XP', '-Fl', '-Fu',
     '-k', '-XR', '-Xd', '-n', '@', '-V');
+  { Options that choose the compiler binary fpc runs: its version, the target processor and
+    the folder searched first. }
+  BinaryOptionPrefixes: array[0..2] of string = ('-V', '-P', '-Xp');
   RequirementText = ' or later';
 
 function StartsWithAny(const AText: string; const APrefixes: array of string): Boolean;
@@ -2995,6 +3072,54 @@ begin
     end;
   end;
   Result := JudgeVersion(FCompiler, Output, AProblem);
+end;
+
+function TCompiler.CompilerBinary: string;
+var
+  Arguments: TStringList;
+  Output: string;
+  Status, I: Integer;
+begin
+  Result := '';
+  Output := '';
+  Arguments := TStringList.Create;
+  try
+    for I := 0 to FOptions.Count - 1 do
+      if StartsWithAny(FOptions[I], BinaryOptionPrefixes) then
+        Arguments.Add(FOptions[I]);
+    Arguments.Add(CompilerBinaryOption);
+    try
+      if (RunCommandInDir(FDirectory, FCompiler, Arguments.ToStringArray, Output, Status) <> 0) or (Status <> 0) then
+        Exit;
+    except
+      on Exception do
+        Exit;
+    end;
+  finally
+    Arguments.Free;
+  end;
+  Result := ReadBinary(Output);
+end;
+
+class function TCompiler.ReadBinary(const AOutput: string): string;
+var
+  Lines: TStringList;
+  I: Integer;
+begin
+  Result := '';
+  Lines := TStringList.Create;
+  try
+    Lines.Text := AOutput;
+    for I := Lines.Count - 1 downto 0 do
+      if (Trim(Lines[I]) <> '') and FileExists(Trim(Lines[I])) then
+      begin
+        { fpc prints a bare name for a compiler it found in the current directory }
+        Result := ExpandFileName(Trim(Lines[I]));
+        Break;
+      end;
+  finally
+    Lines.Free;
+  end;
 end;
 
 class function TCompiler.AgentOptions(const AOptions: TStrings): TStringList;
@@ -3278,7 +3403,9 @@ type
   TDriver = class
   private
     FOptions: TOptions;
-    FPPUDump: string;
+    { the ppudumps to try for the check of layouts: the named one, or those
+      TLayoutReader.Locate found; ProbeLayouts keeps the first that reads the units in FReader }
+    FPPUDumps: TStringList;
     FWorkspace: TWorkspace;
     FReporter: TReporter;
     FCompiler: TCompiler;
@@ -3403,10 +3530,6 @@ begin
   FWatcher := TSourceWatcher.Create(FWorkspace.SourceDirectory, AOptions.CompilerOptions);
   FLink := TAgentLink.Create(AOptions.WinePaths);
   FBased := TStringList.Create;
-  FPPUDump := AOptions.PPUDump;
-  if FPPUDump = '' then
-    FPPUDump := TLayoutReader.Locate(AOptions.Compiler, ExtractFileExt(ParamStr(0)),
-      GetEnvironmentVariable('PATH'));
   FVersion := 1;
   FStart := Now;
 end;
@@ -3417,6 +3540,7 @@ begin
   FSizes.Free;
   FDigests.Free;
   FBased.Free;
+  FPPUDumps.Free;
   FLayouts.Free;
   FReader.Free;
   FLink.Free;
@@ -3502,20 +3626,24 @@ end;
 
 procedure TDriver.ProbeLayouts;
 var
-  Reason: string;
+  FirstReason: string;
 begin
-  if FPPUDump = '' then
+  { a program without units of its own yet: Probe would take the first ppudump untried, so the
+    choice waits for a restart that brings a unit; the program file has no unit file to check }
+  if (FPPUDumps.Count = 0) or not TLayoutReader.HasUnits(FWorkspace.UnitsDirectory) then
     Exit;
-  FReader := TLayoutReader.Create(FPPUDump);
-  if FReader.Probe(FWorkspace.UnitsDirectory, Reason) then
-    FLayouts := TLayoutHistory.Create(FReader, FWorkspace.LiveDirectory, FWorkspace.UnitsDirectory)
-  else
+  FReader := TLayoutReader.Choose(FPPUDumps, FWorkspace.UnitsDirectory, FirstReason);
+  if FReader <> nil then
   begin
-    WriteLn('[hot] ', FPPUDump, ' cannot read this compiler''s units (', Reason,
-      '): the check of interface layouts is off; --ppudump names one that can');
-    FPPUDump := '';
-    FreeAndNil(FReader);
+    FLayouts := TLayoutHistory.Create(FReader, FWorkspace.LiveDirectory, FWorkspace.UnitsDirectory);
+    Exit;
   end;
+  { the first is the one hotfpc looked for first: next to the compiler, or the named one }
+  if FPPUDumps.Count > 0 then
+    WriteLn('[hot] ', FPPUDumps[0], ' cannot read this compiler''s units (', FirstReason,
+      '): the check of interface layouts is off; --ppudump names one that can');
+  { once: the builds after this one do not try again }
+  FPPUDumps.Clear;
 end;
 
 function TDriver.StartProgram: TProcess;
@@ -4169,7 +4297,9 @@ begin
   begin
     FLayouts.Free;
     FLayouts := TLayoutHistory.Create(FReader, FWorkspace.LiveDirectory, FWorkspace.UnitsDirectory);
-  end;
+  end
+  else
+    ProbeLayouts;
   Inc(FVersion);
   Inc(FRestarted);
   FProgram := StartProgram;
@@ -4434,7 +4564,15 @@ begin
   RemoveTree(ExcludeTrailingPathDelimiter(FWorkspace.HotDirectory));
   ForceDirectories(FWorkspace.UnitsDirectory);
   ForceDirectories(FWorkspace.LiveDirectory);
-  if FPPUDump = '' then
+  if FOptions.PPUDump <> '' then
+  begin
+    FPPUDumps := TStringList.Create;
+    FPPUDumps.Add(FOptions.PPUDump);
+  end
+  else
+    FPPUDumps := TLayoutReader.Locate(FCompiler.CompilerBinary, FOptions.Compiler, ExtractFileExt(ParamStr(0)),
+      GetEnvironmentVariable('PATH'));
+  if FPPUDumps.Count = 0 then
     WriteLn('[hot] no ppudump next to the compiler (--ppudump): the check of interface layouts is off');
   if not FCompiler.BuildAgent(Output) then
   begin
@@ -5888,20 +6026,107 @@ begin
   end;
 end;
 
+{ What TLayoutReader.Locate finds, separated by "|". }
+function Located(const ABinary, ACompiler, AExecutableExtension, ASearchPath: string): string;
+var
+  Found: TStringList;
+  I: Integer;
+begin
+  Found := TLayoutReader.Locate(ABinary, ACompiler, AExecutableExtension, ASearchPath);
+  try
+    Result := '';
+    for I := 0 to Found.Count - 1 do
+    begin
+      if I > 0 then
+        Result := Result + '|';
+      Result := Result + Found[I];
+    end;
+  finally
+    Found.Free;
+  end;
+end;
+
 procedure TestLocate;
 var
-  Root: string;
+  Root, Wrapper, Compiler, Current{$ifdef linux}, Upper, Lower{$endif}: string;
 begin
   Root := MakeTestDirectory('locate');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', '', ''), '', 'no ppudump next to the compiler');
+  ExpectEqual(Located('', Root + 'fpc', '', ''), '', 'no ppudump next to the compiler');
   WriteTestFile(Root + 'ppudump', '');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', '', ''), Root + 'ppudump', 'a ppudump next to it');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc', '.exe', ''), '', 'on Windows it is ppudump.exe');
+  ExpectEqual(Located('', Root + 'fpc', '', ''), Root + 'ppudump', 'a ppudump next to it');
+  ExpectEqual(Located('', Root + 'fpc', '.exe', ''), '', 'on Windows it is ppudump.exe');
   WriteTestFile(Root + 'ppudump.exe', '');
-  ExpectEqual(TLayoutReader.Locate(Root + 'fpc.exe', '.exe', ''), Root + 'ppudump.exe', 'and found by that name');
+  ExpectEqual(Located('', Root + 'fpc.exe', '.exe', ''), Root + 'ppudump.exe', 'and found by that name');
   WriteTestFile(Root + 'fpc.exe', '');
-  ExpectEqual(TLayoutReader.Locate('fpc', '.exe', ExcludeTrailingPathDelimiter(Root)), Root + 'ppudump.exe',
+  ExpectEqual(Located('', 'fpc', '.exe', ExcludeTrailingPathDelimiter(Root)), Root + 'ppudump.exe',
     'a bare fpc on the search path is fpc.exe on Windows');
+  { a bare name runs the file of that name in the current directory, as TProcess does }
+  WriteTestFile(Root + 'fpc', '');
+  Current := GetCurrentDir;
+  SetCurrentDir(Root);
+  try
+    ExpectEqual(Located('', 'fpc', '', Root + 'nowhere'), Root + 'ppudump', 'a bare fpc in the current directory');
+    ExpectEqual(Located('', 'fpc', '.exe', Root + 'nowhere'), Root + 'ppudump.exe', 'also as fpc.exe');
+    ExpectEqual(Located('ppcx64', 'fpc', '', Root + 'nowhere'), Root + 'ppudump',
+      'a bare compiler binary in the current directory, as fpc -PB names one there');
+  finally
+    SetCurrentDir(Current);
+  end;
+  { a wrapper script for fpc in a folder of its own, and the compiler with its ppudump in another }
+  Wrapper := MakeTestDirectory('locate-wrapper');
+  WriteTestFile(Wrapper + 'fpc', '');
+  Compiler := MakeTestDirectory('locate-compiler');
+  WriteTestFile(Compiler + 'ppcx64', '');
+  ExpectEqual(Located(Compiler + 'ppcx64', Wrapper + 'fpc', '', ''), '',
+    'none next to the compiler binary or the wrapper');
+  WriteTestFile(Compiler + 'ppudump', '');
+  ExpectEqual(Located(Compiler + 'ppcx64', Wrapper + 'fpc', '', ''), Compiler + 'ppudump',
+    'the one next to the compiler binary that the wrapper runs');
+  ExpectEqual(Located(Compiler + 'ppcx64', 'fpc', '', ExcludeTrailingPathDelimiter(Wrapper)),
+    Compiler + 'ppudump', 'also for a bare fpc that is the wrapper');
+  WriteTestFile(Wrapper + 'ppudump', '');
+  ExpectEqual(Located(Compiler + 'ppcx64', Wrapper + 'fpc', '', ''), Compiler + 'ppudump|' + Wrapper + 'ppudump',
+    'the compiler binary''s first, the units are its; then fpc''s, should that one not read them');
+  ExpectEqual(Located(Compiler + 'ppcx64', Compiler + 'fpc', '', ''), Compiler + 'ppudump',
+    'each once');
+  ExpectEqual(Located('', Wrapper + 'fpc', '', ''), Wrapper + 'ppudump',
+    'fpc''s own when no compiler binary is known');
+  DeleteFile(Compiler + 'ppudump');
+  ExpectEqual(Located(Compiler + 'ppcx64', Wrapper + 'fpc', '', ''), Wrapper + 'ppudump',
+    'and when none is next to the compiler binary');
+  {$ifdef linux}
+  { Linux file systems tell case apart; macOS and Windows ones usually don't }
+  Upper := MakeTestDirectory('LOCATE-CASE');
+  Lower := MakeTestDirectory('locate-case');
+  WriteTestFile(Upper + 'ppudump', '');
+  WriteTestFile(Lower + 'ppudump', '');
+  ExpectEqual(Located(Upper + 'ppcx64', Lower + 'fpc', '', ''), Upper + 'ppudump|' + Lower + 'ppudump',
+    'two folders whose names differ only in case');
+  {$endif}
+end;
+
+procedure TestReadBinary;
+var
+  Root, Current: string;
+begin
+  Root := MakeTestDirectory('binary');
+  WriteTestFile(Root + 'ppcx64', '');
+  ExpectEqual(TCompiler.ReadBinary(Root + 'ppcx64' + LineEnding), Root + 'ppcx64', 'the file -PB names');
+  ExpectEqual(TCompiler.ReadBinary('a wrapper''s own line' + LineEnding + Root + 'ppcx64' + LineEnding + LineEnding),
+    Root + 'ppcx64', 'after a wrapper''s line');
+  ExpectEqual(TCompiler.ReadBinary(Root + 'ppcx64' + LineEnding + 'wrapper: done' + LineEnding),
+    Root + 'ppcx64', 'and before one');
+  ExpectEqual(TCompiler.ReadBinary('ppcx64' + LineEnding), '', 'the bare name of a compiler fpc 3.2.2 cannot find');
+  Current := GetCurrentDir;
+  SetCurrentDir(Root);
+  try
+    ExpectEqual(TCompiler.ReadBinary('ppcx64' + LineEnding), Root + 'ppcx64',
+      'with its path, the bare name of one fpc found in the current directory');
+  finally
+    SetCurrentDir(Current);
+  end;
+  ExpectEqual(TCompiler.ReadBinary(Root + 'ppca64' + LineEnding), '', 'a file that is not there');
+  ExpectEqual(TCompiler.ReadBinary(''), '', 'no output');
 end;
 
 { The lines of a text, each ended. }
@@ -7248,6 +7473,110 @@ begin
   end;
 end;
 
+{ A stand-in for fpc that prints AOutput for -PB when it gets exactly AArguments, and its
+  arguments otherwise, and ends with AExitCode. }
+function WriteFakeFPC(const ADirectory, AName, AArguments: string; const AOutput: array of string;
+  const AExitCode: Integer): string;
+var
+  Lines: string;
+  I: Integer;
+begin
+  Lines := '';
+  for I := 0 to High(AOutput) do
+    {$ifdef windows}
+    Lines := Lines + 'echo ' + AOutput[I] + LineEnding;
+    {$else}
+    Lines := Lines + 'printf ''%s\n'' ''' + AOutput[I] + '''' + LineEnding;
+    {$endif}
+  {$ifdef windows}
+  Result := ADirectory + AName + '.bat';
+  WriteTestFile(Result, '@echo off' + LineEnding
+    + 'if not "%*"=="' + AArguments + '" (' + LineEnding + 'echo %*' + LineEnding + 'exit /b 1' + LineEnding + ')' + LineEnding
+    + Lines + 'exit /b ' + IntToStr(AExitCode) + LineEnding);
+  {$else}
+  Result := ADirectory + AName;
+  WriteTestFile(Result, '#!/bin/sh' + LineEnding
+    + 'if [ "$*" != "' + AArguments + '" ]; then echo "$*"; exit 1; fi' + LineEnding
+    + Lines + 'exit ' + IntToStr(AExitCode) + LineEnding);
+  FpChmod(Result, &755);
+  {$endif}
+end;
+
+function CompilerBinaryOf(const ACompiler: string; const AOptions: array of string): string;
+var
+  Arguments: array of string;
+  Options: TOptions;
+  Workspace: TWorkspace;
+  Compiler: TCompiler;
+  I: Integer;
+begin
+  SetLength(Arguments, Length(AOptions) + 3);
+  Arguments[0] := '--fpc';
+  Arguments[1] := ACompiler;
+  for I := 0 to High(AOptions) do
+    Arguments[I + 2] := AOptions[I];
+  Arguments[High(Arguments)] := 'demo.pas';
+  Options := ParseOptions(Arguments, False);
+  Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
+  Compiler := TCompiler.Create(Options, Workspace);
+  try
+    Result := Compiler.CompilerBinary;
+  finally
+    Compiler.Free;
+    Workspace.Free;
+    Options.Free;
+  end;
+end;
+
+procedure TestCompilerBinary;
+var
+  Root: string;
+begin
+  Root := MakeTestDirectory('compiler-binary');
+  WriteTestFile(Root + 'ppcx64', '');
+  ExpectEqual(CompilerBinaryOf(WriteFakeFPC(Root, 'wrapper', '-V3.2.2 -Px86_64 -Xpbin -PB',
+    ['wrapper: start', Root + 'ppcx64', 'wrapper: done'], 0), ['-V3.2.2', '-O2', '-Px86_64', '-Fuunits', '-Xpbin']),
+    Root + 'ppcx64', 'fpc -PB after the options that choose the compiler, in their order, and no others');
+  ExpectEqual(CompilerBinaryOf(WriteFakeFPC(Root, 'failing', '-PB', [Root + 'ppcx64'], 1), []), '',
+    'none from an fpc that fails');
+  ExpectEqual(CompilerBinaryOf(Root + 'missing', []), '', 'none from an fpc that does not run');
+end;
+
+procedure TestChoose;
+const
+  Stale = 'Unsupported PPU version 207. Expecting PPU version 208.';
+var
+  Root, Units, Reason: string;
+  Candidates: TStringList;
+  Reader: TLayoutReader;
+begin
+  Root := MakeTestDirectory('choose');
+  Units := Root + 'units' + PathDelim;
+  WriteTestFile(Units + 'u.ppu', '');
+  Candidates := TStringList.Create;
+  try
+    Candidates.Add(WriteFakeCompiler(Root, 'stale', Stale));
+    Candidates.Add(WriteFakeCompiler(Root, 'matching', '[{"Interface":{}}]'));
+    Reader := TLayoutReader.Choose(Candidates, Units, Reason);
+    try
+      Expect(Reader <> nil, 'a ppudump that reads the units');
+      if Reader <> nil then
+        ExpectEqual(Reader.PPUDump, Candidates[1], 'the second, when the first cannot');
+    finally
+      Reader.Free;
+    end;
+    Expect(TLayoutReader.HasUnits(Units), 'a unit file to try them on');
+    Expect(not TLayoutReader.HasUnits(Root), 'none in a folder without one');
+    Candidates.Delete(1);
+    Reader := TLayoutReader.Choose(Candidates, Units, Reason);
+    Expect(Reader = nil, 'none when no ppudump reads them');
+    ExpectEqual(Reason, Stale, 'and the reason of the first');
+    Reader.Free;
+  finally
+    Candidates.Free;
+  end;
+end;
+
 procedure TestVerifyVersion;
 var
   Root, Old, Problem: string;
@@ -7473,6 +7802,9 @@ begin
     TestImplementationUnitsOfTheProgram;
     TestProbe;
     TestLocate;
+    TestReadBinary;
+    TestCompilerBinary;
+    TestChoose;
     TestHistory;
     TestReadDataSizes;
     TestStringBytes;

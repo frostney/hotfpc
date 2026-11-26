@@ -260,8 +260,8 @@ ppudump only turn a check off:
 | `cannot tell which version <fpc> is (-iV printed <text>); hotfpc requires 3.2.2 or later` | `--fpc` names something that isn't fpc, or a wrapper that prints something else first. |
 | `cannot run <fpc>; hotfpc requires 3.2.2 or later` | fpc isn't on `PATH`, or `--fpc` names a file that doesn't run. |
 | `cannot run <fpc> (<reason>); hotfpc requires 3.2.2 or later` | The same, with the system's reason. |
-| `no ppudump next to the compiler (--ppudump): the check of interface layouts is off` | hotfpc carries on, without the check of layouts. Name ppudump with `--ppudump`. |
-| `<ppudump> cannot read this compiler's units (<reason>): the check of interface layouts is off; --ppudump names one that can` | The ppudump found belongs to another fpc. hotfpc carries on without the check. |
+| `no ppudump next to the compiler (--ppudump): the check of interface layouts is off` | hotfpc found none where [`--ppudump`](cli.md#options) says it looks. It carries on, without the check of layouts. Name ppudump with `--ppudump`. |
+| `<ppudump> cannot read this compiler's units (<reason>): the check of interface layouts is off; --ppudump names one that can` | The ppudump hotfpc found first belongs to another fpc, and so does any other it tried ([`--ppudump`](cli.md#options)). hotfpc carries on without the check. |
 | `the agent did not compile:` | fpc's output follows. Your options for the target or paths may not suit a unit compiled on its own. |
 | `cannot listen on 127.0.0.1` | hotfpc couldn't open a TCP port on the loopback interface. |
 | `the program ended (exit code <n>) before hot reloading could start` | The program ended, or crashed, before its agent connected. hotfpc ends with its exit code, `-1` when a signal ended it; after a restart, it waits for the next save instead. |

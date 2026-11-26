@@ -53,6 +53,7 @@ jobs:
       - name: Show the tools
         run: |
           fpc -iV
+          fpc -PB
           command -v fpcres ppudump
 
       - name: Build hotfpc and run the unit tests
@@ -67,6 +68,16 @@ jobs:
 
       - name: Scenarios
         run: python3 tests/scenarios/check.py
+
+      # hotfpc finds the compiler's ppudump also when fpc is a wrapper script in another
+      # directory, such as a version manager's: check.py fails a case whose run has the
+      # check of layouts off
+      - name: Scenarios that check layouts, with fpc behind a wrapper
+        run: |
+          mkdir -p build/wrapper
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$(command -v fpc)" > build/wrapper/fpc
+          chmod +x build/wrapper/fpc
+          HOT_DRIVER_OPTS="--fpc $PWD/build/wrapper/fpc" python3 tests/scenarios/check.py records hidden
 
       - name: The agent on its own
         run: python3 tests/agent/check.py
@@ -102,7 +113,8 @@ jobs:
       - name: Show the tools
         run: |
           fpc -iV
-          command -v fpcres
+          fpc -Px86_64 -PB
+          command -v fpcres ppudump
 
       - name: Build hotfpc.exe and run the unit tests
         shell: cmd
