@@ -1124,6 +1124,8 @@ type
       AUnitsDirectory; True when it works or there is no unit yet, otherwise False and
       AReason is the first line it printed. }
     function Probe(const AUnitsDirectory: string; out AReason: string): Boolean;
+    { Whether AUnitsDirectory holds a unit file to try a ppudump on. }
+    class function HasUnits(const AUnitsDirectory: string): Boolean;
     { A reader of the first of ACandidates that Probe accepts on AUnitsDirectory, or nil when
       none does; AFirstReason is then Probe's reason for the first. The caller frees it. }
     class function Choose(const ACandidates: TStrings; const AUnitsDirectory: string;
@@ -1851,6 +1853,8 @@ var
   Found: string;
 begin
   Candidates := TStringList.Create;
+  { two folders whose names differ only in case are two on most file systems }
+  Candidates.CaseSensitive := True;
   AddNextTo(ABinary);
   Found := ACompiler;
   if ExtractFilePath(ACompiler) = '' then
@@ -1861,6 +1865,14 @@ begin
   end;
   AddNextTo(Found);
   Result := Candidates;
+end;
+
+class function TLayoutReader.HasUnits(const AUnitsDirectory: string): Boolean;
+var
+  Search: TSearchRec;
+begin
+  Result := FindFirst(AUnitsDirectory + '*' + PPUExtension, faAnyFile, Search) = 0;
+  FindClose(Search);
 end;
 
 class function TLayoutReader.Choose(const ACandidates: TStrings; const AUnitsDirectory: string;
@@ -3616,6 +3628,10 @@ procedure TDriver.ProbeLayouts;
 var
   FirstReason: string;
 begin
+  { a program without units of its own yet: Probe would take the first ppudump untried, so the
+    choice waits for a restart that brings a unit; the program file has no unit file to check }
+  if (FPPUDumps.Count = 0) or not TLayoutReader.HasUnits(FWorkspace.UnitsDirectory) then
+    Exit;
   FReader := TLayoutReader.Choose(FPPUDumps, FWorkspace.UnitsDirectory, FirstReason);
   if FReader <> nil then
   begin
@@ -4281,7 +4297,9 @@ begin
   begin
     FLayouts.Free;
     FLayouts := TLayoutHistory.Create(FReader, FWorkspace.LiveDirectory, FWorkspace.UnitsDirectory);
-  end;
+  end
+  else
+    ProbeLayouts;
   Inc(FVersion);
   Inc(FRestarted);
   FProgram := StartProgram;
@@ -6030,7 +6048,7 @@ end;
 
 procedure TestLocate;
 var
-  Root, Wrapper, Compiler, Current: string;
+  Root, Wrapper, Compiler, Current{$ifdef linux}, Upper, Lower{$endif}: string;
 begin
   Root := MakeTestDirectory('locate');
   ExpectEqual(Located('', Root + 'fpc', '', ''), '', 'no ppudump next to the compiler');
@@ -6076,6 +6094,15 @@ begin
   DeleteFile(Compiler + 'ppudump');
   ExpectEqual(Located(Compiler + 'ppcx64', Wrapper + 'fpc', '', ''), Wrapper + 'ppudump',
     'and when none is next to the compiler binary');
+  {$ifdef linux}
+  { Linux file systems tell case apart; macOS and Windows ones usually don't }
+  Upper := MakeTestDirectory('LOCATE-CASE');
+  Lower := MakeTestDirectory('locate-case');
+  WriteTestFile(Upper + 'ppudump', '');
+  WriteTestFile(Lower + 'ppudump', '');
+  ExpectEqual(Located(Upper + 'ppcx64', Lower + 'fpc', '', ''), Upper + 'ppudump|' + Lower + 'ppudump',
+    'two folders whose names differ only in case');
+  {$endif}
 end;
 
 procedure TestReadBinary;
@@ -7538,6 +7565,8 @@ begin
     finally
       Reader.Free;
     end;
+    Expect(TLayoutReader.HasUnits(Units), 'a unit file to try them on');
+    Expect(not TLayoutReader.HasUnits(Root), 'none in a folder without one');
     Candidates.Delete(1);
     Reader := TLayoutReader.Choose(Candidates, Units, Reason);
     Expect(Reader = nil, 'none when no ppudump reads them');
