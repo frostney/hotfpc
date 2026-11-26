@@ -53,7 +53,7 @@ v<N> swapped: <units>: <n> functions redirected (<n> with other code, <n> new), 
 
 | Part | Meaning |
 | --- | --- |
-| `<units>` | The units whose object files changed. The program file is named after its source file, such as `demo` for `demo.pas`. A changed include file can change several. |
+| `<units>` | The units whose object files changed, and on macOS also those whose assembler changed apart from its comments, as a variable that grows within its padding can leave the object file the same. The program file is named after its source file, such as `demo` for `demo.pas`. A changed include file can change several. |
 | functions redirected | The program's functions that now jump to their new code. A routine nested in another isn't one: its old code stays for its parent's running frames. |
 | with other code | Of the unit's functions, those whose code differs from the running version. |
 | new | Functions the running version didn't have. |
@@ -105,7 +105,10 @@ restart needed: the sizes of variables with initial values are unknown: <why> (n
 | --- | --- | --- |
 | `<unit>.<declaration>: the declaration changed its layout or type` | A variable's type, or a record's or class's fields, in a unit, by ppudump: also when the size stays the same (`Integer` to `Single`, two fields swapped). The program file has no unit file for ppudump, so there only a change of size is found ([limits](limits.md)). | `globals`, `records`, `hidden`, `restart` |
 | `unit <unit> is not part of the running program` | The program now uses a unit of its own that it didn't use when it started, or a unit was renamed. | `newunit`, `rename`, `linkfail` |
-| `variable <name> changed size from <n> to <n> bytes` | A variable, a variable with an initial value or a typed constant changed size. | `typedconst`, `progvar`, `localconst` |
+| `variable <name> changed size from <n> to <n> bytes` | A variable, a variable with an initial value or a typed constant changed size, also within the padding before the next variable. | `typedconst`, `progvar`, `localconst`, `padvar`, `padunit` |
+| `the size of variable <name> is unknown: cannot read <file>` | macOS: the agent reads the sizes of variables, which a Mach-O object doesn't state, in the assembler beside each object file (`<unit>.s`), and couldn't read it for the new version, so a change of size within the variable's padding can't be ruled out. An unknown size is never taken as the same. | |
+| `the size of variable <name> is unknown: fpc's assembler gives none` | macOS: the assembler was read, but the agent couldn't count the variable's bytes there, such as data written with a directive it doesn't count. | |
+| `the size of variable <name> is unknown: the assembler of the version it replaces gave none` | The same for the version the program runs, which the new one replaces. | |
 | `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (<problem>)` | A Windows program: fpc didn't write the assembler that shows the sizes of the changed units' variables with initial values and typed constants, for this save, or when the program started or last started over, so one of them may have grown. | `progvar`, `startnoasm` on Windows |
 | `the sizes of variables with initial values are unknown: the sources changed while fpc compiled them` | A Windows program: the files kept changing during three compiles in a row, so the fourth's object files and its compile to assembler may come from different sources. The same after the files kept changing during the builds the program started from: until it starts over, every save that needs the sizes needs a restart. | `startcap` on Windows |
 | `the sizes of variables with initial values are unknown: the times of the sources may not show a save while fpc compiled them` | A Windows program: a save that came and was put back during the compiles, at the same size, would leave the files' times as they were, as for a file written less than 20 ms before the compile, or less than two seconds before on a file system that keeps whole seconds. Its object files and its compile to assembler may then come from different sources. The same for the builds the program started from: until it starts over, every save that needs the sizes needs a restart. | |
@@ -163,8 +166,9 @@ from starting the new one until its agent connected. With `--no-restart`, a
 not swapped: the generated code is the same (compile <ms> ms)
 ```
 
-The source changed, but fpc made the same object files from it: a comment, blank lines, or
-a change to code that nothing uses.
+The source changed, but fpc made the same object files from it, and on macOS the same
+assembler but for its comments: a comment, blank lines, or a change to code that nothing
+uses.
 
 ### Errors
 

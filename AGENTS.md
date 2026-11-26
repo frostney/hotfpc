@@ -21,7 +21,7 @@ and checks in [docs/internals/tooling.md](docs/internals/tooling.md), and the te
 | `source/HotFPC.Agent.pas` | the agent unit: object file readers, binding, relocation, the per-system code |
 | `source/HotFPC.rc` | makes the agent's source a resource of the driver; fpcres compiles it into `source/HotFPC.res` (not committed) |
 | `build.sh`, `build.bat` | the build entry points, for Unix and for Windows; keep them doing the same |
-| `tests/scenarios/` | end to end: `scenario.py` (42 programs and the edits saved into them), `check.py` (expected outcomes) |
+| `tests/scenarios/` | end to end: `scenario.py` (44 programs and the edits saved into them), `check.py` (expected outcomes) |
 | `tests/agent/check.py` | the agent on its own: a program hotfpc built, started by the script, which stands in for hotfpc on the agent's protocol |
 | `examples/demo`, `examples/lwpt`, `examples/raylib` | the README's demo program; an lwpt package with a `hot` run task; a raylib program to play with |
 | `scripts/record-demo.py` | records `docs/demo.cast` in tmux; `docs/demo.gif` and `docs/demo.mp4` are made from it |
@@ -41,11 +41,12 @@ python3 scripts/check-reference-docs.py    # docs/reference/ against the source
 npx --yes markdownlint-cli2@0.24.0         # the Markdown lint
 ```
 
-A change is done when the unit tests pass and `check.py` prints "42 of 42 cases as
+A change is done when the unit tests pass and `check.py` prints "44 of 44 cases as
 expected", and `tests/agent/check.py` passes, on every system the change can affect: macOS arm64, macOS x86-64, Linux x86-64,
 Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64 units, under Wine or on
 Windows). For Windows programs, `check.py` expects a restart in three cases where the other
-systems swap, on Windows and arm64 a swap in one where x86-64 macOS and Linux restart, and
+systems swap and a swap in one where they restart (#45), on Windows and arm64 a swap in one
+where x86-64 macOS and Linux restart, and
 on arm64 a swap in three where every x86-64 system restarts; the comments in it explain why.
 Changes to the agent or to the checks of layouts and sizes are tested with fpc 3.2.2 and
 3.3.1.

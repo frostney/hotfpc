@@ -737,7 +737,8 @@ type
     Name: AnsiString;
     Section: LongInt;
     Value, Size: QWord;   // value: offset in its section
-    DeclaredSize: QWord;  // the size the object file states (ELF), or 0
+    DeclaredSize: QWord;  // the size the object file (ELF) or its assembler (Mach-O) states, or 0
+    SizeKnown: Boolean;   // DeclaredSize is the datum's exact size, also when 0
     External, Defined, BoundToExisting, Resolved: Boolean;
     Kind: Byte;
     IsTLS: Boolean;         // resolved to a thread variable: ResolvedAddress is its offset in the TLS segment
@@ -754,6 +755,7 @@ type
     ByName: TMap;
     Previous: PObjectFile;
     Order: array of LongInt;   // defined symbols sorted by (section, value)
+    SizesProblem: AnsiString;  // Mach-O: why its assembler gave no sizes, or ''
   end;
 
 procedure FreeObjectFile(AObjectFile: PObjectFile);
@@ -856,12 +858,17 @@ end;
 
 function IsAnonymous(const AName: AnsiString): Boolean; forward;
 
-// fpc 3.2.2 for x86-64 Linux gives every variable with an initial value a section of its own
-// and pads it to 16 bytes, so the distance to the section's end stays the same when an
-// Integer becomes an Int64. ELF states each symbol's size as well. COFF doesn't: for a Windows
-// program the driver compares the sizes in fpc's assembler output before it sends the objects.
+// A size is the distance to the next symbol or the section's end, which counts the padding
+// after the datum: fpc 3.2.2 for x86-64 Linux gives every variable with an initial value a
+// section of its own and pads it to 16 bytes, and a Word before an Int64 spans 8 bytes, as does
+// the LongInt it becomes. A neighbour that comes or goes changes the distance and not the
+// datum. So the size a datum states decides where both versions have one: ELF states it in the
+// symbol, and for Mach-O, which doesn't, the assembler beside the object does
+// (ReadAssemblerSizes). COFF states none: for a Windows program the driver compares the sizes
+// in fpc's assembler output before it sends the objects.
 function SizeChanged(AOld, ANew: PObjectSymbol): Boolean;
 begin
+  if AOld^.SizeKnown and ANew^.SizeKnown then Exit(AOld^.DeclaredSize <> ANew^.DeclaredSize);
   Result := (AOld^.Size <> ANew^.Size)
     or ((AOld^.DeclaredSize <> 0) and (ANew^.DeclaredSize <> 0) and (AOld^.DeclaredSize <> ANew^.DeclaredSize));
 end;
@@ -869,7 +876,7 @@ end;
 // "from 4 to 8 bytes", in the sizes that changed
 function SizeChange(AOld, ANew: PObjectSymbol): AnsiString;
 begin
-  if (AOld^.DeclaredSize <> 0) and (ANew^.DeclaredSize <> 0) and (AOld^.DeclaredSize <> ANew^.DeclaredSize) then
+  if (AOld^.SizeKnown and ANew^.SizeKnown) or ((AOld^.DeclaredSize <> 0) and (ANew^.DeclaredSize <> 0) and (AOld^.DeclaredSize <> ANew^.DeclaredSize)) then
     Result := 'from ' + UnsignedToString(AOld^.DeclaredSize) + ' to ' + UnsignedToString(ANew^.DeclaredSize) + ' bytes'
   else
     Result := 'from ' + UnsignedToString(AOld^.Size) + ' to ' + UnsignedToString(ANew^.Size) + ' bytes';
@@ -1263,6 +1270,305 @@ begin
   FinishObjectFile(AObjectFile);
   Result := True;
 end;
+
+// ---------------------------------------------------------------- Mach-O: sizes from the assembler
+// A Mach-O symbol states no size, and the distance to the next symbol counts the padding
+// before it. fpc assembles every Darwin object from assembler it writes, and hotfpc has it keep
+// that file beside the object (-a). There each datum is a label and the data it lists, or one
+// directive that names its size (.lcomm, .zerofill). A datum ends at the next label, alignment
+// or section; labels in a row name one datum. A datum with data that can't be counted (a
+// directive not known here, or data after an alignment with no label) gets no size, and
+// neither does any datum of an object whose assembler can't be read.
+const
+  AssemblerExtension = '.s';
+  AssemblerComment = '#';
+  AssemblerLabelEnd = ':';
+  AssemblerQuote = '"';
+  AssemblerEscape = '\';
+  AssemblerSeparator = ',';
+  AssemblerOctalDigits = 3;
+  // the data directives fpc writes for Darwin, and the bytes of each value they list (.word
+  // is 2 bytes on x86-64 and 4 on arm64, so it is not counted)
+  AssemblerDataDirectives: array[0..6] of AnsiString = ('.byte', '.short', '.2byte', '.long', '.4byte', '.quad', '.8byte');
+  AssemblerDataWidths: array[0..6] of Byte = (1, 2, 2, 4, 4, 8, 8);
+  // a number of zero bytes
+  AssemblerFillDirectives: array[0..2] of AnsiString = ('.zero', '.space', '.skip');
+  AssemblerStringDirective = '.ascii';
+  AssemblerTerminatedStringDirective = '.asciz';
+  // name, size[, alignment]
+  AssemblerCommonDirectives: array[0..1] of AnsiString = ('.lcomm', '.comm');
+  // segment, section, name, size[, alignment]; without a name it only makes the section
+  AssemblerZeroFillDirective = '.zerofill';
+  AssemblerZeroFillNameOperand = 2;
+  AssemblerAlignDirectives: array[0..4] of AnsiString = ('.align', '.p2align', '.balign', '.balignw', '.balignl');
+  AssemblerSectionDirectives: array[0..14] of AnsiString = ('.section', '.text', '.data', '.const', '.const_data',
+    '.cstring', '.bss', '.static_data', '.literal4', '.literal8', '.literal16', '.mod_init_func', '.mod_term_func',
+    '.tdata', '.tbss');
+  // directives that emit no bytes
+  AssemblerNeutralDirectives: array[0..13] of AnsiString = ('.globl', '.private_extern', '.reference',
+    '.weak_definition', '.weak_reference', '.no_dead_strip', '.alt_entry', '.subsections_via_symbols', '.file',
+    '.loc', '.set', '.indirect_symbol', '.build_version', '.macosx_version_min');
+  AssemblerFrameDirectivePrefix = '.cfi_';
+
+type
+  TAssemblerOperands = array of AnsiString;
+
+// AText without the spaces and tabs around it
+function TrimSpaces(const AText: AnsiString): AnsiString;
+var
+  First, Last: SizeInt;
+begin
+  First := 1;
+  Last := Length(AText);
+  while (First <= Last) and (AText[First] in [' ', #9]) do Inc(First);
+  while (Last >= First) and (AText[Last] in [' ', #9]) do Dec(Last);
+  Result := Copy(AText, First, Last - First + 1);
+end;
+
+function InList(const AText: AnsiString; const AList: array of AnsiString): SizeInt;
+begin
+  for Result := 0 to High(AList) do
+    if AList[Result] = AText then Exit;
+  Result := -1;
+end;
+
+// A number, decimal or 0x hexadecimal, with spaces around it; False when it is none or too large.
+function ParseAssemblerNumber(const AText: AnsiString; out AValue: QWord): Boolean;
+var
+  Code: Word;
+begin
+  Val(TrimSpaces(AText), AValue, Code);
+  Result := Code = 0;
+end;
+
+// The operands of a directive split at the commas outside strings.
+function AssemblerOperands(const AText: AnsiString): TAssemblerOperands;
+var
+  I, Start: SizeInt;
+  Quoted: Boolean;
+begin
+  SetLength(Result, 0);
+  if AText = '' then Exit;
+  Quoted := False;
+  Start := 1;
+  I := 1;
+  while I <= Length(AText) do
+  begin
+    if Quoted and (AText[I] = AssemblerEscape) then Inc(I)
+    else if AText[I] = AssemblerQuote then Quoted := not Quoted
+    else if not Quoted and (AText[I] = AssemblerSeparator) then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Copy(AText, Start, I - Start);
+      Start := I + 1;
+    end;
+    Inc(I);
+  end;
+  SetLength(Result, Length(Result) + 1);
+  Result[High(Result)] := Copy(AText, Start, Length(AText) - Start + 1);
+end;
+
+// The bytes the strings of an .ascii line give: an escape is one byte, an octal one up to three
+// digits long.
+function AssemblerStringBytes(const AText: AnsiString; ATerminated: Boolean): QWord;
+var
+  I, Digits: SizeInt;
+  Quoted: Boolean;
+begin
+  Result := 0;
+  Quoted := False;
+  I := 1;
+  while I <= Length(AText) do
+  begin
+    if AText[I] = AssemblerQuote then
+    begin
+      if Quoted and ATerminated then Inc(Result);
+      Quoted := not Quoted;
+    end
+    else if Quoted then
+    begin
+      if (AText[I] = AssemblerEscape) and (I < Length(AText)) then
+      begin
+        Inc(I);
+        if AText[I] in ['0'..'7'] then
+        begin
+          Digits := 1;
+          while (Digits < AssemblerOctalDigits) and (I < Length(AText)) and (AText[I + 1] in ['0'..'7']) do
+          begin
+            Inc(I);
+            Inc(Digits);
+          end;
+        end
+        else if AText[I] = 'x' then
+          while (I < Length(AText)) and (AText[I + 1] in ['0'..'9', 'a'..'f', 'A'..'F']) do Inc(I);
+      end;
+      Inc(Result);
+    end;
+    Inc(I);
+  end;
+end;
+
+procedure ReadAssemblerSizes(AObjectFile: PObjectFile);
+var
+  Path, Line, Directive, Operands: AnsiString;
+  Buffer, Cursor, LineStart, LineEnd, Limit: PByte;
+  BufferSize: PtrUInt;
+  Pending, Ended: array of PObjectSymbol;
+  PendingCount, EndedCount, Index, DirectiveIndex: SizeInt;
+  Bytes, Value: QWord;
+  Open, Filled, Countable: Boolean;
+  Parts: TAssemblerOperands;
+  Symbol: PObjectSymbol;
+
+  function Find(const AName: AnsiString): PObjectSymbol;
+  var
+    Name: AnsiString;
+  begin
+    Name := TrimSpaces(AName);
+    if Name = '' then Exit(nil);
+    Result := PObjectSymbol(MapGet(AObjectFile^.ByName, MachSymbolName(PChar(Name))));
+  end;
+
+  procedure SetSize(ASymbol: PObjectSymbol; AKnown: Boolean; ASize: QWord);
+  begin
+    if ASymbol = nil then Exit;
+    ASymbol^.SizeKnown := AKnown;
+    if AKnown then ASymbol^.DeclaredSize := ASize else ASymbol^.DeclaredSize := 0;
+  end;
+
+  // Ends the open datum; after an alignment it is kept in Ended, for data that follows with
+  // no label of its own.
+  procedure Close(AByAlignment: Boolean);
+  var
+    K: SizeInt;
+  begin
+    EndedCount := 0;
+    if Open then
+      for K := 0 to PendingCount - 1 do
+      begin
+        SetSize(Pending[K], Countable, Bytes);
+        if AByAlignment then
+        begin
+          if EndedCount = Length(Ended) then SetLength(Ended, 2 * EndedCount + 1);
+          Ended[EndedCount] := Pending[K];
+          Inc(EndedCount);
+        end;
+      end;
+    Open := False;
+    PendingCount := 0;
+    Bytes := 0;
+    Filled := False;
+    Countable := True;
+  end;
+
+  // Bytes of the open datum; outside one, the datum an alignment ended has more after it
+  procedure Add(ACountable: Boolean; ABytes: QWord);
+  var
+    K: SizeInt;
+  begin
+    if Open then
+    begin
+      Filled := True;
+      if ACountable then Inc(Bytes, ABytes) else Countable := False;
+      Exit;
+    end;
+    for K := 0 to EndedCount - 1 do SetSize(Ended[K], False, 0);
+    EndedCount := 0;
+  end;
+
+begin
+  Path := AObjectFile^.Path;
+  Index := Length(Path);
+  while (Index > 0) and not (Path[Index] in ['.', '/']) do Dec(Index);
+  if (Index > 0) and (Path[Index] = '.') then SetLength(Path, Index - 1);
+  Path := Path + AssemblerExtension;
+  if not ReadWholeFile(Path, Buffer, BufferSize) then
+  begin
+    AObjectFile^.SizesProblem := 'cannot read ' + Path;
+    Exit;
+  end;
+  SetLength(Pending, 0);
+  SetLength(Ended, 0);
+  PendingCount := 0;
+  EndedCount := 0;
+  Open := False;
+  Close(False);
+  Cursor := Buffer;
+  Limit := Buffer + BufferSize;
+  while Cursor < Limit do
+  begin
+    LineStart := Cursor;
+    while (Cursor < Limit) and (Cursor^ <> 10) do Inc(Cursor);
+    LineEnd := Cursor;
+    if Cursor < Limit then Inc(Cursor);
+    while (LineStart < LineEnd) and (LineStart^ in [32, 9]) do Inc(LineStart);
+    while (LineEnd > LineStart) and ((LineEnd - 1)^ in [32, 9, 13]) do Dec(LineEnd);
+    if (LineStart = LineEnd) or (Chr(LineStart^) = AssemblerComment) then Continue;
+    // a label, perhaps with a statement after it
+    Index := 0;
+    while (LineStart + Index < LineEnd) and not ((LineStart + Index)^ in [32, 9]) do Inc(Index);
+    if Chr((LineStart + Index - 1)^) = AssemblerLabelEnd then
+    begin
+      SetString(Line, PChar(LineStart), Index - 1);
+      if Open and (Filled or not Countable) then Close(False);
+      Open := True;
+      EndedCount := 0;
+      Symbol := Find(Line);
+      if Symbol <> nil then
+      begin
+        if PendingCount = Length(Pending) then SetLength(Pending, 2 * PendingCount + 1);
+        Pending[PendingCount] := Symbol;
+        Inc(PendingCount);
+      end;
+      Inc(LineStart, Index);
+      while (LineStart < LineEnd) and (LineStart^ in [32, 9]) do Inc(LineStart);
+      if LineStart = LineEnd then Continue;
+      Index := 0;
+      while (LineStart + Index < LineEnd) and not ((LineStart + Index)^ in [32, 9]) do Inc(Index);
+    end;
+    if Chr(LineStart^) <> '.' then
+    begin
+      // an instruction
+      Add(False, 0);
+      Continue;
+    end;
+    SetString(Directive, PChar(LineStart), Index);
+    SetString(Operands, PChar(LineStart + Index), LineEnd - LineStart - Index);
+    Operands := TrimSpaces(Operands);
+    DirectiveIndex := InList(Directive, AssemblerDataDirectives);
+    if DirectiveIndex >= 0 then
+      Add(Operands <> '', AssemblerDataWidths[DirectiveIndex] * QWord(Length(AssemblerOperands(Operands))))
+    else if InList(Directive, AssemblerFillDirectives) >= 0 then
+    begin
+      Parts := AssemblerOperands(Operands);
+      Add((Length(Parts) >= 1) and ParseAssemblerNumber(Parts[0], Value), Value);
+    end
+    else if (Directive = AssemblerStringDirective) or (Directive = AssemblerTerminatedStringDirective) then
+      Add(True, AssemblerStringBytes(Operands, Directive = AssemblerTerminatedStringDirective))
+    else if InList(Directive, AssemblerCommonDirectives) >= 0 then
+    begin
+      Close(False);
+      Parts := AssemblerOperands(Operands);
+      if Length(Parts) >= 2 then SetSize(Find(Parts[0]), ParseAssemblerNumber(Parts[1], Value), Value);
+    end
+    else if Directive = AssemblerZeroFillDirective then
+    begin
+      Close(False);
+      Parts := AssemblerOperands(Operands);
+      if Length(Parts) > AssemblerZeroFillNameOperand + 1 then
+        SetSize(Find(Parts[AssemblerZeroFillNameOperand]), ParseAssemblerNumber(Parts[AssemblerZeroFillNameOperand + 1], Value), Value);
+    end
+    else if InList(Directive, AssemblerAlignDirectives) >= 0 then
+    begin
+      if Open then Close(True);
+    end
+    else if InList(Directive, AssemblerSectionDirectives) >= 0 then Close(False)
+    else if (InList(Directive, AssemblerNeutralDirectives) < 0) and not StartsWith(Directive, AssemblerFrameDirectivePrefix) then
+      Add(False, 0);
+  end;
+  Close(False);
+  FreeMem(Buffer);
+end;
 {$endif}
 
 // ---------------------------------------------------------------- ELF
@@ -1317,8 +1623,10 @@ const
   SHF_ALLOC = 2;
   SHF_EXECINSTR = 4;
   SHF_TLS = $400;
+  STT_OBJECT = 1;
   STT_SECTION = 3;
   STT_FILE = 4;
+  STT_TLS = 6;
   STB_GLOBAL = 1;
   STB_WEAK = 2;
   SHN_LORESERVE = $ff00;
@@ -1527,6 +1835,9 @@ begin
       Symbol^.Section := Symbols[I].st_shndx;
       Symbol^.Value := Symbols[I].st_value;
       Symbol^.DeclaredSize := Symbols[I].st_size;
+      // a datum states its size (.size); a label doesn't, and neither does an object of size
+      // 0, which fpc 3.2.2 makes of a label inside a datum
+      Symbol^.SizeKnown := ((SymbolType = STT_OBJECT) or (SymbolType = STT_TLS)) and (Symbols[I].st_size <> 0);
       Symbol^.Kind := AObjectFile^.Sections[Symbol^.Section].Kind;
       AddDefined(AObjectFile, I);
     end;
@@ -1896,6 +2207,7 @@ begin
   if DotIndex > 0 then SetLength(ObjectFile^.UnitName, DotIndex - 1);
 {$if defined(darwin)}
   Parsed := ParseMachO(ObjectFile);
+  if Parsed then ReadAssemblerSizes(ObjectFile);
 {$elseif defined(windows)}
   Parsed := ParseCOFF(ObjectFile);
 {$else}
@@ -2091,7 +2403,7 @@ end;
 function SymbolDigest(AObjectFile: PObjectFile; ASymbol: PObjectSymbol; ADepth: LongInt): QWord;
 var
   Section: PSection;
-  Hash, Key, LowOffset, HighOffset, Cursor, Width: QWord;
+  Hash, Key, LowOffset, HighOffset, Cursor, Width, Extent: QWord;
   Bytes: PByte;
   Index: SizeInt;
   Offset, KindValue: LongWord;
@@ -2100,10 +2412,13 @@ var
   SecondRelocation: TRelocation;
 begin
   Section := @AObjectFile^.Sections[ASymbol^.Section];
-  Hash := FNVHash(PByte(@ASymbol^.Size), 8, FNVOffsetBasis);
+  // a datum that states its size is its bytes, not the padding up to the next symbol
+  Extent := ASymbol^.Size;
+  if ASymbol^.SizeKnown and (ASymbol^.DeclaredSize < Extent) then Extent := ASymbol^.DeclaredSize;
+  Hash := FNVHash(PByte(@Extent), 8, FNVOffsetBasis);
   Bytes := SymbolBytes(AObjectFile, ASymbol);
   LowOffset := ASymbol^.Value;
-  HighOffset := LowOffset + ASymbol^.Size;
+  HighOffset := LowOffset + Extent;
   Cursor := LowOffset;
   Index := FirstRelocation(Section^, LowOffset);
   while (Index < Length(Section^.Relocations)) and (Section^.Relocations[Index].Offset < HighOffset) do
@@ -3367,6 +3682,23 @@ end;
 type
   TCounts = record Functions, Changed, Added, Kept, NewData, Notes: LongInt; end;
 
+// Mach-O: a variable whose size the assembler didn't give, in the version a load replaces or
+// in the new one, needs a restart: the distance to the next symbol may hide a change of size.
+// Other data, such as a table, is compared by its bytes. AProblem: why the new version has no
+// sizes, or ''.
+function SizeUnknown(AOld, ANew: PObjectSymbol; const AProblem: AnsiString): Boolean;
+begin
+  Result := False;
+{$ifdef darwin}
+  if AOld^.SizeKnown and ANew^.SizeKnown then Exit;
+  if not IsVariable(ANew^.Name) then Exit;
+  Result := True;
+  if not ANew^.SizeKnown and (AProblem <> '') then Restart('the size of variable ' + Pretty(ANew^.Name) + ' is unknown: ' + AProblem)
+  else if not ANew^.SizeKnown then Restart('the size of variable ' + Pretty(ANew^.Name) + ' is unknown: fpc''s assembler gives none')
+  else Restart('the size of variable ' + Pretty(ANew^.Name) + ' is unknown: the assembler of the version it replaces gave none');
+{$endif}
+end;
+
 // The restart for data of the program whose new version has another size than its storage.
 procedure RestartForSize(const AObjectFile: PObjectFile; const AOld, ANew: PObjectSymbol);
 var
@@ -3572,6 +3904,7 @@ begin
       // The program keeps the storage of data a save removed: what comes back under its name
       // must fit it.
       GoneSymbol := MapGet(GoneData, Symbol^.Name);
+      if (GoneSymbol <> nil) and SizeUnknown(GoneSymbol, Symbol, AObjectFile^.SizesProblem) then Continue;
       if (GoneSymbol <> nil) and SizeChanged(GoneSymbol, Symbol) then
       begin
         RestartForSize(AObjectFile, GoneSymbol, Symbol);
@@ -3620,6 +3953,7 @@ begin
       Inc(VMTUpdateCount);
       Continue;
     end;
+    if SizeUnknown(PreviousSymbol, Symbol, AObjectFile^.SizesProblem) then Continue;
     if SizeChanged(PreviousSymbol, Symbol) then
     begin
       RestartForSize(AObjectFile, PreviousSymbol, Symbol);

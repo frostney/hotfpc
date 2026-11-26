@@ -107,6 +107,48 @@ begin
   end;
 end;
 
+{ The whole file, as long as it is when opened. False when it can't be read whole; AContents
+  is then empty. For a file no save is writing, such as fpc's assembler after a compile. }
+function ReadCompleteFile(const APath: string; out AContents: string): Boolean;
+var
+  Stream: TFileStream;
+begin
+  AContents := '';
+  try
+    Stream := TFileStream.Create(APath, fmOpenRead or fmShareDenyNone);
+    try
+      SetLength(AContents, Stream.Size);
+      if Length(AContents) > 0 then
+        Stream.ReadBuffer(AContents[1], Length(AContents));
+      Result := True;
+    finally
+      Stream.Free;
+    end;
+  except
+    AContents := '';
+    Result := False;
+  end;
+end;
+
+{ Writes AContents as the whole file. False when it couldn't. }
+function WriteCompleteFile(const APath, AContents: string): Boolean;
+var
+  Stream: TFileStream;
+begin
+  try
+    Stream := TFileStream.Create(APath, fmCreate);
+    try
+      if Length(AContents) > 0 then
+        Stream.WriteBuffer(AContents[1], Length(AContents));
+      Result := True;
+    finally
+      Stream.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 procedure CopyFileContents(const ASource, ADestination: string);
 var
   Source, Destination: TFileStream;
@@ -275,6 +317,7 @@ type
     FQuiet: Boolean;
     FRestart: Boolean;
     FTargetWindows: Boolean;
+    FKeepAssembler: Boolean;
     FWinePaths: Boolean;
     FSettleSeconds: Double;
     FCompilerOptions: TStringList;
@@ -300,6 +343,10 @@ type
     { Whether an edit that needs a restart starts the program over (false with --no-restart). }
     property Restart: Boolean read FRestart;
     property TargetWindows: Boolean read FTargetWindows;
+    { Whether fpc keeps the assembler it assembles each object from (-a): a macOS program,
+      whose agent reads the sizes of its data there, as a Mach-O object states none. The host
+      decides it; a test may set it. }
+    property KeepAssembler: Boolean read FKeepAssembler write FKeepAssembler;
     property WinePaths: Boolean read FWinePaths;
     property SettleSeconds: Double read FSettleSeconds;
     { Everything on the command line that is an option for fpc, in order. }
@@ -309,6 +356,7 @@ type
 
 const
   SeparatorArgument = '--';
+  HostIsDarwin = {$ifdef darwin}True{$else}False{$endif};
   WindowsTargetPrefix = '-T';
   WindowsTargetName = 'win';
   WineLauncher = 'wine';
@@ -347,6 +395,7 @@ begin
     FTargetWindows := True
   else if FTargetWindows and (FLauncher = '') then
     FLauncher := WineLauncher;
+  FKeepAssembler := HostIsDarwin and not FTargetWindows;
   FWinePaths := Pos(WineName, LowerCase(ExtractFileName(FLauncher))) > 0;
 end;
 
@@ -2716,6 +2765,7 @@ type
     FDirectory: string;
     FOptions: TStrings;
     FTargetWindows: Boolean;
+    FKeepAssembler: Boolean;
     FWorkspace: TWorkspace;
     function Execute(const AArguments: array of string; out AOutput: string): Integer;
     { The options every compile of the program starts with, then the user's: symbols kept, the
@@ -2795,6 +2845,7 @@ const
   KeepSymbolsOption = '-Xs-';
   NoLinkOption = '-Cn';
   LinkMapOption = '-Xm';
+  KeepAssemblerOption = '-a';
   { write assembler and stop, and write it for the GNU assembler: fpc 3.2.2 for Windows
     otherwise keeps writing object files with its internal one }
   AssemblerOnlyOption = '-s';
@@ -2891,6 +2942,7 @@ begin
   FCompiler := AOptions.Compiler;
   FOptions := AOptions.CompilerOptions;
   FTargetWindows := AOptions.TargetWindows;
+  FKeepAssembler := AOptions.KeepAssembler;
   FWorkspace := AWorkspace;
   FDirectory := GetCurrentDir;
 end;
@@ -3066,6 +3118,10 @@ begin
   { the linker's map: where it put sections that fpc 3.2 gives no symbol (the agent reads it) }
   else if FTargetWindows then
     Result.Add(LinkMapOption);
+  { the assembler of each object, beside it: the sizes of a Mach-O object's data (the agent
+    reads them) }
+  if FKeepAssembler then
+    Result.Add(KeepAssemblerOption);
   Result.Add(FWorkspace.Source);
 end;
 
@@ -3495,6 +3551,55 @@ begin
     KeepLiveSizes(SizesKnown, Problem);
 end;
 
+{ Copies an object file with the assembler fpc assembled it from, which the agent reads beside
+  it on macOS. Where there is none, or it can't be copied whole, the copy has none either, and
+  the agent finds the sizes of its variables unknown: a part of it could give wrong ones. }
+procedure CopyObjectFile(const ASource, ADestination: string);
+var
+  Source, Destination, Text, Copied: string;
+begin
+  CopyFileContents(ASource, ADestination);
+  Source := ChangeFileExt(ASource, AssemblerExtension);
+  Destination := ChangeFileExt(ADestination, AssemblerExtension);
+  DeleteFile(Destination);
+  if FileExists(Source) and ReadCompleteFile(Source, Text) then
+    if not WriteCompleteFile(Destination, Text) or not ReadCompleteFile(Destination, Copied)
+      or (Copied <> Text) then
+      DeleteFile(Destination);
+end;
+
+{ Whether two of fpc's assembler files are the same but for comments, such as the source lines
+  -al adds: a comment changes neither the object nor the sizes. False when one can't be read
+  whole. }
+function SameAssembler(const AFirst, ASecond: string): Boolean;
+
+  function WithoutComments(const AText: string): string;
+  var
+    Lines, Kept: TStringList;
+    I: Integer;
+  begin
+    Lines := TStringList.Create;
+    Kept := TStringList.Create;
+    try
+      Lines.Text := AText;
+      for I := 0 to Lines.Count - 1 do
+        if not StartsWith(TrimLeft(Lines[I]), AssemblerComment) then
+          Kept.Add(Lines[I]);
+      Result := Kept.Text;
+    finally
+      Kept.Free;
+      Lines.Free;
+    end;
+  end;
+
+var
+  FirstText, SecondText: string;
+begin
+  if not (ReadCompleteFile(AFirst, FirstText) and ReadCompleteFile(ASecond, SecondText)) then
+    Exit(False);
+  Result := (FirstText = SecondText) or (WithoutComments(FirstText) = WithoutComments(SecondText));
+end;
+
 procedure TDriver.CopyObjectsToLive;
 var
   Search: TSearchRec;
@@ -3502,7 +3607,9 @@ begin
   if FindFirst(FWorkspace.UnitsDirectory + '*', faAnyFile, Search) = 0 then
   begin
     repeat
-      if (ExtractFileExt(Search.Name) = ObjectExtension) or (ExtractFileExt(Search.Name) = RecordExtension) then
+      if ExtractFileExt(Search.Name) = ObjectExtension then
+        CopyObjectFile(FWorkspace.UnitsDirectory + Search.Name, FWorkspace.LiveDirectory + Search.Name)
+      else if ExtractFileExt(Search.Name) = RecordExtension then
         CopyFileContents(FWorkspace.UnitsDirectory + Search.Name, FWorkspace.LiveDirectory + Search.Name);
     until FindNext(Search) <> 0;
     FindClose(Search);
@@ -3682,7 +3789,12 @@ begin
         DeleteFile(FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, RecordExtension));
         Exit(False);
       end;
-      if not SameFileContents(FWorkspace.UnitsDirectory + ObjectName, FWorkspace.LiveDirectory + ObjectName) then
+      { A Mach-O object can come out the same when a variable grows within its padding, as it
+        states no sizes: its assembler shows it, so the unit is loaded for the agent to see. }
+      if not SameFileContents(FWorkspace.UnitsDirectory + ObjectName, FWorkspace.LiveDirectory + ObjectName)
+        or (FOptions.KeepAssembler and not SameAssembler(
+          FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, AssemblerExtension),
+          FWorkspace.LiveDirectory + ChangeFileExt(ObjectName, AssemblerExtension))) then
         AChanged.Add(ObjectName);
     end;
   finally
@@ -3957,7 +4069,7 @@ begin
   end;
   for I := 0 to AChanged.Count - 1 do
   begin
-    CopyFileContents(AStage + AChanged[I], FWorkspace.LiveDirectory + AChanged[I]);
+    CopyObjectFile(AStage + AChanged[I], FWorkspace.LiveDirectory + AChanged[I]);
     RecordName := ChangeFileExt(AChanged[I], RecordExtension);
     if FileExists(FWorkspace.UnitsDirectory + RecordName) then
       CopyFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName);
@@ -4009,7 +4121,7 @@ begin
   try
     for I := 0 to AChanged.Count - 1 do
     begin
-      CopyFileContents(FWorkspace.UnitsDirectory + AChanged[I], Stage + AChanged[I]);
+      CopyObjectFile(FWorkspace.UnitsDirectory + AChanged[I], Stage + AChanged[I]);
       Staged.Add(Stage + AChanged[I]);
     end;
     Reply := FLink.Load(Staged);
@@ -4631,6 +4743,26 @@ begin
   Expect(not SameFileContents(Root + 'a.txt', Root + 'b.txt'), 'another content is not');
   Expect(not SameFileContents(Root + 'a.txt', Root + 'missing.txt'), 'a missing file is not the same as anything');
   Expect(not SameFileContents(Root + 'missing.txt', Root + 'also-missing.txt'), 'nor as another missing one');
+end;
+
+{ Two assembler files are the same when only their comments differ, such as the source lines
+  -al adds, and not when a directive does. }
+procedure TestSameAssembler;
+var
+  Root, Text: string;
+begin
+  Root := MakeTestDirectory('assembler-files');
+  WriteTestFile(Root + 'a.s', '# [12] Inc(Small);' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.short'#9'1' + LineEnding);
+  WriteTestFile(Root + 'b.s', '  # [13] Inc(Small); { a comment }' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.short'#9'1' + LineEnding);
+  Expect(SameAssembler(Root + 'a.s', Root + 'b.s'), 'another comment is the same assembler');
+  WriteTestFile(Root + 'b.s', '# [12] Inc(Small);' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.long'#9'1' + LineEnding);
+  Expect(not SameAssembler(Root + 'a.s', Root + 'b.s'), 'another directive is not');
+  Expect(not SameAssembler(Root + 'a.s', Root + 'missing.s'), 'nor is a missing file');
+  Expect(WriteCompleteFile(Root + 'c.s', 'a' + #0 + 'b'), 'a file is written whole');
+  Expect(ReadCompleteFile(Root + 'c.s', Text), 'and read whole');
+  ExpectEqual(Text, 'a' + #0 + 'b', 'byte for byte');
+  Expect(not ReadCompleteFile(Root + 'missing.s', Text), 'a missing file is not read');
+  ExpectEqual(Text, '', 'and gives nothing');
 end;
 
 procedure TestRemoveTree;
@@ -6970,6 +7102,8 @@ var
 begin
   Root := MakeTestDirectory('arguments');
   Options := ParseOptions(['-O2', '-Fulib', Root + 'demo.pas'], False);
+  { as on Linux }
+  Options.KeepAssembler := False;
   Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
   Compiler := TCompiler.Create(Options, Workspace);
   try
@@ -6997,8 +7131,47 @@ begin
   finally
     Compiler.Free;
     Workspace.Free;
+  end;
+  { as on macOS: every compile keeps the assembler of each object, linked or not }
+  Options.KeepAssembler := True;
+  Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
+  Compiler := TCompiler.Create(Options, Workspace);
+  try
+    Arguments := Compiler.CompileArguments(True);
+    try
+      ExpectEqual(Arguments.Count, 9, 'a compile that keeps the assembler');
+      ExpectEqual(Arguments[7], '-a', 'asks for it after the user''s options');
+      ExpectEqual(Arguments[8], Options.Source, 'and still ends with the source');
+    finally
+      Arguments.Free;
+    end;
+    Arguments := Compiler.CompileArguments(False);
+    try
+      ExpectEqual(Arguments[Arguments.Count - 2], '-a', 'a compile without a link keeps it too');
+      Expect(Arguments.IndexOf('-Cn') >= 0, 'and does not link');
+    finally
+      Arguments.Free;
+    end;
+  finally
+    Compiler.Free;
+    Workspace.Free;
     Options.Free;
   end;
+end;
+
+{ fpc keeps the assembler of each object where the host is a Mac, except for a Windows
+  program: the agent reads the sizes of a Mach-O object's data there. }
+procedure TestKeepAssembler;
+var
+  Options: TOptions;
+begin
+  Options := ParseOptions(['demo.pas'], False);
+  ExpectEqual(BoolToStr(Options.KeepAssembler, True), BoolToStr(HostIsDarwin, True),
+    'a native program keeps the assembler on macOS only');
+  Options.Free;
+  Options := ParseOptions(['-Twin64', 'demo.pas'], False);
+  Expect(not Options.KeepAssembler, 'a Windows program never does');
+  Options.Free;
 end;
 
 procedure TestCompileArgumentsLinking;
@@ -7009,6 +7182,8 @@ var
   Arguments: TStringList;
 begin
   Options := ParseOptions(['demo.pas'], False);
+  { as on Linux }
+  Options.KeepAssembler := False;
   Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
   Compiler := TCompiler.Create(Options, Workspace);
   try
@@ -7552,6 +7727,8 @@ begin
     TestAffectsUnit;
     TestAgentOptions;
     TestCompileArguments;
+    TestKeepAssembler;
+    TestSameAssembler;
     TestCompileArgumentsLinking;
     TestAgentResource;
     TestForgetUnits;

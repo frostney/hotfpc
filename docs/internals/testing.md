@@ -8,7 +8,7 @@ edits into them.
 
 ```sh
 ./build.sh tests                               # unit tests (the end of source/HotFPC.pas)
-python3 tests/scenarios/check.py               # all 42 scenarios, about 2 minutes
+python3 tests/scenarios/check.py               # all 44 scenarios, about 2 minutes
 python3 tests/scenarios/check.py globals rename
 python3 tests/agent/check.py                   # the agent on its own
 HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
@@ -16,7 +16,7 @@ HOT_DRIVER_OPTS="--fpc /path/to/fpc" python3 tests/scenarios/check.py
 
 ## When a change is done
 
-A change is done when the unit tests pass, `check.py` prints "42 of 42 cases as expected"
+A change is done when the unit tests pass, `check.py` prints "44 of 44 cases as expected"
 and `tests/agent/check.py` passes, on every system the change can affect: macOS arm64,
 macOS x86-64, Linux x86-64, Linux arm64, and Windows x86-64 (`-Twin64 -Px86_64` with win64
 units, under Wine or on Windows). Changes to the agent or to the checks of layouts and
@@ -53,7 +53,7 @@ for a Windows target on another system, in `tests/agent/work/`.
 
 ## The scenarios
 
-`tests/scenarios/scenario.py` holds 42 cases. Each is a small program, `main.pas` and its
+`tests/scenarios/scenario.py` holds 44 cases. Each is a small program, `main.pas` and its
 units, and a list of steps: the edits the script saves into the files while the program
 runs. The script saves a step once hotfpc has reported its outcome for the step before (a
 swap, a refusal, an error, a restart or no change in code), so the numbers don't depend on
@@ -88,7 +88,8 @@ start, so a line the program prints is never taken for one of hotfpc's:
   was written, and every one after it the saved code's), a counter in the implementation
   section that every tick prints and that must keep pace with the ticks (`COUNTERS`),
   numbers a variable that a save removed and a later one brought back must count on from
-  (`RESUMES`), `[hot]` lines hotfpc must print (`SAYS`), the most a load may take inside
+  (`RESUMES`), `[hot]` lines hotfpc must print (`SAYS`; a pattern listed twice must match
+  two lines), the most a load may take inside
   the program (`LOAD_LIMITS`), and a tick the program prints once where it hands over from
   the old code to the new, with what every tick before it and after it prints (`HANDOFFS`).
 
@@ -99,7 +100,10 @@ lists every step and its outcome.
 For a Windows target (`-Twin` in `HOT_DRIVER_OPTS`), `check.py` expects a restart in three
 cases where the other systems swap: in two, fpc's Windows linker leaves out runtime
 routines the program never called; in `progvar`, fpc can't write the assembler that shows
-a save's sizes. The comments in `check.py` say which. In the cases that check how a start
+a save's sizes. It expects a swap in `padunit`'s last save, where the other systems
+restart: a variable of a unit that only the program's code uses grows within its padding,
+the unit's object file comes out the same, and nothing checks the unit
+([#45](https://github.com/frostney/hotfpc/issues/45)). The comments in `check.py` say which. In the cases that check how a start
 leaves the sizes, `startblock`, `startcap`, `startnoasm` and `newconst`, it also requires
 the reason a Windows program gives for its restart, so that a case passes only with the
 sizes it is about. `shortentry` is swapped on Windows

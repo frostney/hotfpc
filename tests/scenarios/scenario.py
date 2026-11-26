@@ -1254,6 +1254,117 @@ end.
     ("Calls: Integer = 0 in Tick becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
 ])
 
+# ---------------------------------------------------------------------------- a variable that grows inside its alignment padding
+# Small (a Word) and Flag (a Byte) are each followed by an Int64, which starts at the next
+# multiple of 8, so a Mach-O object (macOS), which states no symbol sizes, has 8 bytes from each
+# to the next symbol before and after they grow. Each grows, and needs a restart; a new Byte
+# after Flag, which leaves every variable its size, is swapped. Then a save removes Small and
+# the next brings it back larger: the agent keeps it at its first address, with its first size
+PADVAR_MAIN = r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+var
+  Count: Integer = 0;
+  Small: Word = 1;
+  Big: Int64 = 2;
+  Flag: Byte;
+  Wide: Int64;
+function Line(n: Integer): string;
+begin
+  Inc(Small);
+  Inc(Flag);
+  Inc(Wide);
+  Result := Tick(n) + Format(' main one %d %d %d %d', [Small, Big, Flag, Wide]);
+end;
+begin
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Line(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+"""
+
+case("padvar", {
+    "main.pas": PADVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("Small: Word = 1 in the program becomes Small: LongInt = 1", [("main.pas", "  Small: Word = 1;", "  Small: LongInt = 1;")]),
+    ("Small is a Word again, and Flag: Byte becomes Flag: Word",
+     [("main.pas", "  Small: LongInt = 1;", "  Small: Word = 1;"), ("main.pas", "  Flag: Byte;", "  Flag: Word;")]),
+    ("Flag is a Byte again, a new Flag2: Byte after it, and another text",
+     [("main.pas", "  Flag: Word;", "  Flag: Byte;\n  Flag2: Byte;"), ("main.pas", "' main one", "' main two")]),
+    ("Small and its uses are removed",
+     [("main.pas", "  Small: Word = 1;\n", ""), ("main.pas", "  Inc(Small);\n", ""),
+      ("main.pas", "' main two %d %d %d %d', [Small, Big,", "' main three %d %d %d', [Big,")]),
+    ("Small comes back as Small: LongInt = 1, with its uses",
+     [("main.pas", "  Count: Integer = 0;\n", "  Count: Integer = 0;\n  Small: LongInt = 1;\n"),
+      ("main.pas", "begin\n  Inc(Flag);", "begin\n  Inc(Small);\n  Inc(Flag);"),
+      ("main.pas", "' main three %d %d %d', [Big,", "' main four %d %d %d %d', [Small, Big,")]),
+])
+
+# padvar's first three saves in a unit, without the check of layouts (no ppudump), which
+# would find the change of type first. Then Shared, of the unit's interface, which only the
+# program's code uses, grows within its padding: the unit's code doesn't change, and on macOS
+# neither does its object file, only its assembler
+PADUNIT_MAIN = r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+var
+  Count: Integer = 0;
+function Line(n: Integer): string;
+begin
+  Inc(Shared);
+  Result := Tick(n) + Format(' shared %d', [Shared]);
+end;
+begin
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Line(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+"""
+
+PADUNIT_U = r"""unit u;
+{$mode objfpc}{$H+}
+interface
+var
+  Shared: Word = 1;
+  SharedNext: Int64 = 2;
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+var
+  Small: Word = 1;
+  Big: Int64 = 2;
+  Flag: Byte;
+  Wide: Int64;
+function Tick(n: Integer): string;
+begin
+  Inc(Small);
+  Inc(Flag);
+  Inc(Wide);
+  Result := Format('one %d %d %d %d', [Small, Big, Flag, Wide]);
+end;
+end.
+"""
+
+case("padunit", {
+    "main.pas": PADUNIT_MAIN,
+    "u.pas": PADUNIT_U}, [
+    ("Small: Word = 1 in the unit becomes Small: LongInt = 1", [("u.pas", "  Small: Word = 1;", "  Small: LongInt = 1;")]),
+    ("Small is a Word again, and Flag: Byte becomes Flag: Word",
+     [("u.pas", "  Small: LongInt = 1;", "  Small: Word = 1;"), ("u.pas", "  Flag: Byte;", "  Flag: Word;")]),
+    ("Flag is a Byte again, a new Flag2: Byte after it, and another text",
+     [("u.pas", "  Flag: Word;", "  Flag: Byte;\n  Flag2: Byte;"), ("u.pas", "'one %d", "'two %d")]),
+    ("Shared: Word = 1 in the unit's interface, which only the program uses, becomes Shared: LongInt = 1",
+     [("u.pas", "  Shared: Word = 1;", "  Shared: LongInt = 1;")]),
+], opts=("--ppudump", "no-such-ppudump"))
+
 # ---------------------------------------------------------------------------- restarts
 # One unit whose text and call count the program prints. A restart starts the count over.
 # Calls has no initial value: with fpc 3.2.2 on Linux and Windows, a variable with one that

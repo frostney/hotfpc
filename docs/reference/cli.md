@@ -51,6 +51,7 @@ adds these, with absolute paths into the program's `.hot/` directory:
 | Every compile of the program | `-Xs-` (keep the symbols), `-FaHotFPC.Agent` (load the agent before the program's `uses`), `-Fu.hot/agent`, `-FU.hot/units`, `-o.hot/<program>` before your options; the source file last |
 | A save | `-Cn`: compile without linking |
 | A link for a Windows target | `-Xm`: write the linker's map, where the agent finds the sections fpc 3.2 gives no symbol |
+| Every compile of a macOS program (hotfpc on a Mac, not for a Windows target) | `-a`: keep the assembler fpc assembles each object from, `<unit>.s` beside `<unit>.o`, where the agent reads the sizes of the variables, which a Mach-O object doesn't state. A unit whose object comes out the same but whose assembler doesn't counts as changed. |
 | A restart | links into `.hot/next/` first, so a link that fails leaves the running program as it is |
 | A Windows target, when a changed unit has a variable with an initial value or a typed constant | a second compile to assembler, `-s -Aas`, into `.hot/asm/` |
 | The agent, once at the start | only your options that decide the target, code generation and paths (`-T`, `-P`, `-Cp`, `-Cf`, `-Ca`, `-XP`, `-Fl`, `-Fu`, `-k`, `-XR`, `-Xd`, `-n`, `-V` and `@` files), and `-FU.hot/agent` |
@@ -94,7 +95,7 @@ on every start. Add `.hot/` to your `.gitignore`.
 | Path | What it holds |
 | --- | --- |
 | `.hot/<program>` | The built program, `<program>.exe` for a Windows target, with `<program>.map` from the linker there. |
-| `.hot/units/` | The units and object files of the last compile. |
+| `.hot/units/` | The units and object files of the last compile, for a macOS program with the assembler of each object. |
 | `.hot/live/` | The units as the running program has them: what the next save is compared with. |
 | `.hot/agent/`, `.hot/agent-src/` | The compiled agent, and its source as hotfpc writes it out. |
 | `.hot/v<N>/` | The object files of version N, handed to the agent. |
