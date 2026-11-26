@@ -69,22 +69,21 @@ writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
 `(path, None, None)` removes it again. After the last step the script tells the program to
 end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
 
-Once a case has failed, it ends within seconds. The script's own complaint, a line that
-starts with `!!!` and names the step the case was at (an edit that doesn't apply, or a save
-hotfpc gave no outcome for within 150 s), fails the case: the script saves no step after it
-and tells the program to end. hotfpc and every process it starts, the program among them,
-are a process group that hotfpc leads, and on Windows a job object, so the script can stop
-them all by hotfpc's process ID. It does so at the end of every case, and at once when:
+Once a case has failed, it ends within seconds. hotfpc and every process it starts, the
+program among them, are a process group that hotfpc leads, and on Windows a job object, so
+the script can stop them all by hotfpc's process ID. It does so at the end of every case,
+and at once with its own complaint, a line that starts with `!!!` and names the step the
+case was at, after which it saves no more files. It complains when:
 
+- an edit doesn't apply, or hotfpc gives no outcome of a save within 150 s, or ends first;
 - the program hasn't ended, and its output closed, 30 s after the script told it to;
 - the run prints a line longer than 64 KiB, or more than 1 MiB in all (a case prints a few
   kilobytes; a program whose memory a swap broke can print a string of a wrong length,
   gigabytes on one line);
-- the case takes more than 300 s in all (the slowest system in CI runs all 40 in under 4
-  minutes).
+- the case runs for more than 300 s from hotfpc's start (in CI no case takes more than 10 s).
 
-Ctrl+C stops them too, and so do `SIGTERM` and `SIGHUP` on macOS and Linux; on Windows the
-job object ends them when the script ends.
+Ctrl+C stops them too, and so do `SIGTERM` and `SIGHUP` to `check.py` or `scenario.py` on
+macOS and Linux; on Windows the job object ends them when the script ends.
 
 `check.py` runs `scenario.py` and checks each case's run, line by line without the script's
 timestamps: hotfpc's lines start with `[hot]`, and a check matches a whole line from its
