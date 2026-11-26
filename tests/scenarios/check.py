@@ -190,10 +190,16 @@ for name in names:
     # matches a whole record from its start, so a line of the program that has a driver's
     # words in it is no record of the driver's
     lines = re.findall(r"^ *\d+\.\d+s  (.*)$", body or "", re.M)
+    # the script's first complaint, such as a step it gave up waiting at, and how long the
+    # case took (the time of its last line)
+    complaint = next((line[4:] for line in lines if line.startswith("!!! ")), None)
+    times = re.findall(r"^ *(\d+\.\d+)s  ", body or "", re.M)
+    took = "; took %s s" % times[-1] if times else ""
     ends = [m for m in (re.match(r"\[hot\] the program ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts$", line) for line in lines) if m]
     end = ends[-1] if ends else None
     if not end:
-        print("%-11s FAIL  %s" % (name, "no closing line" if body is not None else "did not run"))
+        print("%-11s FAIL  %s%s%s" % (name, "no closing line" if body is not None else "did not run",
+                                      "; " + complaint if complaint else "", took))
         failing.append((name, body))
         continue
     rc, applied, refused, failed, unchanged, restarts = map(int, end.groups())
@@ -283,7 +289,8 @@ for name in names:
                     for tick, text in stale[:1])
           + "".join("; a swap noted %r twice" % text for text in repeated[:1])
           + "".join("; a swap did not note %r" % text for text in unnoted[:1])
-          + "".join("; " + text for text in handoff[:1]))
+          + "".join("; " + text for text in handoff[:1])
+          + ("; " + complaint if complaint else "") + took)
     if not ok:
         failing.append((name, body))
 for name, body in failing:
