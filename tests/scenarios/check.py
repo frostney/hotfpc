@@ -37,6 +37,11 @@ EXPECT = {
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
     "initvar": (1, 1, 0), "initrace": (1, 0, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
+    # a variable of the program that a save removes and the next brings back larger: the agent
+    # still has it at its first address, with its first size; back at that size, it swaps. In
+    # a unit, variables back with another type of the same size: the check of layouts keeps
+    # their first types
+    "readdvar": (2, 1, 0), "readdtype": (2, 1, 0),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -86,6 +91,8 @@ PRINTS = {
     "startsave": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
     "newconst": ["n 1 limit 7", "n 1 limit 8"],
     "startblock": ["n 1 main three 1"], "startcap": ["n 1 main four 1"], "startnoasm": ["n 1 main four 1"],
+    # the version that removed the variable ran
+    "readdvar": [re.compile(r"n \d+ main two")], "readdtype": ["two"],
     "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
@@ -120,6 +127,12 @@ SAYS = {
     # written during the load: the commit finds it so and keeps the program's value
     "initrace": [r"  note: the initial value of U\.SPEED changed; the running value is kept",
                  r"  note: the initial value of U\.PAIR changed; the running value is kept"],
+    "readdvar": [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes",
+                 r"  note: MAIN\.CALLS is back after a save removed it; it keeps its running value"],
+    "readdtype": [r"restart needed: u\.Hits: the declaration changed its layout or type",
+                  r"restart needed: u\.Calls: the declaration changed its layout or type",
+                  r"  note: U\.HITS is back after a save removed it; it keeps its running value",
+                  r"  note: U\.CALLS is back after a save removed it; it keeps its running value"],
 }
 # case: the word before a number that counts the calls of Tick, as the tick number does. It
 # is a variable of the unit's implementation section, which every swap must leave in place,
@@ -132,6 +145,11 @@ COUNTERS = {"globals": "hidden", "hidden": "calls"}
 # across the swap calls the old Show once more, with its own values (the new Show would read
 # that frame with the new layout), and the fresh frames of the new Run after it the new Show
 HANDOFFS = {"nestedframe": ("base 42 v1", "last 42 v1", "base 42 v2")}
+# case: a variable that a save removed and a later one brought back keeps its value. Two
+# patterns of what a tick prints: the first numbers the second prints are the last numbers
+# the first printed, each one more, as the new code counts on from the value
+RESUMES = {"readdvar": (r"n \d+ main one (\d+)", r"n \d+ main three (\d+)"),
+           "readdtype": (r"one calls (\d+) hits (\d+)", r"four calls (\d+) hits (\d+)")}
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
 LOAD_LIMITS = {"signals": 1000}
@@ -224,6 +242,13 @@ for name in names:
         if not count or count.group(1) != tick:
             drift.append((tick, count and count.group(1)))
     ok = ok and not drift
+    resumed = None
+    if name in RESUMES:
+        before = [m.groups() for m in (re.match(RESUMES[name][0] + "$", text.strip()) for _, text in records) if m]
+        after = [m.groups() for m in (re.match(RESUMES[name][1] + "$", text.strip()) for _, text in records) if m]
+        if not before or not after or [int(x) for x in after[0]] != [int(x) + 1 for x in before[-1]]:
+            resumed = (before[-1] if before else None, after[0] if after else None)
+    ok = ok and resumed is None
     # the driver's records of its swaps, by their place among the lines
     swapped = [i for i, line in enumerate(lines) if re.match(r"\[hot\] v\d+ swapped: ", line)]
     # every tick after the last swap's record ran its code, but the first, which may have been
@@ -278,6 +303,7 @@ for name in names:
           + "".join("; hotfpc never said %r" % pattern for pattern in unsaid)
           + "".join("; tick %s printed %s" % (tick, "%s %s" % (COUNTERS[name], count) if count else "no %s number" % COUNTERS[name])
                     for tick, count in drift[:1])
+          + ("; counted on from %s with %s" % resumed if resumed else "")
           + "".join("; a load took %s ms in the program" % x for x in slow)
           + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
                     for tick, text in stale[:1])

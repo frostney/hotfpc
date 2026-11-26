@@ -64,7 +64,8 @@ main block.
 An edit needs a restart when the program's state depends on what it changes:
 
 - a variable's size, and in a unit also its type when the size stays the same (`Integer`
-  to `Single`);
+  to `Single`), also when an earlier save removed the variable and a later one brings it
+  back: the program kept it as it was;
 - a record's or class's layout: a field added or removed, and in a unit also a field moved
   or retyped;
 - a class's virtual methods (its virtual method table), or its parent class;

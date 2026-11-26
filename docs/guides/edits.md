@@ -4,7 +4,7 @@ Every kind of edit hotfpc has a test for, and what it does. Each row is a step o
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
 small program that runs while the test saves the edit into it, run by CI on pull requests
 and on pushes to main. The
-outcomes are from runs of all 40 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-25, and they are what `check.py` expects on macOS and Linux. Where a Windows
+outcomes are from runs of all 42 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-26, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.
 
 In a swap, the program keeps running with its state; in a restart, hotfpc starts it over
@@ -46,6 +46,12 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | The typed constant `Calls: Integer = 0` becomes `Int64 = 0` | restart: `variable U.CALLS changed size from 4 to 8 bytes` | `typedconst` |
 | Another text in the program file, saved while fpc can't write the program's assembler (`.hot/asm/main.s` is a directory) | swap; on Windows, restart: `the sizes of variables with initial values are unknown: <fpc> did not compile the program to assembler (...)` | `progvar` |
 | `Calls: Integer = 0` in the program file becomes `Int64 = 0` | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes`, also on Windows after the save before | `progvar` |
+| A save removes `Calls: Integer = 0` and its uses from the program file | swap | `readdvar` |
+| A later save adds `Calls: Int64 = 0` back | restart: `variable MAIN.CALLS changed size from 4 to 8 bytes` | `readdvar` |
+| Then `Calls: Integer = 0`, its first type | swap: `Calls` counts on from the value it had, with the note `MAIN.CALLS is back after a save removed it; it keeps its running value` | `readdvar` |
+| A save removes `Hits: Integer` from a unit's interface and `Calls: Integer` from its implementation section, with their uses | swap | `readdtype` |
+| A later save adds both back as `Single`, the same size | restart: `u.Hits: the declaration changed its layout or type`, and the same for `u.Calls` | `readdtype` |
+| Then both as `Integer`, their first type | swap, with the note `U.HITS is back after a save removed it; it keeps its running value`, and the same for `U.CALLS` | `readdtype` |
 | A typed constant in a routine, `Calls: Integer = 0`, becomes `Int64 = 0` | restart: `variable U.TICK(LONGINT):ANSISTRING.CALLS changed size from 4 to 8 bytes` | `localconst` |
 
 The program's variables keep their values through every swap: the scenarios `globals` and

@@ -112,7 +112,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    moved, or a field or variable that changed its type without changing a size, is
    invisible in the object file, so this check catches it. The check compares each record
    and class and the type of each variable with the running unit's, by name, because the
-   compiler numbers types again on every compile. The program file has no `.ppu`, so its
+   compiler numbers types again on every compile. A declaration that a swap removed keeps its
+   layout there, because the program keeps a variable a save removed, and the types it
+   names, as they were. The program file has no `.ppu`, so its
    declarations get only the checks of sizes.
 4. For a Windows program whose changed units have a variable with an initial value or a
    typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
@@ -137,7 +139,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    next to the program. Like a linker, it works out which parts the program can reach.
    Type information that nothing uses is never read, because it may refer to things the
    program doesn't have. Then the agent binds every name:
-   - A variable the program already has keeps its address and its value.
+   - A variable the program already has keeps its address and its value. So does one that
+     a save removed, a thread variable too: the agent keeps the size of each datum the
+     version it replaces had and the new one doesn't, and a save that brings it back at
+     another size needs a restart.
    - A function keeps its first address, which gets a jump to the new code (a nested
      routine is the exception, below). That keeps `@Proc`, method pointers and virtual
      method tables valid. The jump must end before the next symbol or the end of the

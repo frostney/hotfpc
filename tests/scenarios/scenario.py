@@ -1026,6 +1026,61 @@ case("progvar", {
      [(".hot/asm/main.s", None, None), ("main.pas", "  Calls: Integer = 0;", "  Calls: Int64 = 0;")]),
 ])
 
+# ---------------------------------------------------------------------------- a variable removed and added again
+# progvar's program. A save removes Calls and the next brings it back as an Int64: the agent
+# keeps a variable at its first address, also when a save removed it, so the variable that
+# comes back larger needs a restart, though the version of main before it has no Calls. Back
+# as an Integer, it is swapped and counts on from the value it had
+case("readdvar", {
+    "main.pas": PROGVAR_MAIN,
+    "u.pas": PROGVAR_U}, [
+    ("Calls and its uses are removed",
+     [("main.pas", "  Calls: Integer = 0;\n", ""), ("main.pas", "  Inc(Calls);\n", ""),
+      ("main.pas", "Format(' main one %d', [Calls])", "' main two'")]),
+    ("Calls comes back as Calls: Int64 = 0, with its uses",
+     [("main.pas", "  Count: Integer = 0;\n", "  Count: Integer = 0;\n  Calls: Int64 = 0;\n"),
+      ("main.pas", "begin\n  Result := Tick(n)", "begin\n  Inc(Calls);\n  Result := Tick(n)"),
+      ("main.pas", "' main two'", "Format(' main three %d', [Calls])")]),
+    ("Calls: Int64 = 0 becomes Calls: Integer = 0, its first type", [("main.pas", "  Calls: Int64 = 0;", "  Calls: Integer = 0;")]),
+])
+
+# ---------------------------------------------------------------------------- a unit's variables removed and added again
+# like readdvar, in a unit: a save removes a variable of its interface and one of its
+# implementation section, and the next brings both back as a Single, of the same size. The
+# check of layouts keeps the type each had, so they need a restart; back as an Integer, they
+# are swapped
+case("readdtype", {
+    "main.pas": MAIN,
+    "u.pas": r'''unit u;
+{$mode objfpc}{$H+}
+interface
+var
+  Hits: Integer;
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+var
+  Calls: Integer;
+function Tick(n: Integer): string;
+begin
+  Inc(Calls);
+  Inc(Hits);
+  Result := Format('one calls %d hits %d', [Calls, Hits]);
+end;
+end.
+'''}, [
+    ("Hits, Calls and their uses are removed",
+     [("u.pas", "var\n  Hits: Integer;\n", ""), ("u.pas", "var\n  Calls: Integer;\n", ""),
+      ("u.pas", "  Inc(Calls);\n  Inc(Hits);\n", ""), ("u.pas", "Format('one calls %d hits %d', [Calls, Hits])", "'two'")]),
+    ("Hits and Calls come back as Single, with their uses",
+     [("u.pas", "interface\n", "interface\nvar\n  Hits: Single;\n"), ("u.pas", "uses SysUtils;\n", "uses SysUtils;\nvar\n  Calls: Single;\n"),
+      ("u.pas", "begin\n  Result", "begin\n  Calls := Calls + 1;\n  Hits := Hits + 1;\n  Result"),
+      ("u.pas", "'two'", "Format('three calls %g hits %g', [Calls, Hits])")]),
+    ("Hits and Calls become Integer, their first type",
+     [("u.pas", "Hits: Single;", "Hits: Integer;"), ("u.pas", "Calls: Single;", "Calls: Integer;"),
+      ("u.pas", "Format('three calls %g hits %g', [Calls, Hits])", "Format('four calls %d hits %d', [Calls, Hits])")]),
+])
+
 # ---------------------------------------------------------------------------- a save during the start
 # progvar's program; the first save lands while the driver builds the program to start it, after
 # fpc has read main.pas. The program must start from what was saved, and on Windows its sizes
