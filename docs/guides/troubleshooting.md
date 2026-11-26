@@ -18,20 +18,24 @@ have a shorter `PATH` than your shell: name fpc with `--fpc`.
 ### `no ppudump next to the compiler (--ppudump): the check of interface layouts is off`
 
 hotfpc found no `ppudump` where it looks ([`--ppudump`](../reference/cli.md#options)):
-ppudump was installed somewhere else, or fpc is a wrapper script that doesn't pass `-PB` on
-to fpc and has no ppudump in its own directory. hotfpc carries on, but without the check
-of layouts, so an edit that changes a type without changing its size (`Integer` to
-`Single`, two fields swapped) is swapped instead of restarted, and the program then reads
-its old values wrongly. Name it:
+it isn't installed, it was installed somewhere else, or fpc is a wrapper script that
+doesn't pass `-PB` on to fpc and has no ppudump in its own directory. hotfpc carries on,
+but without the check of layouts, so an edit that changes a type without changing its size
+(`Integer` to `Single`, two fields swapped) is swapped instead of restarted, and the
+program then reads its old values wrongly.
+
+ppudump comes with fpc, but some packages leave it out: on Debian and Ubuntu it is in
+`fp-utils` (the `fpc` package installs it, `fp-compiler` alone doesn't). Install it for the
+same fpc version, then name it if hotfpc still doesn't find it:
 
 ```sh
-hotfpc --ppudump "$(command -v ppudump)" game.pas
+hotfpc --ppudump /path/to/ppudump game.pas
 ```
 
 ### `... cannot read this compiler's units (...)`
 
-The ppudump hotfpc found belongs to another fpc. Name the one that came with your
-compiler with `--ppudump`.
+The ppudump hotfpc found belongs to another fpc, and so does any other it tried. Name the
+one that came with your compiler with `--ppudump`.
 
 ### `the agent did not compile:`
 
