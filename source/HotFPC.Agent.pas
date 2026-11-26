@@ -4615,6 +4615,9 @@ var
 begin
   FillChar(Action, SizeOf(Action), 0);
   Action.sa_handler := SigActionHandler(@ParkHandler);
+  // While a thread waits parked, the program's own signal handlers wait too: one that ran on
+  // it then could write what the commit is writing, such as a variable's new initial value.
+  FpSigFillSet(Action.sa_mask);
   Action.sa_flags := SA_SIGINFO or SA_RESTART;
   FpSigAction(ParkSignal, @Action, nil);
 end;
