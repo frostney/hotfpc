@@ -1839,7 +1839,9 @@ begin
     Found := ExeSearch(ACompiler, ASearchPath);
     if (Found = '') and (ExtractFileExt(ACompiler) = '') then
       Found := ExeSearch(ACompiler + AExecutableExtension, ASearchPath);
-    Directory := ExtractFilePath(Found);
+    { on Windows the search starts in the current directory, and finds a bare name there }
+    if Found <> '' then
+      Directory := ExtractFilePath(ExpandFileName(Found));
   end;
   Result := NextTo(Directory);
 end;
@@ -2783,9 +2785,9 @@ type
     class function AffectsUnit(const AChangedFile, AUnitRecord: string): Boolean;
     { What VerifyVersion decides from the output of -iV. }
     class function JudgeVersion(const ACompiler, AOutput: string; out AProblem: string): Boolean;
-    { The file that the output of -PB names: its last line that is not empty, when that is
-      a file, otherwise ''. fpc 3.2.2 prints the bare name, such as ppcx64, of a compiler it
-      cannot find, and a wrapper may print lines of its own first. }
+    { The file that the output of -PB names: its last line that names a file, otherwise ''.
+      fpc 3.2.2 prints the bare name, such as ppcx64, of a compiler it cannot find, and a
+      wrapper may print lines of its own before or after fpc's. }
     class function ReadBinary(const AOutput: string): string;
   end;
 
@@ -3060,7 +3062,7 @@ begin
   try
     Lines.Text := AOutput;
     for I := Lines.Count - 1 downto 0 do
-      if Trim(Lines[I]) <> '' then
+      if (Trim(Lines[I]) <> '') and FileExists(Trim(Lines[I])) then
       begin
         Result := Trim(Lines[I]);
         Break;
@@ -3068,8 +3070,6 @@ begin
   finally
     Lines.Free;
   end;
-  if (Result <> '') and not FileExists(Result) then
-    Result := '';
 end;
 
 class function TCompiler.AgentOptions(const AOptions: TStrings): TStringList;
@@ -5965,7 +5965,7 @@ end;
 
 procedure TestLocate;
 var
-  Root, Wrapper, Compiler: string;
+  Root, Wrapper, Compiler{$ifdef windows}, Current{$endif}: string;
 begin
   Root := MakeTestDirectory('locate');
   ExpectEqual(TLayoutReader.Locate('', Root + 'fpc', '', ''), '', 'no ppudump next to the compiler');
@@ -5977,6 +5977,16 @@ begin
   WriteTestFile(Root + 'fpc.exe', '');
   ExpectEqual(TLayoutReader.Locate('', 'fpc', '.exe', ExcludeTrailingPathDelimiter(Root)), Root + 'ppudump.exe',
     'a bare fpc on the search path is fpc.exe on Windows');
+  {$ifdef windows}
+  Current := GetCurrentDir;
+  SetCurrentDir(Root);
+  try
+    ExpectEqual(TLayoutReader.Locate('', 'fpc', '.exe', Root + 'nowhere'), Root + 'ppudump.exe',
+      'a bare fpc in the current directory, where Windows looks first');
+  finally
+    SetCurrentDir(Current);
+  end;
+  {$endif}
   { a wrapper script for fpc in a folder of its own, and the compiler with its ppudump in another }
   Wrapper := MakeTestDirectory('locate-wrapper');
   WriteTestFile(Wrapper + 'fpc', '');
@@ -6007,7 +6017,9 @@ begin
   WriteTestFile(Root + 'ppcx64', '');
   ExpectEqual(TCompiler.ReadBinary(Root + 'ppcx64' + LineEnding), Root + 'ppcx64', 'the file -PB names');
   ExpectEqual(TCompiler.ReadBinary('a wrapper''s own line' + LineEnding + Root + 'ppcx64' + LineEnding + LineEnding),
-    Root + 'ppcx64', 'the last line that is not empty');
+    Root + 'ppcx64', 'after a wrapper''s line');
+  ExpectEqual(TCompiler.ReadBinary(Root + 'ppcx64' + LineEnding + 'wrapper: done' + LineEnding),
+    Root + 'ppcx64', 'and before one');
   ExpectEqual(TCompiler.ReadBinary('ppcx64' + LineEnding), '', 'the bare name of a compiler fpc 3.2.2 cannot find');
   ExpectEqual(TCompiler.ReadBinary(Root + 'ppca64' + LineEnding), '', 'a file that is not there');
   ExpectEqual(TCompiler.ReadBinary(''), '', 'no output');
@@ -7357,6 +7369,71 @@ begin
   end;
 end;
 
+{ A stand-in for fpc that prints AOutput for -PB when it gets exactly AArguments, and its
+  arguments otherwise, and ends with AExitCode. }
+function WriteFakeFPC(const ADirectory, AName, AArguments: string; const AOutput: array of string;
+  const AExitCode: Integer): string;
+var
+  Lines: string;
+  I: Integer;
+begin
+  Lines := '';
+  for I := 0 to High(AOutput) do
+    Lines := Lines + 'echo ' + AOutput[I] + LineEnding;
+  {$ifdef windows}
+  Result := ADirectory + AName + '.bat';
+  WriteTestFile(Result, '@echo off' + LineEnding
+    + 'if not "%*"=="' + AArguments + '" (' + LineEnding + 'echo %*' + LineEnding + 'exit /b 1' + LineEnding + ')' + LineEnding
+    + Lines + 'exit /b ' + IntToStr(AExitCode) + LineEnding);
+  {$else}
+  Result := ADirectory + AName;
+  WriteTestFile(Result, '#!/bin/sh' + LineEnding
+    + 'if [ "$*" != "' + AArguments + '" ]; then echo "$*"; exit 1; fi' + LineEnding
+    + Lines + 'exit ' + IntToStr(AExitCode) + LineEnding);
+  FpChmod(Result, &755);
+  {$endif}
+end;
+
+function CompilerBinaryOf(const ACompiler: string; const AOptions: array of string): string;
+var
+  Arguments: array of string;
+  Options: TOptions;
+  Workspace: TWorkspace;
+  Compiler: TCompiler;
+  I: Integer;
+begin
+  SetLength(Arguments, Length(AOptions) + 3);
+  Arguments[0] := '--fpc';
+  Arguments[1] := ACompiler;
+  for I := 0 to High(AOptions) do
+    Arguments[I + 2] := AOptions[I];
+  Arguments[High(Arguments)] := 'demo.pas';
+  Options := ParseOptions(Arguments, False);
+  Workspace := TWorkspace.Create(Options.Source, Options.TargetWindows);
+  Compiler := TCompiler.Create(Options, Workspace);
+  try
+    Result := Compiler.CompilerBinary;
+  finally
+    Compiler.Free;
+    Workspace.Free;
+    Options.Free;
+  end;
+end;
+
+procedure TestCompilerBinary;
+var
+  Root: string;
+begin
+  Root := MakeTestDirectory('compiler-binary');
+  WriteTestFile(Root + 'ppcx64', '');
+  ExpectEqual(CompilerBinaryOf(WriteFakeFPC(Root, 'wrapper', '-V3.2.2 -Px86_64 -Xpbin -PB',
+    ['wrapper: start', Root + 'ppcx64', 'wrapper: done'], 0), ['-V3.2.2', '-O2', '-Px86_64', '-Fuunits', '-Xpbin']),
+    Root + 'ppcx64', 'fpc -PB after the options that choose the compiler, in their order, and no others');
+  ExpectEqual(CompilerBinaryOf(WriteFakeFPC(Root, 'failing', '-PB', [Root + 'ppcx64'], 1), []), '',
+    'none from an fpc that fails');
+  ExpectEqual(CompilerBinaryOf(Root + 'missing', []), '', 'none from an fpc that does not run');
+end;
+
 procedure TestVerifyVersion;
 var
   Root, Old, Problem: string;
@@ -7583,6 +7660,7 @@ begin
     TestProbe;
     TestLocate;
     TestReadBinary;
+    TestCompilerBinary;
     TestHistory;
     TestReadDataSizes;
     TestStringBytes;

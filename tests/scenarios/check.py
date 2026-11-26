@@ -133,6 +133,9 @@ COUNTERS = {"globals": "hidden", "hidden": "calls"}
 # across the swap calls the old Show once more, with its own values (the new Show would read
 # that frame with the new layout), and the fresh frames of the new Run after it the new Show
 HANDOFFS = {"nestedframe": ("base 42 v1", "last 42 v1", "base 42 v2")}
+# hotfpc's lines that say the check of interface layouts is off
+LAYOUTS_OFF = re.compile(r"\[hot\] (no ppudump next to the compiler \(--ppudump\)|.* cannot read this compiler's units \(.*\)): "
+                         r"the check of interface layouts is off(; --ppudump names one that can)?$")
 # case: the most a load may take inside the program, in ms; the agent must not wait for a
 # thread that cannot stop
 LOAD_LIMITS = {"signals": 1000}
@@ -220,8 +223,8 @@ for name in names:
     unsaid = [pattern for pattern in SAYS.get(name, []) if not any(re.match(r"\[hot\] " + pattern, line) for line in lines)]
     ok = ok and not unsaid
     # the check of layouts decides several cases (records, hidden), so a run without it tests
-    # less than CI does: hotfpc found no ppudump that reads the compiler's units
-    layouts_off = any(re.match(r"\[hot\] .*the check of interface layouts is off", line) for line in lines)
+    # less than CI does: hotfpc found no ppudump, or one that can't read the compiler's units
+    layouts_off = any(LAYOUTS_OFF.match(line) for line in lines)
     ok = ok and not layouts_off
     drift = []
     for tick, text in records if name in COUNTERS else []:
