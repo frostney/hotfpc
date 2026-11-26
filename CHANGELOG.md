@@ -2,18 +2,17 @@
 
 ## 1.2.0
 
-- A variable that a save removes and a later save brings back at another size now needs a
-  restart, and so does one in a unit that comes back with another type of the same size
-  (`Integer` to `Single`) while the check of layouts is on: the same rule as for a variable
-  that changes in place. The program keeps the variable at its first address, and the agent
-  swapped the new code in with the note `kept without a check`, so it used the old storage
-  as the new type: a larger one ran past it. The agent now keeps the sizes of what a save
-  removes, thread variables included, and the check of layouts in units the declarations a
-  save removes. In the program file, which has no unit file for ppudump to read, only a
-  change of size is found
-  ([limits](https://frostney.github.io/hotfpc/docs/reference/limits/)). A variable that
-  comes back as it was is swapped, with the note `<name> is back after a save removed it;
-  it keeps its running value`.
+- A variable that a save removes and a later save brings back now gets the same checks as a
+  variable that changes in place, and needs a restart when they find another size, or in a
+  unit, while the check of layouts is on, another type of the same size (`Integer` to
+  `Single`). The program keeps the variable at its first address, and the agent swapped the
+  new code in with the note `kept without a check`, so it used the old storage as the new
+  type: a larger one ran past it. The agent now keeps the sizes of what a save removes,
+  thread variables included, and the check of layouts in units the declarations a save
+  removes. In the program file, which has no unit file for ppudump to read, only a change
+  of size is found ([limits](https://frostney.github.io/hotfpc/docs/reference/limits/)). A
+  variable that comes back as it was is swapped, with the note `<name> is back after a save
+  removed it; it keeps its running value`.
 - A swap no longer overwrites a value the program writes while the swap loads with a
   changed initial value. The agent compared the variable with its old initial value
   before it stopped the program's threads, and copied the new one in unconditionally once
