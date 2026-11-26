@@ -144,9 +144,10 @@ export default async function HomePage() {
         <h2 className="text-xl font-semibold mb-3 text-center">Install</h2>
         <div className={codeClass} dangerouslySetInnerHTML={{ __html: installHtml }} />
         <p className="mt-3 text-sm text-fd-muted-foreground text-center">
-          Homebrew installs hotfpc on macOS and Linux, and fpc with it except on Intel
-          Macs. Which systems have a release archive, and from which release, is on the
-          platforms page, and hotfpc builds from source with nothing but fpc.{' '}
+          That command is for macOS on Apple silicon and for Linux. On an Intel Mac,
+          Homebrew installs hotfpc but has no prebuilt fpc: the platforms page gives the
+          steps there, says which systems have a release archive, and from which release,
+          and hotfpc builds from source with nothing but fpc.{' '}
           <Link href="/docs/reference/platforms" className="underline">
             Platforms →
           </Link>
