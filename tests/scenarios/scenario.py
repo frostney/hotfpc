@@ -56,12 +56,13 @@ EMPTIED_FIRST = "emptied first"
 AT_START = "at the start"
 
 
-def case(name, files, steps, opts=(), restart=False):
+def case(name, files, steps, opts=(), restart=False, env=None):
     """steps: (description, edits) or (description, edits, WHILE_COMPILING, EMPTIED_FIRST or AT_START), or
     (description, edits, AT_START, EMPTIED_FIRST). restart: the driver
     starts the program over when an edit needs a restart; the other cases pass --no-restart, so
-    that the program they check keeps running."""
-    CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
+    that the program they check keeps running. env: variables to add to the driver's
+    environment, which the program inherits, such as one of the agent's test variables."""
+    CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)), dict(env or {}))
 
 
 # ---------------------------------------------------------------------------- globals
@@ -344,9 +345,11 @@ begin
   {$endif}
   while not Terminated do Sleep(20);
 end;
+var
+  Speed: Integer = 5;
 function Tick(n: Integer): string;
 begin
-  Result := 'text one';
+  Result := Format('text one speed %d', [Speed]);
 end;
 initialization
   Quiet := TQuiet.Create(False);
@@ -356,7 +359,8 @@ finalization
   Quiet.Free;
 end.
 '''}, [
-    ("another text, while a thread blocks every signal", [("u.pas", "'text one'", "'text two'")]),
+    ("another text, and Speed = 5 becomes Speed = 50, while a thread blocks every signal",
+     [("u.pas", "'text one speed", "'text two speed"), ("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;")]),
 ])
 
 # ---------------------------------------------------------------------------- initialization and finalization
@@ -918,6 +922,36 @@ end.
     ("another text", [("u.pas", "'one calls", "'two calls")]),
     ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
 ])
+
+# ---------------------------------------------------------------------------- an initial value written during the load
+# HOT_TEST_DATA_WRITE writes each variable whose initial value a save changes after the agent
+# binds the save and before the commit, as a thread of the program could while the swap loads:
+# the commit finds it written, so it keeps the value the program has, and the note says so.
+# Speed fits in one aligned word, which the commit compares and writes in one step; Pair, of 16
+# bytes, it compares and copies when every other thread is stopped, and keeps as it is when
+# one isn't (on Linux, a thread that blocks the agent's signal and sleeps).
+case("initrace", {
+    "main.pas": MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+type
+  TPair = record A, B: Int64; end;
+var
+  Speed: Integer = 5;
+  Pair: TPair = (A: 1; B: 2);
+function Tick(n: Integer): string;
+begin
+  Result := Format('speed %d pair %d %d', [Speed, Pair.A, Pair.B]);
+end;
+end.
+"""}, [
+    ("Speed = 5 becomes Speed = 50 and Pair = (1, 2) becomes (10, 20), and both are written during the load",
+     [("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;"), ("u.pas", "Pair: TPair = (A: 1; B: 2);", "Pair: TPair = (A: 10; B: 20);")]),
+], env={"HOT_TEST_DATA_WRITE": "1"})
 
 # ---------------------------------------------------------------------------- a typed constant
 # like a variable with an initial value, but fpc 3.2 leaves an implementation section's typed
@@ -1537,7 +1571,7 @@ MAX_TICKS = 1000
 
 
 def run(name):
-    files, steps, opts = CASES[name]
+    files, steps, opts, env = CASES[name]
     work = os.path.join(HERE, "work", name)
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
@@ -1559,7 +1593,8 @@ def run(name):
 
     print("=== %s" % name, flush=True)
     p = subprocess.Popen(driver_cmd() + list(opts) + [os.path.join(work, "main.pas"), "--", str(MAX_TICKS), stop],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                         env=dict(os.environ, **env))
     ended = threading.Event()
 
     def pump():

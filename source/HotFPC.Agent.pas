@@ -3136,7 +3136,9 @@ type
   end;
   TStore = record Destination: PQWord; Value: QWord; end;
   TVMTUpdate = record ObjectFile: PObjectFile; Symbol: PObjectSymbol; OldAddress: QWord; end;
-  TDataCopy = record Destination: QWord; Source: PByte; Size: QWord; end;
+  // A new initial value to copy in at the commit, while the variable still holds Expected,
+  // the old one; Taken says whether it was.
+  TDataCopy = record Destination: QWord; Source, Expected: PByte; Size: QWord; Name: AnsiString; Taken: Boolean; end;
 var
   Registry: TMap;
   Units: TMap;      // unit name -> PObjectFile, the live version
@@ -3156,6 +3158,37 @@ var
   Poisoned: Boolean;
   PatchedCount: LongInt;
   SuspendThreads: Boolean = True;
+  TestDataWrite: Boolean = False;   // HOT_TEST_DATA_WRITE: see the commit
+
+// Writes a new initial value while the variable still holds the old one, and says whether it
+// did. Within one aligned 8-byte word, with one compare-and-swap of that word: a thread that
+// still runs during the commit (on Linux, one that blocks the park signal and sleeps in the
+// kernel) either wrote first, and keeps its value, or writes after. A longer variable only
+// while every other thread is stopped, AAllStopped; otherwise it keeps its value.
+function CopyInitialValue(const ACopy: TDataCopy; const AAllStopped: Boolean): Boolean;
+const
+  WordBytes = 8;
+var
+  Offset, WordAddress: QWord;
+  OldWord, NewWord: QWord;
+begin
+  Result := False;
+  Offset := ACopy.Destination and (WordBytes - 1);
+  if (ACopy.Size > 0) and (Offset + ACopy.Size <= WordBytes) then
+  begin
+    WordAddress := ACopy.Destination - Offset;
+    repeat
+      OldWord := PQWord(PtrUInt(WordAddress))^;
+      if CompareByte(PByte(@OldWord)[Offset], ACopy.Expected^, ACopy.Size) <> 0 then Exit;
+      NewWord := OldWord;
+      Move(ACopy.Source^, PByte(@NewWord)[Offset], ACopy.Size);
+    until InterLockedCompareExchange64(PInt64(PtrUInt(WordAddress))^, Int64(NewWord), Int64(OldWord)) = Int64(OldWord);
+    Exit(True);
+  end;
+  if not AAllStopped or (CompareByte(PByte(PtrUInt(ACopy.Destination))^, ACopy.Expected^, ACopy.Size) <> 0) then Exit;
+  Move(ACopy.Source^, PByte(PtrUInt(ACopy.Destination))^, ACopy.Size);
+  Result := True;
+end;
 
 procedure AddPatch(const APatch: TPatch);
 begin
@@ -3544,16 +3577,22 @@ begin
     begin
       // An initialised variable or typed constant whose initial value was edited. If the
       // running value is still the old initial value, nothing has written it: take the new one.
+      // A thread can write it while the swap loads, so the commit decides, as
+      // CopyInitialValue says, and the note says what it found.
       NewBytes := SymbolBytes(AObjectFile, Symbol);
       OldBytes := SymbolBytes(Previous, PreviousSymbol);
-      if (NewBytes <> nil) and (OldBytes <> nil) and not HasRelocations(AObjectFile, Symbol) and not HasRelocations(Previous, PreviousSymbol) and (CompareByte(PByte(PtrUInt(ExistingAddress))^, OldBytes^, Symbol^.Size) = 0) then
+      if (NewBytes <> nil) and (OldBytes <> nil) and not HasRelocations(AObjectFile, Symbol) and not HasRelocations(Previous, PreviousSymbol) then
       begin
         if DataCopyCount = Length(DataCopies) then SetLength(DataCopies, ListGrowthSmall + 2 * Length(DataCopies));
         DataCopies[DataCopyCount].Destination := ExistingAddress;
         DataCopies[DataCopyCount].Source := NewBytes;
-        DataCopies[DataCopyCount].Size := Symbol^.Size;
+        DataCopies[DataCopyCount].Expected := OldBytes;
+        // the size the object file states (ELF), not the 16 bytes fpc pads the section to
+        if (Symbol^.DeclaredSize <> 0) and (Symbol^.DeclaredSize <= Symbol^.Size) then DataCopies[DataCopyCount].Size := Symbol^.DeclaredSize
+        else DataCopies[DataCopyCount].Size := Symbol^.Size;
+        DataCopies[DataCopyCount].Name := Name;
+        DataCopies[DataCopyCount].Taken := False;
         Inc(DataCopyCount);
-        Say('note ' + Pretty(Name) + ' still had its initial value; set to the new one');
       end
       else Say('note the initial value of ' + Pretty(Name) + ' changed; the running value is kept');
       Inc(ACounts.Notes);
@@ -4590,6 +4629,9 @@ var
 begin
   FillChar(Action, SizeOf(Action), 0);
   Action.sa_handler := SigActionHandler(@ParkHandler);
+  // While a thread waits parked, the program's own signal handlers wait too: one that ran on
+  // it then could write what the commit is writing, such as a variable's new initial value.
+  FpSigFillSet(Action.sa_mask);
   Action.sa_flags := SA_SIGINFO or SA_RESTART;
   FpSigAction(ParkSignal, @Action, nil);
 end;
@@ -5698,7 +5740,7 @@ var
   NewWords, OldWords: PQWord;
   OldObject: PObjectFile;
   Address: QWord;
-  Cleared: Boolean;
+  Cleared, AllStopped: Boolean;
   Attempt: LongInt;
   UnwindTable: Pointer;
 begin
@@ -5892,6 +5934,10 @@ begin
     end;
     PatchedCount := 0;
     Cleared := False;
+    // Test only: HOT_TEST_DATA_WRITE writes each variable about to get its new initial value
+    // here, after the binding and before the threads stop, as a thread of the program could.
+    if TestDataWrite then
+      for I := 0 to DataCopyCount - 1 do Inc(PByte(PtrUInt(DataCopies[I].Destination))^);
     // A thread can be about to resume inside an entry without being there: a signal or an
     // exception that interrupted it there saved where in its handler's frame. While the
     // handler runs, the commit waits; one that keeps running makes the save a restart.
@@ -5918,7 +5964,13 @@ begin
     if Applied then
     begin
       for I := 0 to StoreCount - 1 do InterLockedExchange64(PInt64(Stores[I].Destination)^, Int64(Stores[I].Value));
-      for I := 0 to DataCopyCount - 1 do Move(DataCopies[I].Source^, PByte(PtrUInt(DataCopies[I].Destination))^, DataCopies[I].Size);
+      // every other thread stopped: on Linux one that blocks the park signal and sleeps isn't
+{$ifdef linux}
+      AllStopped := SuspendThreads and not SleepingBlockers;
+{$else}
+      AllStopped := SuspendThreads;
+{$endif}
+      for I := 0 to DataCopyCount - 1 do DataCopies[I].Taken := CopyInitialValue(DataCopies[I], AllStopped);
     end;
     WorldStart;
     if not Cleared and (StopFailure = '') and (ResumeHit >= 0) then
@@ -5966,6 +6018,9 @@ begin
       MapPut(Units, ObjectFiles[I]^.UnitName, ObjectFiles[I]);
       FreeObjectFile(OldObject);
     end;
+    for I := 0 to DataCopyCount - 1 do
+      if DataCopies[I].Taken then Say('note ' + Pretty(DataCopies[I].Name) + ' still had its initial value; set to the new one')
+      else Say('note the initial value of ' + Pretty(DataCopies[I].Name) + ' changed; the running value is kept');
     Say('stat units=' + SignedToString(Length(ObjectFiles)) + ' functions=' + SignedToString(Counts.Functions) + ' changed=' + SignedToString(Counts.Changed) + ' added=' + SignedToString(Counts.Added)
       + ' redirected=' + SignedToString(RedirectCount) + ' kept=' + SignedToString(Counts.Kept) + ' newdata=' + SignedToString(Counts.NewData) + ' vmtwords=' + SignedToString(VMTWords) + ' bytes=' + UnsignedToString(Bytes));
     Say('time parse=' + FloatToString(ParsedTime - StartTime) + ' place=' + FloatToString(PlacedTime - ParsedTime) + ' commit=' + FloatToString(CommittedTime - PlacedTime) + ' total=' + FloatToString(CommittedTime - StartTime) + ' hostsyms=' + FloatToString(HostMilliseconds));
@@ -6207,6 +6262,7 @@ begin
   if Count > 0 then Move(Value[1], AgentToken[0], Count);
   AgentToken[Count] := #0;
   if TryGetEnvironmentVariable('HOT_NOSUSPEND', Value) then SuspendThreads := False;
+  if TryGetEnvironmentVariable('HOT_TEST_DATA_WRITE', Value) then TestDataWrite := True;
 {$if defined(darwin) and defined(cpux86_64)}
   MainThread := MachThreadSelf;   // a send right, kept: the name the thread lists have for it
 {$endif}

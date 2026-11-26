@@ -4,7 +4,7 @@ Every kind of edit hotfpc has a test for, and what it does. Each row is a step o
 the scenarios in [`tests/scenarios/scenario.py`](../../tests/scenarios/scenario.py): a
 small program that runs while the test saves the edit into it, run by CI on pull requests
 and on pushes to main. The
-outcomes are from runs of all 39 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-25, and they are what `check.py` expects on macOS and Linux. Where a Windows
+outcomes are from runs of all 40 scenarios on Linux x86-64 with fpc 3.2.4 on 2026-11-25, and they are what `check.py` expects on macOS and Linux. Where a Windows
 program ends differently, the row says so.
 
 In a swap, the program keeps running with its state; in a restart, hotfpc starts it over
@@ -39,6 +39,7 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | A new variable with an initial value | swap | `globals` |
 | `Speed: Integer = 5` becomes `= 50`, and `Speed` still holds 5 | swap: `Speed` is 50, with the note `U.SPEED still had its initial value; set to the new one` | `globals` |
 | `Total: Integer = 0` becomes `= 1000`, and the program has changed `Total` from 0 | swap: `Total` keeps its value, with the note `the initial value of U.TOTAL changed; the running value is kept` | `globals` |
+| `Speed: Integer = 5` becomes `= 50` and a 16-byte record `Pair = (A: 1; B: 2)` becomes `(10, 20)`, and a write to each lands while the swap loads (`HOT_TEST_DATA_WRITE` makes it) | swap: both keep the program's values, each with the note `the initial value of U.<name> changed; the running value is kept` | `initrace` |
 | `Hidden: Integer` becomes `Hidden: Int64` | restart: `u.Hidden: the declaration changed its layout or type` | `globals` |
 | `Calls: Integer` in the implementation section becomes `Calls: Single`, the same size | restart: `u.Calls: the declaration changed its layout or type` | `hidden` |
 | `Calls: Integer = 0` in the implementation section becomes `Int64 = 0` | restart: `u.Calls: the declaration changed its layout or type` | `initvar` |
@@ -77,7 +78,7 @@ The program's variables keep their values through every swap: the scenarios `glo
 | `u.pas` becomes `w.pas`, and the program uses `w` | restart: `unit w is not part of the running program` | `rename` |
 | Another text, with a thread variable untouched | swap | `threadvars` |
 | A second thread variable | restart: `the thread variables of unit u changed` | `threadvars` |
-| Another text, while a thread of the program blocks every signal | swap, within the scenario's limit of 1 s inside the program | `signals` |
+| Another text, and `Speed: Integer = 5` becomes `= 50`, while a thread of the program blocks every signal | swap, within the scenario's limit of 1 s inside the program: `Speed` is 50 | `signals` |
 
 ## Restarts
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- A swap no longer overwrites a value the program writes while the swap loads with a
+  changed initial value. The agent compared the variable with its old initial value
+  before it stopped the program's threads, and copied the new one in unconditionally once
+  they were stopped, so a thread's write in between was lost, and hotfpc printed
+  `note: U.SPEED still had its initial value; set to the new one`. Now the commit compares
+  and writes in one atomic step for a variable of up to 8 bytes within one aligned word,
+  so that also a thread that is still running then (on Linux, one that blocks the agent's
+  signal and sleeps) keeps its write, and a longer one only while every other thread is
+  stopped. On Linux a stopped thread now runs none of the program's signal handlers until
+  the swap lets it go on. The note says what the commit found.
 - On Linux, a save into a program whose threads come and go no longer fails with `a thread
   of the program did not stop` after a 2 s wait when a thread ends after the agent sent it
   the signal that stops it but before the thread took it. The agent now leaves out a thread

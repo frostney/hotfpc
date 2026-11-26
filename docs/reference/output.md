@@ -72,7 +72,7 @@ A swap can be followed by notes:
 | Note | What it means |
 | --- | --- |
 | `note: <name> still had its initial value; set to the new one` | A variable with an initial value, or a typed constant, got a new initial value. Its running value was still the old initial value, byte for byte, and neither value contains an address the linker fills in: it now has the new value. `nil` and a number cast to a pointer are plain bytes and count. A value the program changed and set back counts as unchanged. |
-| `note: the initial value of <name> changed; the running value is kept` | The same, but the running value differs from the old initial value, or one of the two values contains an address the linker fills in (`@Table`, a routine, a `PChar` or a string with text, also as a field of a record): it keeps the value it has. |
+| `note: the initial value of <name> changed; the running value is kept` | The same, but the running value differs from the old initial value, or one of the two values contains an address the linker fills in (`@Table`, a routine, a `PChar` or a string with text, also as a field of a record), or the variable is longer than one aligned 8 bytes while a thread the agent can't stop runs on (on Linux, one that blocks its signal and sleeps): it keeps the value it has. |
 | `note: resource string <name> changed; the running text is kept` | A `resourcestring` changed. The program keeps the text it has. |
 | `note: <name> changed; the running copy is kept` | Other data the program already has, such as a table, changed in a way that doesn't need a restart. The program keeps its copy. |
 | `note: the initialization section of <unit> changed; it is not run again` | The section isn't run again. The new code is in place for the next start. |
