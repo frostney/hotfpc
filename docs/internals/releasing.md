@@ -44,7 +44,5 @@ the notes from the section named after the tag and fails without one.
 
 The formula `hotfpc` in [frostney/homebrew-tap](https://github.com/frostney/homebrew-tap)
 installs the release binary. After a release, update `Formula/hotfpc.rb` there with a pull
-request: each archive's URL and its SHA-256 from the checksum file. The formula has
-archives for macOS on Apple silicon and Linux on x86-64; the `macos-x64` and `linux-arm64`
-archives each need a block of their own in it before Homebrew installs hotfpc on an Intel
-Mac or on Linux arm64.
+request: each archive's URL and its SHA-256 from the checksum file. The formula has a
+block for each of `macos-arm64`, `macos-x64`, `linux-arm64` and `linux-x64`.

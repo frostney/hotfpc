@@ -22,33 +22,35 @@ hotfpc needs Free Pascal 3.2.2 or later. It also uses the `ppudump` that comes w
 
 ## Install hotfpc
 
-**With Homebrew**, on macOS on Apple silicon and Linux on x86-64, fpc and hotfpc together:
+**With Homebrew**, on macOS on Apple silicon and on Linux, fpc and hotfpc together:
 
 ```sh
 brew install fpc frostney/tap/hotfpc
 ```
 
-**From a release.** Release 1.1.0 has an archive for macOS arm64, Linux x86-64 and Windows
-x86-64, and a checksum file; [Platforms](../reference/platforms.md#getting-hotfpc) says
-what each system has. On an Intel Mac and on Linux arm64, build hotfpc from source
-(below). On Linux x86-64,
-download the archive and the checksum file, check the archive, and copy `hotfpc` into a
-directory on your `PATH`, here `~/.local/bin`:
+On an Intel Mac, Homebrew has hotfpc but no prebuilt fpc: install fpc as above, then
+`brew install frostney/tap/hotfpc`.
+
+**From a release.** Release 1.2.0 has an archive for macOS arm64 and x86-64, Linux x86-64
+and arm64, and Windows x86-64, and a checksum file;
+[Platforms](../reference/platforms.md#getting-hotfpc) says what each system has. On Linux
+x86-64, download the archive and the checksum file, check the archive, and copy `hotfpc`
+into a directory on your `PATH`, here `~/.local/bin`:
 
 ```sh
-curl -LO https://github.com/frostney/hotfpc/releases/download/1.1.0/hotfpc-1.1.0-linux-x64.tar.gz
-curl -LO https://github.com/frostney/hotfpc/releases/download/1.1.0/hotfpc-1.1.0-checksums.txt
-grep linux-x64 hotfpc-1.1.0-checksums.txt | sha256sum -c    # hotfpc-1.1.0-linux-x64.tar.gz: OK
-tar -xzf hotfpc-1.1.0-linux-x64.tar.gz
+curl -LO https://github.com/frostney/hotfpc/releases/download/1.2.0/hotfpc-1.2.0-linux-x64.tar.gz
+curl -LO https://github.com/frostney/hotfpc/releases/download/1.2.0/hotfpc-1.2.0-checksums.txt
+grep linux-x64 hotfpc-1.2.0-checksums.txt | sha256sum -c    # hotfpc-1.2.0-linux-x64.tar.gz: OK
+tar -xzf hotfpc-1.2.0-linux-x64.tar.gz
 mkdir -p ~/.local/bin
-cp hotfpc-1.1.0-linux-x64/hotfpc ~/.local/bin/
+cp hotfpc-1.2.0-linux-x64/hotfpc ~/.local/bin/
 export PATH="$HOME/.local/bin:$PATH"    # this shell only; add it to your shell's profile
 ```
 
-On a Mac with Apple silicon, take `macos-arm64` instead of `linux-x64`, and
-`shasum -a 256 -c` instead of `sha256sum -c`. On Windows, download
-`hotfpc-1.1.0-windows-x64.zip`, compare the hash that PowerShell's
-`Get-FileHash hotfpc-1.1.0-windows-x64.zip` prints with the archive's line in the checksum
+On Linux arm64, take `linux-arm64` instead of `linux-x64`. On a Mac, take `macos-arm64`
+(Apple silicon) or `macos-x64` (Intel), and `shasum -a 256 -c` instead of `sha256sum -c`.
+On Windows, download `hotfpc-1.2.0-windows-x64.zip`, compare the hash that PowerShell's
+`Get-FileHash hotfpc-1.2.0-windows-x64.zip` prints with the archive's line in the checksum
 file, unpack it, and put the folder with `hotfpc.exe` on your `PATH`.
 
 **From source.** hotfpc is plain Pascal and needs nothing beyond what ships with fpc. Build
@@ -89,8 +91,8 @@ score and the way it's drawn live in `scene.pas`. In your clone, `cd examples/de
 Homebrew or a release, download the source of the same release and go to its demo:
 
 ```sh
-curl -L https://github.com/frostney/hotfpc/archive/refs/tags/1.1.0.tar.gz | tar -xz
-cd hotfpc-1.1.0/examples/demo
+curl -L https://github.com/frostney/hotfpc/archive/refs/tags/1.2.0.tar.gz | tar -xz
+cd hotfpc-1.2.0/examples/demo
 ```
 
 On Windows, the release's "Source code (zip)" has the same files. Then start it:

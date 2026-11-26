@@ -8,21 +8,22 @@ This page is the record; the README and the guides link here.
 | hotfpc runs on | Release archive | Homebrew | From source |
 | --- | --- | --- | --- |
 | macOS arm64 | `macos-arm64` | ✓ | `./build.sh hotfpc` |
-| macOS x86-64 | `macos-x64`, from the next release on | not yet | `./build.sh hotfpc` |
+| macOS x86-64 | `macos-x64` | ✓, without fpc | `./build.sh hotfpc` |
 | Linux x86-64 | `linux-x64` | ✓ | `./build.sh hotfpc` |
-| Linux arm64 | `linux-arm64`, from the next release on | not yet | `./build.sh hotfpc` |
+| Linux arm64 | `linux-arm64` | ✓ | `./build.sh hotfpc` |
 | Windows x86-64 | `windows-x64` | | `build.bat hotfpc -- -Twin64 -Px86_64` |
 
 The [releases](https://github.com/frostney/hotfpc/releases) have an archive per system
-(`hotfpc-<version>-<system>.tar.gz`, `.zip` for Windows) and a checksum file. Release 1.1.0
-has `macos-arm64`, `linux-x64` and `windows-x64`. The release workflow at this version of
-the repository also builds `macos-x64` and `linux-arm64`, so the next release has them.
+(`hotfpc-<version>-<system>.tar.gz`, `.zip` for Windows) and a checksum file. From 1.2.0
+on they have all five; 1.1.0 has `macos-arm64`, `linux-x64` and `windows-x64`.
 
-The Homebrew formula, `frostney/tap/hotfpc`, installs the release binary for macOS on
-Apple silicon and Linux on x86-64. It doesn't install fpc:
+The Homebrew formula, `frostney/tap/hotfpc`, installs the release binary for macOS and
+Linux, on arm64 and x86-64. It doesn't install fpc, and Homebrew has no prebuilt fpc for
+Intel Macs, so there fpc comes from the
+[freepascal.org](https://www.freepascal.org/download.html) installer:
 
 ```sh
-brew install fpc frostney/tap/hotfpc
+brew install fpc frostney/tap/hotfpc    # an Intel Mac: brew install frostney/tap/hotfpc
 ```
 
 ## Compilers
@@ -75,10 +76,10 @@ macOS programs ([limits](limits.md)).
 On pull requests and on pushes to main, CI builds hotfpc with fpc 3.2.2, runs the unit
 tests, all scenarios and the check of the agent on Linux x86-64, Linux arm64, macOS arm64 and macOS
 x86-64, and on
-Windows x86-64 with `hotfpc.exe` ([tooling](../internals/tooling.md#ci)). Release 1.1.0's
-commit passed on Linux x86-64, macOS arm64 and Windows x86-64 in
-[run 44368963617](https://github.com/frostney/hotfpc/actions/runs/44368963617)
-(2026-11-18). On 2026-11-26, all 42 scenarios passed at this version of the repository on
+Windows x86-64 with `hotfpc.exe` ([tooling](../internals/tooling.md#ci)). Release 1.2.0's
+commit passed on all five in
+[run 45824842999](https://github.com/frostney/hotfpc/actions/runs/45824842999)
+(2026-11-26). On 2026-11-26, all 42 scenarios passed at this version of the repository on
 Linux x86-64 with fpc 3.2.2.
 
 ## Timings
