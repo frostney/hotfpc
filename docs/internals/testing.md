@@ -88,7 +88,8 @@ start, so a line the program prints is never taken for one of hotfpc's:
   was written, and every one after it the saved code's), a counter in the implementation
   section that every tick prints and that must keep pace with the ticks (`COUNTERS`),
   numbers a variable that a save removed and a later one brought back must count on from
-  (`RESUMES`), `[hot]` lines hotfpc must print (`SAYS`), the most a load may take inside
+  (`RESUMES`), `[hot]` lines hotfpc must print (`SAYS`; a pattern listed twice must match
+  two lines), the most a load may take inside
   the program (`LOAD_LIMITS`), and a tick the program prints once where it hands over from
   the old code to the new, with what every tick before it and after it prints (`HANDOFFS`).
 

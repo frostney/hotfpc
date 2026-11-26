@@ -1286,7 +1286,6 @@ const
   AssemblerQuote = '"';
   AssemblerEscape = '\';
   AssemblerSeparator = ',';
-  AssemblerHexPrefix = '0x';
   AssemblerOctalDigits = 3;
   // the data directives fpc writes for Darwin, and the bytes of each value they list (.word
   // is 2 bytes on x86-64 and 4 on arm64, so it is not counted)
@@ -1333,35 +1332,13 @@ begin
   Result := -1;
 end;
 
-// A decimal or 0x hexadecimal number, with spaces around it.
+// A number, decimal or 0x hexadecimal, with spaces around it; False when it is none or too large.
 function ParseAssemblerNumber(const AText: AnsiString; out AValue: QWord): Boolean;
 var
-  I, Digit: LongInt;
-  Base: QWord;
-  Number: AnsiString;
+  Code: Word;
 begin
-  Number := TrimSpaces(AText);
-  AValue := 0;
-  Base := 10;
-  if StartsWith(Number, AssemblerHexPrefix) then
-  begin
-    Delete(Number, 1, Length(AssemblerHexPrefix));
-    Base := 16;
-  end;
-  if Number = '' then Exit(False);
-  for I := 1 to Length(Number) do
-  begin
-    case Number[I] of
-      '0'..'9': Digit := Ord(Number[I]) - Ord('0');
-      'a'..'f': Digit := Ord(Number[I]) - Ord('a') + 10;
-      'A'..'F': Digit := Ord(Number[I]) - Ord('A') + 10;
-    else
-      Exit(False);
-    end;
-    if QWord(Digit) >= Base then Exit(False);
-    AValue := AValue * Base + QWord(Digit);
-  end;
-  Result := True;
+  Val(TrimSpaces(AText), AValue, Code);
+  Result := Code = 0;
 end;
 
 // The operands of a directive split at the commas outside strings.
@@ -1437,7 +1414,7 @@ var
   Buffer, Cursor, LineStart, LineEnd, Limit: PByte;
   BufferSize: PtrUInt;
   Pending, Ended: array of PObjectSymbol;
-  PendingCount, EndedCount, Index, I: SizeInt;
+  PendingCount, EndedCount, Index, DirectiveIndex: SizeInt;
   Bytes, Value: QWord;
   Open, Filled, Countable: Boolean;
   Parts: TAssemblerOperands;
@@ -1558,9 +1535,9 @@ begin
     SetString(Directive, PChar(LineStart), Index);
     SetString(Operands, PChar(LineStart + Index), LineEnd - LineStart - Index);
     Operands := TrimSpaces(Operands);
-    I := InList(Directive, AssemblerDataDirectives);
-    if I >= 0 then
-      Add(Operands <> '', AssemblerDataWidths[I] * QWord(Length(AssemblerOperands(Operands))))
+    DirectiveIndex := InList(Directive, AssemblerDataDirectives);
+    if DirectiveIndex >= 0 then
+      Add(Operands <> '', AssemblerDataWidths[DirectiveIndex] * QWord(Length(AssemblerOperands(Operands))))
     else if InList(Directive, AssemblerFillDirectives) >= 0 then
     begin
       Parts := AssemblerOperands(Operands);

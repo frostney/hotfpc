@@ -3510,14 +3510,23 @@ begin
 end;
 
 { Copies an object file with the assembler fpc assembled it from, which the agent reads beside
-  it on macOS: where there is none, the copy has none either. }
+  it on macOS. Where there is none, or it can't be copied, the copy has none either, and the
+  agent finds the sizes of its variables unknown. }
 procedure CopyObjectFile(const ASource, ADestination: string);
+var
+  Source, Destination: string;
 begin
   CopyFileContents(ASource, ADestination);
-  if FileExists(ChangeFileExt(ASource, AssemblerExtension)) then
-    CopyFileContents(ChangeFileExt(ASource, AssemblerExtension), ChangeFileExt(ADestination, AssemblerExtension))
-  else
-    DeleteFile(ChangeFileExt(ADestination, AssemblerExtension));
+  Source := ChangeFileExt(ASource, AssemblerExtension);
+  Destination := ChangeFileExt(ADestination, AssemblerExtension);
+  DeleteFile(Destination);
+  if FileExists(Source) then
+    try
+      CopyFileContents(Source, Destination);
+    except
+      on EStreamError do
+        DeleteFile(Destination);
+    end;
 end;
 
 procedure TDriver.CopyObjectsToLive;
@@ -3709,7 +3718,12 @@ begin
         DeleteFile(FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, RecordExtension));
         Exit(False);
       end;
-      if not SameFileContents(FWorkspace.UnitsDirectory + ObjectName, FWorkspace.LiveDirectory + ObjectName) then
+      { A Mach-O object can come out the same when a variable grows within its padding, as it
+        states no sizes: its assembler shows it, so the unit is loaded for the agent to see. }
+      if not SameFileContents(FWorkspace.UnitsDirectory + ObjectName, FWorkspace.LiveDirectory + ObjectName)
+        or (FOptions.KeepAssembler and not SameFileContents(
+          FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, AssemblerExtension),
+          FWorkspace.LiveDirectory + ChangeFileExt(ObjectName, AssemblerExtension))) then
         AChanged.Add(ObjectName);
     end;
   finally

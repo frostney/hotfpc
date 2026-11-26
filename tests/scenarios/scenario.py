@@ -1305,10 +1305,36 @@ case("padvar", {
 ])
 
 # padvar's first three saves in a unit, without the check of layouts (no ppudump), which
-# would find the change of type first
+# would find the change of type first. Then Shared, of the unit's interface, which only the
+# program's code uses, grows within its padding: the unit's code doesn't change, and on macOS
+# neither does its object file, only its assembler
+PADUNIT_MAIN = r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+var
+  Count: Integer = 0;
+function Line(n: Integer): string;
+begin
+  Inc(Shared);
+  Result := Tick(n) + Format(' shared %d', [Shared]);
+end;
+begin
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Line(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+"""
+
 PADUNIT_U = r"""unit u;
 {$mode objfpc}{$H+}
 interface
+var
+  Shared: Word = 1;
+  SharedNext: Int64 = 2;
 function Tick(n: Integer): string;
 implementation
 uses SysUtils;
@@ -1328,13 +1354,15 @@ end.
 """
 
 case("padunit", {
-    "main.pas": MAIN,
+    "main.pas": PADUNIT_MAIN,
     "u.pas": PADUNIT_U}, [
     ("Small: Word = 1 in the unit becomes Small: LongInt = 1", [("u.pas", "  Small: Word = 1;", "  Small: LongInt = 1;")]),
     ("Small is a Word again, and Flag: Byte becomes Flag: Word",
      [("u.pas", "  Small: LongInt = 1;", "  Small: Word = 1;"), ("u.pas", "  Flag: Byte;", "  Flag: Word;")]),
     ("Flag is a Byte again, a new Flag2: Byte after it, and another text",
      [("u.pas", "  Flag: Word;", "  Flag: Byte;\n  Flag2: Byte;"), ("u.pas", "'one %d", "'two %d")]),
+    ("Shared: Word = 1 in the unit's interface, which only the program uses, becomes Shared: LongInt = 1",
+     [("u.pas", "  Shared: Word = 1;", "  Shared: LongInt = 1;")]),
 ], opts=("--ppudump", "no-such-ppudump"))
 
 # ---------------------------------------------------------------------------- restarts

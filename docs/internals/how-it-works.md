@@ -146,7 +146,8 @@ symbols and `-FU`/`-o` to build into `.hot/`.
      versions state one: an ELF symbol does, and on macOS fpc's assembler does (see [Per
      system](#per-system)). Then a variable added or removed next to it, which changes the
      padding after it, changes nothing. Otherwise the size is the distance to the next
-     symbol or the section's end, padding included.
+     symbol or the section's end, padding included. On macOS, a variable whose size the
+     assembler doesn't give needs a restart.
    - A function keeps its first address, which gets a jump to the new code (a nested
      routine is the exception, below). That keeps `@Proc`, method pointers and virtual
      method tables valid. The jump must end before the next symbol or the end of the
@@ -218,7 +219,10 @@ after its agent connected, and the first program in every case, end hotfpc.
   (`.hot/units/<unit>.s`), and hands it to the agent with the object. The agent counts each
   datum's bytes there: the data its label lists, up to the next label, alignment or section,
   or the size that `.lcomm` or `.zerofill` names. A variable whose size it can't count there
-  needs a restart. That costs no compile: fpc writes the file for every object anyway.
+  needs a restart. That costs no compile: fpc writes the file for every object anyway. A
+  variable that grows within its padding can leave its unit's object file as it was, when
+  no code of the unit uses it, so the driver counts a unit whose assembler changed as
+  changed too, and loads it for the agent to compare.
 - **macOS, threads.** The agent stops the other threads with `thread_suspend`. A thread that runs
   until it's suspended can start another after the agent listed them, so the agent lists
   the threads again until a list has none it hasn't suspended. A thread that ended after

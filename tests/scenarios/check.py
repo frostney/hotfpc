@@ -46,8 +46,9 @@ EXPECT = {
     # neighbour, in place and when a removed one comes back: a Mach-O object states no symbol
     # sizes, and the distance to the next symbol stays 8 bytes. A new variable after one of
     # them changes that distance, not a size: it swaps. padunit: the same in a unit, without
-    # the check of layouts
-    "padvar": (2, 3, 0), "padunit": (1, 2, 0),
+    # the check of layouts, and a variable of its interface that only the program uses, whose
+    # unit's Mach-O object comes out the same
+    "padvar": (2, 3, 0), "padunit": (1, 3, 0),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -101,7 +102,7 @@ PRINTS = {
     "readdvar": [re.compile(r"n \d+ main two")], "readdtype": ["two"],
     # the new Flag2 is swapped in, and so is the save that removes Small
     "padvar": [re.compile(r"n \d+ main two \d+ 2 \d+ \d+"), re.compile(r"n \d+ main three 2 \d+ \d+")],
-    "padunit": [re.compile(r"two \d+ 2 \d+ \d+")],
+    "padunit": [re.compile(r"two \d+ 2 \d+ \d+ shared \d+")],
     "startempty": ["n 1 main two 1", re.compile(r"n \d+ main three \d+")],
 }
 # case: what tick n prints once the case's last swap is in place, so that it runs the code of
@@ -136,10 +137,13 @@ SAYS = {
     # written during the load: the commit finds it so and keeps the program's value
     "initrace": [r"  note: the initial value of U\.SPEED changed; the running value is kept",
                  r"  note: the initial value of U\.PAIR changed; the running value is kept"],
+    # Small grows in place and comes back larger: two restarts for it
     "padvar": [r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
+               r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
                r"restart needed: variable MAIN\.FLAG changed size from 1 to 2 bytes"],
     "padunit": [r"restart needed: variable U\.SMALL changed size from 2 to 4 bytes",
-                r"restart needed: variable U\.FLAG changed size from 1 to 2 bytes"],
+                r"restart needed: variable U\.FLAG changed size from 1 to 2 bytes",
+                r"restart needed: variable U\.SHARED changed size from 2 to 4 bytes"],
     "readdvar": [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes",
                  r"  note: MAIN\.CALLS is back after a save removed it; it keeps its running value"],
     "readdtype": [r"restart needed: u\.Hits: the declaration changed its layout or type",
@@ -247,7 +251,10 @@ for name in names:
                if not any(re.match(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", line)
                           for line in lines)]
     ok = ok and not missing
-    unsaid = [pattern for pattern in SAYS.get(name, []) if not any(re.match(r"\[hot\] " + pattern, line) for line in lines)]
+    # a pattern listed n times must match n lines
+    says = SAYS.get(name, [])
+    unsaid = [pattern for pattern in dict.fromkeys(says)
+              if sum(1 for line in lines if re.match(r"\[hot\] " + pattern, line)) < says.count(pattern)]
     ok = ok and not unsaid
     drift = []
     for tick, text in records if name in COUNTERS else []:
