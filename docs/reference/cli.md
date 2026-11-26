@@ -34,7 +34,7 @@ hotfpc reads its arguments from left to right:
 | `--log FILE` | none | Writes a copy of the `[hot]` lines to `FILE`, each after a timestamp in seconds: all of them from the version check on, except a few about starting the program ([output](output.md#before-the-program-starts)). The file is written again from the start on every run. |
 | `--quiet` | off | Leaves out the start line (`v1: built in ...`) and the closing summary. |
 | `--no-restart` | off | When an edit needs a restart, leaves the program running its old code instead of starting it over. The next save that can be swapped is swapped. |
-| `--version` | | Prints `hotfpc 1.2.0` (its version) and exits with 0, whatever else is on the command line before it, unless it is an option's value. After `--`, it is the program's. |
+| `--version` | | Prints `hotfpc 1.2.1` (its version) and exits with 0, whatever else is on the command line before it, unless it is an option's value. After `--`, it is the program's. |
 
 A target is a Windows one when an fpc option on hotfpc's command line starts with `-Twin`
 (`-Twin64`), or when

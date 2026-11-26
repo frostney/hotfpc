@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.1
 
 - A variable of a unit's interface that only other units' code uses now needs a restart
   when it changes its type at the same size (`Integer` to `Single`), on every system while
