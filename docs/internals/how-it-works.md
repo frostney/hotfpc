@@ -84,7 +84,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    record of the changed units so they're recompiled. A changed include file causes every
    unit to be recompiled; units whose object file comes out the same are left alone. On
    macOS, a unit whose assembler changed apart from its comments is not, even when its
-   object file is the same ([Per system](#per-system)).
+   object file is the same ([Per system](#per-system)). A unit fpc compiled again, which its
+   new `.ppu` shows, gets the checks of steps 3 and 4 even when it is left alone: a variable
+   of its interface that only other units use can change its type, or grow within its
+   padding, without changing the unit's object file.
 2. fpc compiles without linking (`-Cn`). fpc reads the files one after the other, so a
    source that changes during the compile, such as the second file of a save written a
    moment after the first, or the next save, may be read before or after its change. When
@@ -109,7 +112,7 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    the files to settle, so that a save it saw isn't one of them. When either happens to the
    build or link the program starts from, its sizes are unknown, and until it starts over
    again every save that needs them needs a restart.
-3. ppudump reads each changed unit: the interface from its JSON output, and the
+3. ppudump reads each unit fpc compiled again: the interface from its JSON output, and the
    implementation section from its text output, which the JSON leaves out. A field that
    moved, or a field or variable that changed its type without changing a size, is
    invisible in the object file, so this check catches it. The check compares each record
@@ -118,9 +121,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    layout there, because the program keeps a variable a save removed, and the types it
    names, as they were. The program file has no `.ppu`, so its
    declarations get only the checks of sizes.
-4. For a Windows program whose changed units have a variable with an initial value or a
-   typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
-   `.hot/asm/`, which keeps units of its own. The program and each changed unit compile
+4. For a Windows program whose units fpc compiled again have a variable with an initial
+   value or a typed constant, fpc compiles the program again, to assembler (`-s -Aas`), into
+   `.hot/asm/`, which keeps units of its own. The program and each of those units compile
    there again, and their assembler from before is removed first, so one that fpc doesn't
    write has no size rather than an earlier one. The driver counts each one's bytes there and
    compares them with the running program's: a COFF object doesn't show one that grows (see

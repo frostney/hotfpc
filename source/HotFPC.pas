@@ -3405,6 +3405,8 @@ type
     procedure ForgetNewUnits;
     function CompileSources(out ACompileSeconds: Double): Boolean;
     function CollectChangedObjects(const AChanged: TStrings; const ACompileSeconds: Double): Boolean;
+    procedure CollectRecompiledUnits(const AChanged, AUnchanged: TStrings);
+    procedure AcceptRecords(const AUnits: TStrings);
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
     function HasInitialisedData(const AObjects: TStrings): Boolean;
@@ -3416,8 +3418,8 @@ type
     procedure RefuseUncheckedSizes(const AReason: string; const ACompileSeconds: Double);
     function SizesAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       var AInterfaceSeconds: Double): Boolean;
-    function Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
-    procedure Accept(const AChanged: TStrings; const AStage: string);
+    function Swap(const AChanged, AUnchanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
+    procedure Accept(const AChanged, AUnchanged: TStrings; const AStage: string);
     procedure Reject(const AReply: TStrings; const AVerdict, AStage: string; const ACompileSeconds: Double);
     function Reload(const ASeen, ASettled: Double): Boolean;
     function ReplaceExecutable: Boolean;
@@ -3803,6 +3805,50 @@ begin
   Result := True;
 end;
 
+{ The units fpc compiled again in this save whose object files came out the same, as their
+  unit files show (a unit fpc didn't compile keeps its unit file). A variable of a unit's
+  interface that only other units' code uses can change its type, or grow within its padding,
+  and leave the unit's object file as it was: the checks of layouts and sizes cover these
+  units too, though nothing of them is loaded. }
+procedure TDriver.CollectRecompiledUnits(const AChanged, AUnchanged: TStrings);
+var
+  Objects: TStringList;
+  I: Integer;
+  RecordName: string;
+begin
+  Objects := FWorkspace.UnitObjects;
+  try
+    for I := 0 to Objects.Count - 1 do
+    begin
+      if AChanged.IndexOf(Objects[I]) >= 0 then
+        Continue;
+      RecordName := ChangeFileExt(Objects[I], RecordExtension);
+      if FileExists(FWorkspace.UnitsDirectory + RecordName) and FileExists(FWorkspace.LiveDirectory + RecordName)
+        and not SameFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName) then
+        AUnchanged.Add(Objects[I]);
+    end;
+  finally
+    Objects.Free;
+  end;
+end;
+
+{ The unit files of units the checks found the same as the running program's, with object
+  files that came out the same, become the running program's, so that the next save compares
+  with them. }
+procedure TDriver.AcceptRecords(const AUnits: TStrings);
+var
+  I: Integer;
+  RecordName: string;
+begin
+  for I := 0 to AUnits.Count - 1 do
+  begin
+    RecordName := ChangeFileExt(AUnits[I], RecordExtension);
+    CopyFileContents(FWorkspace.UnitsDirectory + RecordName, FWorkspace.LiveDirectory + RecordName);
+    if FLayouts <> nil then
+      FLayouts.Accept(RecordName);
+  end;
+end;
+
 { Each changed unit as the compiler wrote it down: a field that moved or a variable that
   changed its type without changing a size is invisible in the object file. }
 function TDriver.LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
@@ -4050,7 +4096,7 @@ end;
 
 { The swap is applied: the staged files become the running program's, and so do the layouts
   and the sizes of the initialised data the new code adds. }
-procedure TDriver.Accept(const AChanged: TStrings; const AStage: string);
+procedure TDriver.Accept(const AChanged, AUnchanged: TStrings; const AStage: string);
 var
   I: Integer;
   RecordName: string;
@@ -4078,6 +4124,7 @@ begin
     if FBased.IndexOf(AChanged[I]) < 0 then
       FBased.Add(AChanged[I]);
   end;
+  AcceptRecords(AUnchanged);
 end;
 
 procedure TDriver.Reject(const AReply: TStrings; const AVerdict, AStage: string; const ACompileSeconds: Double);
@@ -4100,7 +4147,7 @@ begin
 end;
 
 { True when the agent refused the swap: the edit needs a restart. }
-function TDriver.Swap(const AChanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
+function TDriver.Swap(const AChanged, AUnchanged: TStrings; const ASeen, ASettled, ACompileSeconds, AInterfaceSeconds: Double): Boolean;
 var
   Start, LoadSeconds: Double;
   I: Integer;
@@ -4148,7 +4195,7 @@ begin
     end;
     Inc(FVersion);
     Inc(FApplied);
-    Accept(AChanged, Stage);
+    Accept(AChanged, AUnchanged, Stage);
     FReporter.Say(Format('v%d swapped: %s: %s functions redirected (%s with other code, %s new), %s variables and tables kept, %s new, %s bytes; '
       + '%s ms after the save was seen (settle %s, compile %s, interface check %s, load %s of which in the program %s)',
       [FVersion, Units, TAgentLink.ReplyField(Reply, 'stat', 'redirected'), TAgentLink.ReplyField(Reply, 'stat', 'changed'),
@@ -4169,30 +4216,39 @@ end;
   the save needs a restart; False also when the sources changed during a compile (FStale). }
 function TDriver.Reload(const ASeen, ASettled: Double): Boolean;
 var
-  Changed: TStringList;
+  Changed, Unchanged, Checked: TStringList;
   CompileSeconds, InterfaceSeconds: Double;
 begin
   Result := False;
   if not CompileSources(CompileSeconds) then
     Exit;
   Changed := TStringList.Create;
+  Unchanged := TStringList.Create;
+  Checked := TStringList.Create;
   try
     if not CollectChangedObjects(Changed, CompileSeconds) then
       Exit(True);
-    if not LayoutsAllowSwap(Changed, CompileSeconds, InterfaceSeconds) then
+    { the checks cover the units fpc compiled again whose objects came out the same, too }
+    CollectRecompiledUnits(Changed, Unchanged);
+    Checked.AddStrings(Changed);
+    Checked.AddStrings(Unchanged);
+    if not LayoutsAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
       Exit(True);
-    if not SizesAllowSwap(Changed, CompileSeconds, InterfaceSeconds) then
+    if not SizesAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
       Exit(True);
     if FStale then
       Exit;
     if Changed.Count = 0 then
     begin
+      AcceptRecords(Unchanged);
       Inc(FUnchanged);
       FReporter.Say('not swapped: the generated code is the same (compile ' + FormatMilliseconds(CompileSeconds) + ' ms)');
       Exit;
     end;
-    Result := Swap(Changed, ASeen, ASettled, CompileSeconds, InterfaceSeconds);
+    Result := Swap(Changed, Unchanged, ASeen, ASettled, CompileSeconds, InterfaceSeconds);
   finally
+    Checked.Free;
+    Unchanged.Free;
     Changed.Free;
   end;
 end;
