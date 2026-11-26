@@ -133,6 +133,7 @@ const
   SplitEntryFailure = 'an entry to rewrite could not be written in one store while a thread that blocks signals sleeps';
   StoreSize = 8;
   ParkTimeoutMilliseconds = 2000;
+  EndedCheckMilliseconds = 1;   // how often a stop that waits for threads to park looks for ones that ended
   IdleTimeoutMilliseconds = 2000;
   IdleNapMilliseconds = 3600000;
   MillisecondsPerSecond = 1000;
@@ -248,6 +249,9 @@ const
   ClockMonotonic = 1;
   SignalBlockHow = 0;
   ParkSignal = 40;                   // a real-time signal glibc does not reserve
+  SignalPending = 0;                 // a thread sent the park signal that hasn't parked or ended yet
+  SignalParked = 1;
+  SignalEnded = 2;                   // ended before its handler ran: it runs no more code
   NoSuchThread = 3;                  // ESRCH: the thread has ended
   DirentLengthOffset = 16;           // struct linux_dirent64: d_ino, d_off, then d_reclen (16 bits), d_type, d_name
   DirentNameOffset = 19;
@@ -4536,11 +4540,19 @@ end;
 // threads than it holds. The list is read with getdents64 into a buffer of its own, so that nothing
 // is allocated while a parked thread may hold a lock.
 var
-  Hold, Parked, Arrived: LongInt;
+  Hold, Parked, Arrived, Left: LongInt;   // Left: handlers that have returned, of the Arrived that started
   ListedIDs: array[0..MaxThreads - 1] of LongInt;    // the threads of the last list
   ListedCount: LongInt;
   HandledIDs: array[0..MaxThreads - 1] of LongInt;   // the threads sent the park signal, and those found asleep blocking it
+  HandledSignals: array[0..MaxThreads - 1] of LongInt;   // for each, its index in SignalledIDs, -1 for one asleep
   HandledCount: LongInt;
+  SignalledIDs: array[0..MaxThreads - 1] of LongInt;   // the threads sent the park signal, in the order they were
+  SignalStates: array[0..MaxThreads - 1] of Byte;      // SignalPending, SignalParked or SignalEnded for each
+  SignalStarts: array[0..MaxThreads - 1] of QWord;     // and when its thread started (stat's starttime), 0 if unknown
+  SignalArrivals: array[0..MaxThreads - 1] of LongInt; // and Arrived before it was sent: a handler for it arrives at that slot or later
+  SignalledCount, UnparkedCount: LongInt;
+  ArrivedIDs: array[0..MaxThreads - 1] of LongInt;     // the threads that parked, in the order they did; 0 until written
+  ProcessedArrivals: LongInt;                          // ArrivedIDs[0..ProcessedArrivals - 1] are matched to SignalStates
   BlockerIDs: array[0..MaxThreads - 1] of LongInt;   // threads of the last list that blocked the park signal
   BlockerCount: LongInt;
   DirectoryBuffer: array[0..DirectoryBufferSize div SizeOf(QWord) - 1] of QWord;   // aligned for the records
@@ -4562,6 +4574,7 @@ var
 {$endif}
 begin
   ArrivalIndex := InterLockedIncrement(Arrived) - 1;
+  if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ArrivedIDs)) then ArrivedIDs[ArrivalIndex] := LibCGetTID;
 {$ifdef cpux86_64}
   // ucontext_t: uc_flags, uc_link, uc_stack (24 bytes), then the registers; rsp is the 16th, rip the 17th
   if (ArrivalIndex >= 0) and (ArrivalIndex <= High(ProgramCounters)) and (AContext <> nil) then
@@ -4582,6 +4595,7 @@ begin
   InterLockedIncrement(Parked);
   while InterlockedCompareExchange(Hold, 0, 0) <> 0 do ;
   InterLockedDecrement(Parked);
+  InterLockedIncrement(Left);
 end;
 
 // A thread stopped after the first byte of an entry about to be overwritten would resume in
@@ -4737,17 +4751,56 @@ begin
   if ReadStatusNumber(AThreadID, 'Threads:', 10, Count) then Result := LongInt(Count) else Result := -1;
 end;
 
-// Whether a thread waits in the kernel (state S or D in /proc/self/task/<thread>/stat, after
-// the name in parentheses, which may itself hold parentheses).
-function WaitsInKernel(AThreadID: LongInt): Boolean;
+// A thread's state letter, from /proc/self/task/<thread>/stat after the name in parentheses,
+// which may itself hold parentheses; ' ' when it can't be read.
+function ThreadState(const AThreadID: LongInt): AnsiChar;
 var
   Buffer: TStatusBuffer;
   Count, Index: TSsize;
 begin
+  Result := ' ';
   Count := ReadTaskFile(AThreadID, 'stat', Buffer);
   Index := Count - 1;
   while (Index >= 0) and (Buffer[Index] <> ')') do Dec(Index);
-  Result := (Index >= 0) and (Index + 2 < Count) and (Buffer[Index + 2] in ['S', 'D']);
+  if (Index >= 0) and (Index + 2 < Count) then Result := Buffer[Index + 2];
+end;
+
+// When a thread started, in clock ticks since boot: field 22 of /proc/self/task/<thread>/stat,
+// the 20th after the name in parentheses. A new thread with the ID of one that ended has
+// another. 0 when it can't be read.
+function ThreadStartTime(const AThreadID: LongInt): QWord;
+const
+  StartTimeField = 20;   // counted from the state, the first field after the name
+var
+  Buffer: TStatusBuffer;
+  Count, Index: TSsize;
+  Field: LongInt;
+begin
+  Result := 0;
+  Count := ReadTaskFile(AThreadID, 'stat', Buffer);
+  Index := Count - 1;
+  while (Index >= 0) and (Buffer[Index] <> ')') do Dec(Index);
+  if Index < 0 then Exit;
+  Inc(Index, 2);   // the state
+  Field := 1;
+  while (Index < Count) and (Field < StartTimeField) do
+  begin
+    if Buffer[Index] = ' ' then Inc(Field);
+    Inc(Index);
+  end;
+  if (Field <> StartTimeField) or (Index >= Count) or not (Buffer[Index] in ['0'..'9']) then Exit;
+  while (Index < Count) and (Buffer[Index] in ['0'..'9']) do
+  begin
+    Result := Result * 10 + QWord(Ord(Buffer[Index]) - Ord('0'));
+    Inc(Index);
+  end;
+  if (Index >= Count) or (Buffer[Index] <> ' ') then Result := 0;   // not the whole number
+end;
+
+// Whether a thread waits in the kernel (state S or D).
+function WaitsInKernel(AThreadID: LongInt): Boolean;
+begin
+  Result := ThreadState(AThreadID) in ['S', 'D'];
 end;
 
 // The threads of the program into ListedIDs. False, with StopFailure set, when
@@ -4804,17 +4857,9 @@ begin
   FpClose(Directory);
 end;
 
-function IsHandled(const AThreadID: LongInt): Boolean;
-var
-  I: LongInt;
-begin
-  Result := False;
-  for I := 0 to HandledCount - 1 do
-    if HandledIDs[I] = AThreadID then Exit(True);
-end;
-
-// Adds a thread to HandledIDs. False, with StopFailure set, when the list is full.
-function MarkHandled(const AThreadID: LongInt): Boolean;
+// Adds a thread to HandledIDs, with the index of its signal in SignalledIDs or -1 for one
+// asleep. False, with StopFailure set, when the list is full.
+function MarkHandled(const AThreadID, ASignal: LongInt): Boolean;
 begin
   Result := HandledCount <= High(HandledIDs);
   if not Result then
@@ -4823,51 +4868,180 @@ begin
     Exit;
   end;
   HandledIDs[HandledCount] := AThreadID;
+  HandledSignals[HandledCount] := ASignal;
   Inc(HandledCount);
 end;
 
-// Sends a listed thread the park signal, counted in ASent. A thread that ended after the list
-// was read runs no more code: it is left out. One the signal can't reach otherwise fails the
-// stop.
-procedure Park(const AProcessID, AThreadID: LongInt; var ASent: LongInt);
+// Sends a listed thread the park signal and notes it as pending. A thread that ended after
+// the list was read runs no more code: it is left out. One the signal can't reach otherwise
+// fails the stop.
+procedure Park(const AProcessID, AThreadID: LongInt);
+var
+  FirstArrival: LongInt;
+  Start: QWord;
 begin
   if HandledCount > High(HandledIDs) then
   begin
     StopFailure := TooManyThreadsFailure;
     Exit;
   end;
+  FirstArrival := InterlockedCompareExchange(Arrived, 0, 0);
+  Start := ThreadStartTime(AThreadID);
   if LibCTGKill(AProcessID, AThreadID, ParkSignal) <> 0 then
   begin
     if LibCErrnoLocation^ <> NoSuchThread then StopFailure := ThreadSuspendFailure;
     Exit;
   end;
-  MarkHandled(AThreadID);
-  Inc(ASent);
+  MarkHandled(AThreadID, SignalledCount);
+  SignalledIDs[SignalledCount] := AThreadID;
+  SignalStates[SignalledCount] := SignalPending;
+  // the thread that took the signal, when the ID named the same one before and after it
+  if ThreadStartTime(AThreadID) <> Start then Start := 0;
+  SignalStarts[SignalledCount] := Start;
+  SignalArrivals[SignalledCount] := FirstArrival;
+  Inc(SignalledCount);
+  Inc(UnparkedCount);
+end;
+
+// Whether a thread has ended, on evidence: tgkill finds no such thread, the thread is a
+// zombie (state Z or X), or, given when it started (AStart, 0 for unknown), a thread that
+// started at another time holds its ID now. A file that can't be read proves nothing.
+function ThreadEnded(const AProcessID, AThreadID: LongInt; const AStart: QWord): Boolean;
+var
+  Start: QWord;
+begin
+  if LibCTGKill(AProcessID, AThreadID, 0) <> 0 then Exit(LibCErrnoLocation^ = NoSuchThread);
+  if ThreadState(AThreadID) in ['Z', 'X'] then Exit(True);
+  Result := False;
+  if AStart <> 0 then
+  begin
+    Start := ThreadStartTime(AThreadID);
+    Result := (Start <> 0) and (Start <> AStart);
+  end;
+end;
+
+// Whether the stop has dealt with a listed thread: the last thread it dealt with under the ID
+// was sent the signal and parked or is pending, or was found asleep. One that was sent the
+// signal and ended is dealt with only while the ID names no running thread; a running one
+// with it is new.
+function IsHandled(const AProcessID, AThreadID: LongInt): Boolean;
+var
+  I: LongInt;
+begin
+  Result := False;
+  for I := HandledCount - 1 downto 0 do
+    if HandledIDs[I] = AThreadID then
+    begin
+      if (HandledSignals[I] < 0) or (SignalStates[HandledSignals[I]] <> SignalEnded) then Exit(True);
+      Exit(ThreadEnded(AProcessID, AThreadID, 0));   // whether any thread runs under the ID now
+    end;
+end;
+
+// Whether every handler that started has returned. Until then one may still write its slot
+// of ArrivedIDs.
+function HandlersLeft: Boolean;
+begin
+  Result := InterlockedCompareExchange(Left, 0, 0) >= InterlockedCompareExchange(Arrived, 0, 0);
+end;
+
+// Whether every handler that started has saved where its thread was or has returned: it
+// counts itself in Arrived first, in Parked once it has saved, and in Left when it returns,
+// as one that ran before the threads were held does without parking.
+function HandlersSettled: Boolean;
+var
+  Started, Returned: LongInt;
+begin
+  Started := InterlockedCompareExchange(Arrived, 0, 0);
+  Returned := InterlockedCompareExchange(Left, 0, 0);
+  Result := InterlockedCompareExchange(Parked, 0, 0) + Returned >= Started;
+end;
+
+// Matches the threads that parked since the last call to their pending signals, each once.
+procedure MatchArrivals;
+var
+  Count, ThreadID, I: LongInt;
+begin
+  Count := InterlockedCompareExchange(Arrived, 0, 0);
+  if Count > Length(ArrivedIDs) then Count := Length(ArrivedIDs);
+  while ProcessedArrivals < Count do
+  begin
+    ThreadID := ArrivedIDs[ProcessedArrivals];
+    if ThreadID = 0 then Break;   // its handler hasn't written it yet
+    for I := SignalledCount - 1 downto 0 do
+      if (SignalledIDs[I] = ThreadID) and (SignalStates[I] = SignalPending) and (ProcessedArrivals >= SignalArrivals[I]) then
+      begin
+        SignalStates[I] := SignalParked;
+        Dec(UnparkedCount);
+        Break;
+      end;
+    Inc(ProcessedArrivals);
+  end;
+end;
+
+// Marks pending threads that have ended. A thread that ends after the signal was sent but
+// before its handler runs never parks: it runs no more code.
+procedure MarkEnded(const AProcessID: LongInt);
+var
+  I: LongInt;
+begin
+  for I := 0 to SignalledCount - 1 do
+    if (SignalStates[I] = SignalPending) and ThreadEnded(AProcessID, SignalledIDs[I], SignalStarts[I]) then
+    begin
+      SignalStates[I] := SignalEnded;
+      Dec(UnparkedCount);
+    end;
 end;
 
 procedure WorldStop;
 var
-  CurrentThread, ProcessID, I, Sent, Met, Count: LongInt;
+  CurrentThread, ProcessID, I, Met, Count: LongInt;
   StartTime: Double;
 
+  // Until every thread sent the signal has parked or ended, and every handler has saved where
+  // its thread was, or the time is up.
   procedure AwaitParked;
+  var
+    LastCheck: Double;
   begin
-    while (InterlockedCompareExchange(Parked, 0, 0) < Sent) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
+    LastCheck := NowMilliseconds;
+    MatchArrivals;
+    while ((UnparkedCount > 0) or not HandlersSettled) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do
+    begin
+      MatchArrivals;
+      if (UnparkedCount > 0) and (NowMilliseconds - LastCheck >= EndedCheckMilliseconds) then
+      begin
+        MarkEnded(ProcessID);
+        LastCheck := NowMilliseconds;
+      end;
+    end;
+    if UnparkedCount > 0 then MarkEnded(ProcessID);
   end;
 
 begin
   StopFailure := '';
   SleepingBlockers := False;
   HandledCount := 0;
+  SignalledCount := 0;
+  UnparkedCount := 0;
+  ProcessedArrivals := 0;
 {$ifdef cpux86_64}
   SleeperCount := 0;
 {$endif}
   if not SuspendThreads then Exit;
   CurrentThread := LibCGetTID;
   ProcessID := FpGetpid;
-  InterLockedExchange(Hold, 1);
+  // A handler of the last stop that hasn't returned yet would write into this stop's slots.
+  StartTime := NowMilliseconds;
+  while not HandlersLeft and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
+  if not HandlersLeft then
+  begin
+    StopFailure := ParkTimeoutFailure;
+    Exit;
+  end;
+  FillChar(ArrivedIDs, SizeOf(ArrivedIDs), 0);
+  InterLockedExchange(Left, 0);
   InterLockedExchange(Arrived, 0);
-  Sent := 0;
+  InterLockedExchange(Hold, 1);
   StartTime := NowMilliseconds;
   repeat
     Met := 0;
@@ -4875,14 +5049,15 @@ begin
     BlockerCount := 0;
     for I := 0 to ListedCount - 1 do
     begin
-      if (ListedIDs[I] = CurrentThread) or IsHandled(ListedIDs[I]) then Continue;
+      if ListedIDs[I] = CurrentThread then Continue;
+      if IsHandled(ProcessID, ListedIDs[I]) then Continue;
       Inc(Met);   // one that has ended since may have started a thread before it did
       if BlocksParkSignal(ListedIDs[I]) then
       begin
         BlockerIDs[BlockerCount] := ListedIDs[I];
         Inc(BlockerCount);
       end
-      else Park(ProcessID, ListedIDs[I], Sent);
+      else Park(ProcessID, ListedIDs[I]);
       if StopFailure <> '' then Break;
     end;
     AwaitParked;
@@ -4892,10 +5067,10 @@ begin
     for I := 0 to BlockerCount - 1 do
     begin
       if StopFailure <> '' then Break;
-      if not BlocksParkSignal(BlockerIDs[I]) then Park(ProcessID, BlockerIDs[I], Sent)
+      if not BlocksParkSignal(BlockerIDs[I]) then Park(ProcessID, BlockerIDs[I])
       else if WaitsInKernel(BlockerIDs[I]) then
       begin
-        if not MarkHandled(BlockerIDs[I]) then Break;
+        if not MarkHandled(BlockerIDs[I], -1) then Break;
         SleepingBlockers := True;
 {$ifdef cpux86_64}
         SleeperIDs[SleeperCount] := BlockerIDs[I];
@@ -4905,7 +5080,7 @@ begin
       else StopFailure := BlockerRunningFailure;
     end;
     AwaitParked;
-    if InterlockedCompareExchange(Parked, 0, 0) < Sent then StopFailure := ParkTimeoutFailure;
+    if (UnparkedCount > 0) or not HandlersSettled then StopFailure := ParkTimeoutFailure;
     if (StopFailure = '') and (Met = 0) then
     begin
       Count := ThreadCount(CurrentThread);
@@ -4924,7 +5099,7 @@ begin
   if not SuspendThreads then Exit;
   InterLockedExchange(Hold, 0);
   StartTime := NowMilliseconds;
-  while (InterlockedCompareExchange(Parked, 0, 0) > 0) and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
+  while not HandlersLeft and (NowMilliseconds - StartTime < ParkTimeoutMilliseconds) do ;
 end;
 
 {$ifdef cpux86_64}

@@ -12,6 +12,10 @@
   signal and sleeps) keeps its write, and a longer one only while every other thread is
   stopped. On Linux a stopped thread now runs none of the program's signal handlers until
   the swap lets it go on. The note says what the commit found.
+- On Linux, a save into a program whose threads come and go no longer fails with `a thread
+  of the program did not stop` after a 2 s wait when a thread ends after the agent sent it
+  the signal that stops it but before the thread took it. The agent now leaves out a thread
+  that has ended, as it already did when the thread ended before the signal.
 - On Windows with fpc 3.2, a swap now applies a changed initial value of a variable in a
   unit's implementation section by the same rule as on the other systems
   ([What a swap keeps](docs/guides/saves-and-restarts.md#what-a-swap-keeps)): while the
