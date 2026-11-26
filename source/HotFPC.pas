@@ -107,6 +107,48 @@ begin
   end;
 end;
 
+{ The whole file, as long as it is when opened. False when it can't be read whole; AContents
+  is then empty. For a file no save is writing, such as fpc's assembler after a compile. }
+function ReadCompleteFile(const APath: string; out AContents: string): Boolean;
+var
+  Stream: TFileStream;
+begin
+  AContents := '';
+  try
+    Stream := TFileStream.Create(APath, fmOpenRead or fmShareDenyNone);
+    try
+      SetLength(AContents, Stream.Size);
+      if Length(AContents) > 0 then
+        Stream.ReadBuffer(AContents[1], Length(AContents));
+      Result := True;
+    finally
+      Stream.Free;
+    end;
+  except
+    AContents := '';
+    Result := False;
+  end;
+end;
+
+{ Writes AContents as the whole file. False when it couldn't. }
+function WriteCompleteFile(const APath, AContents: string): Boolean;
+var
+  Stream: TFileStream;
+begin
+  try
+    Stream := TFileStream.Create(APath, fmCreate);
+    try
+      if Length(AContents) > 0 then
+        Stream.WriteBuffer(AContents[1], Length(AContents));
+      Result := True;
+    finally
+      Stream.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 procedure CopyFileContents(const ASource, ADestination: string);
 var
   Source, Destination: TFileStream;
@@ -3514,40 +3556,38 @@ end;
   the agent finds the sizes of its variables unknown: a part of it could give wrong ones. }
 procedure CopyObjectFile(const ASource, ADestination: string);
 var
-  Source, Destination: string;
+  Source, Destination, Text, Copied: string;
 begin
   CopyFileContents(ASource, ADestination);
   Source := ChangeFileExt(ASource, AssemblerExtension);
   Destination := ChangeFileExt(ADestination, AssemblerExtension);
   DeleteFile(Destination);
-  if FileExists(Source) then
-    try
-      CopyFileContents(Source, Destination);
-      if not SameFileContents(Source, Destination) then
-        DeleteFile(Destination);
-    except
-      on EStreamError do
-        DeleteFile(Destination);
-    end;
+  if FileExists(Source) and ReadCompleteFile(Source, Text) then
+    if not WriteCompleteFile(Destination, Text) or not ReadCompleteFile(Destination, Copied)
+      or (Copied <> Text) then
+      DeleteFile(Destination);
 end;
 
 { Whether two of fpc's assembler files are the same but for comments, such as the source lines
-  -al adds: a comment changes neither the object nor the sizes. False when one can't be read. }
+  -al adds: a comment changes neither the object nor the sizes. False when one can't be read
+  whole. }
 function SameAssembler(const AFirst, ASecond: string): Boolean;
 
   function WithoutComments(const AText: string): string;
   var
-    Lines: TStringList;
+    Lines, Kept: TStringList;
     I: Integer;
   begin
     Lines := TStringList.Create;
+    Kept := TStringList.Create;
     try
       Lines.Text := AText;
-      for I := Lines.Count - 1 downto 0 do
-        if StartsWith(TrimLeft(Lines[I]), AssemblerComment) then
-          Lines.Delete(I);
-      Result := Lines.Text;
+      for I := 0 to Lines.Count - 1 do
+        if not StartsWith(TrimLeft(Lines[I]), AssemblerComment) then
+          Kept.Add(Lines[I]);
+      Result := Kept.Text;
     finally
+      Kept.Free;
       Lines.Free;
     end;
   end;
@@ -3555,8 +3595,9 @@ function SameAssembler(const AFirst, ASecond: string): Boolean;
 var
   FirstText, SecondText: string;
 begin
-  Result := ReadFileContents(AFirst, FirstText) and ReadFileContents(ASecond, SecondText)
-    and (WithoutComments(FirstText) = WithoutComments(SecondText));
+  if not (ReadCompleteFile(AFirst, FirstText) and ReadCompleteFile(ASecond, SecondText)) then
+    Exit(False);
+  Result := (FirstText = SecondText) or (WithoutComments(FirstText) = WithoutComments(SecondText));
 end;
 
 procedure TDriver.CopyObjectsToLive;
@@ -4708,7 +4749,7 @@ end;
   -al adds, and not when a directive does. }
 procedure TestSameAssembler;
 var
-  Root: string;
+  Root, Text: string;
 begin
   Root := MakeTestDirectory('assembler-files');
   WriteTestFile(Root + 'a.s', '# [12] Inc(Small);' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.short'#9'1' + LineEnding);
@@ -4717,6 +4758,11 @@ begin
   WriteTestFile(Root + 'b.s', '# [12] Inc(Small);' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.long'#9'1' + LineEnding);
   Expect(not SameAssembler(Root + 'a.s', Root + 'b.s'), 'another directive is not');
   Expect(not SameAssembler(Root + 'a.s', Root + 'missing.s'), 'nor is a missing file');
+  Expect(WriteCompleteFile(Root + 'c.s', 'a' + #0 + 'b'), 'a file is written whole');
+  Expect(ReadCompleteFile(Root + 'c.s', Text), 'and read whole');
+  ExpectEqual(Text, 'a' + #0 + 'b', 'byte for byte');
+  Expect(not ReadCompleteFile(Root + 'missing.s', Text), 'a missing file is not read');
+  ExpectEqual(Text, '', 'and gives nothing');
 end;
 
 procedure TestRemoveTree;

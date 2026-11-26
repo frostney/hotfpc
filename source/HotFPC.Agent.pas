@@ -1835,8 +1835,9 @@ begin
       Symbol^.Section := Symbols[I].st_shndx;
       Symbol^.Value := Symbols[I].st_value;
       Symbol^.DeclaredSize := Symbols[I].st_size;
-      // a datum states its size (.size); a label doesn't
-      Symbol^.SizeKnown := (SymbolType = STT_OBJECT) or (SymbolType = STT_TLS);
+      // a datum states its size (.size); a label doesn't, and neither does an object of size
+      // 0, which fpc 3.2.2 makes of a label inside a datum
+      Symbol^.SizeKnown := ((SymbolType = STT_OBJECT) or (SymbolType = STT_TLS)) and (Symbols[I].st_size <> 0);
       Symbol^.Kind := AObjectFile^.Sections[Symbol^.Section].Kind;
       AddDefined(AObjectFile, I);
     end;
