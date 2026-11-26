@@ -49,6 +49,9 @@ EXPECT = {
     # the check of layouts, and a variable of its interface that only the program uses, whose
     # unit's Mach-O object comes out the same
     "padvar": (2, 3, 0), "padunit": (1, 3, 0),
+    # a variable of a unit's interface that only the program uses changes its type, not its
+    # size: the unit's object file is the same, and its unit file shows the change
+    "sharedtype": (0, 1, 0),
     # a save while hotfpc builds the program to start it: the program starts with it, and the
     # save after it swaps
     "startsave": (1, 0, 0),
@@ -141,6 +144,7 @@ SAYS = {
     "padvar": [r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
                r"restart needed: variable MAIN\.SMALL changed size from 2 to 4 bytes",
                r"restart needed: variable MAIN\.FLAG changed size from 1 to 2 bytes"],
+    "sharedtype": [r"restart needed: u\.Shared: the declaration changed its layout or type"],
     "padunit": [r"restart needed: variable U\.SMALL changed size from 2 to 4 bytes",
                 r"restart needed: variable U\.FLAG changed size from 1 to 2 bytes",
                 r"restart needed: variable U\.SHARED changed size from 2 to 4 bytes"],
@@ -188,11 +192,6 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # type, and the check of layouts finds it first), unknown after the sources kept changing
     # during the builds at the start (startcap), and unknown when fpc wrote no assembler for
     # the build the program started from, with the check still on (startnoasm)
-    # padunit's last save, Shared growing within its padding in a unit only the program's code
-    # uses it from, is swapped on Windows: the unit's COFF object comes out the same, so
-    # nothing checks the unit (#45)
-    EXPECT["padunit"] = (2, 2, 0)
-    SAYS["padunit"] = SAYS["padunit"][:2]
     SAYS["startblock"] = [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes"]
     SAYS["newconst"] = [r"restart needed: (variable W\.LIMIT changed size from 4 to 8 bytes|w\.Limit: the declaration changed its layout or type)"]
     SAYS["startcap"] = [r"restart needed: the sizes of variables with initial values are unknown: the sources changed while fpc compiled them"]

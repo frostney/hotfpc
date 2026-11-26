@@ -1365,6 +1365,32 @@ case("padunit", {
      [("u.pas", "  Shared: Word = 1;", "  Shared: LongInt = 1;")]),
 ], opts=("--ppudump", "no-such-ppudump"))
 
+# ---------------------------------------------------------------------------- a unit's variable only the program uses changes type
+# Shared, in the interface of u, changes its type but not its size, and only the program's code
+# uses it: u's object file comes out the same, and only its unit file shows the change, to
+# the check of layouts
+SHAREDTYPE_MAIN = PADUNIT_MAIN.replace("Inc(Shared);", "Shared := Shared + 1;").replace(
+    "Format(' shared %d', [Shared])", "' shared ' + FloatToStr(Shared)")
+
+case("sharedtype", {
+    "main.pas": SHAREDTYPE_MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+var
+  Shared: Integer;
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+function Tick(n: Integer): string;
+begin
+  Result := Format('one %d', [n]);
+end;
+end.
+"""}, [
+    ("Shared: Integer becomes Shared: Single", [("u.pas", "  Shared: Integer;", "  Shared: Single;")]),
+])
+
 # ---------------------------------------------------------------------------- restarts
 # One unit whose text and call count the program prints. A restart starts the count over.
 # Calls has no initial value: with fpc 3.2.2 on Linux and Windows, a variable with one that
