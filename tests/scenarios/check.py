@@ -174,19 +174,23 @@ if platform.machine().lower() not in ("x86_64", "amd64"):
 names = sys.argv[1:] or list(EXPECT)
 # scenario.py writes UTF-8 to this script whatever the console's encoding, and this script
 # prints what its console can't show escaped
-scenarios = subprocess.Popen([sys.executable, os.path.join(HERE, "scenario.py")] + names, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, encoding="utf-8", errors="backslashreplace",
-                             env=dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace"))
 sys.stdout.reconfigure(errors="backslashreplace")
-# SIGTERM or SIGHUP to this script ends scenario.py too, which stops the case it runs; Ctrl+C
-# reaches both
+# SIGTERM or SIGHUP to this script ends scenario.py too, which stops the case it runs, also
+# one that comes while scenario.py starts; Ctrl+C reaches both
 signalled = []
+scenarios = None
 if sys.platform != "win32":
     def forward(number, frame):
         signalled.append(number)
-        scenarios.send_signal(number)
+        if scenarios is not None:
+            scenarios.send_signal(number)
     for number in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(number, forward)
+scenarios = subprocess.Popen([sys.executable, os.path.join(HERE, "scenario.py")] + names, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, encoding="utf-8", errors="backslashreplace",
+                             env=dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace"))
+if signalled:
+    scenarios.send_signal(signalled[0])
 stdout, stderr = scenarios.communicate()
 if signalled:
     sys.exit(128 + signalled[0])
