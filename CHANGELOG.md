@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Homebrew installs hotfpc on Intel Macs and on Linux arm64 too, from 1.2.0 on: `brew
+  install frostney/tap/hotfpc`. On an Intel Mac, where Homebrew has no prebuilt fpc, fpc
+  comes from the [freepascal.org](https://www.freepascal.org/download.html) installer
+  ([platforms](https://frostney.github.io/hotfpc/docs/reference/platforms/#getting-hotfpc)).
+
 ## 1.2.0
 
 - A variable that a save removes and a later save brings back now gets the same checks as a
