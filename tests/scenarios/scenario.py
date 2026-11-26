@@ -1369,8 +1369,12 @@ case("padunit", {
 # Shared, in the interface of u, changes its type but not its size, and only the program's code
 # uses it: u's object file comes out the same, and only its unit file shows the change, to
 # the check of layouts
-SHAREDTYPE_MAIN = PADUNIT_MAIN.replace("Inc(Shared);", "Shared := Shared + 1;").replace(
-    "Format(' shared %d', [Shared])", "' shared ' + FloatToStr(Shared)")
+# the program prints Shared through an Extended, so that both types call the same FloatToStr:
+# fpc's Windows linker leaves out the Single one the running program never called
+SHAREDTYPE_MAIN = PADUNIT_MAIN.replace("function Line(n: Integer): string;\nbegin",
+    "function Line(n: Integer): string;\nvar\n  Value: Extended;\nbegin").replace(
+    "Inc(Shared);", "Shared := Shared + 1;\n  Value := Shared;").replace(
+    "Format(' shared %d', [Shared])", "' shared ' + FloatToStr(Value)")
 
 case("sharedtype", {
     "main.pas": SHAREDTYPE_MAIN,
