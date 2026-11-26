@@ -66,7 +66,9 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 # case: lines the program must print, so that a swap shows its new values
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
-    "signals": ["text two"],
+    # Speed takes its new initial value while a thread that blocks the agent's signal sleeps
+    # on (on Linux): it fits in one aligned word, which the commit writes in one step
+    "signals": ["text two speed 50"],
     # Speed, a variable of the implementation section that nothing has written, takes its
     # new initial value: on Windows with fpc 3.2 the agent knows it only by its section
     "globals": [re.compile(r"TOTAL \d+ hidden \d+ speed 50 extra \d+")],
@@ -102,10 +104,10 @@ UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n *
 # and new
 SWAPPED["procvars"] = lambda n: "PLAIN V2 %d, METHOD V2 %d, HIDDEN V4 %d, same address: TRUE TRUE" % (n, n, n)
 UNSWAPPED["procvars"] = lambda n: re.compile(r"PLAIN V2 %d, METHOD V2 %d, HIDDEN V[34] %d, same address: TRUE (TRUE|FALSE)" % (n, n, n))
-# initrace: Speed keeps the value the program wrote while the swap loaded; a tick that ran
-# while the swap was written may still print the value before that write
+# initrace: Speed and Pair keep the values the program wrote while the swap loaded; a tick
+# that ran while the swap was written may still print either from before that write
 SWAPPED["initrace"] = lambda n: "speed 6 pair 2 2"
-UNSWAPPED["initrace"] = lambda n: "speed 5 pair 1 2"
+UNSWAPPED["initrace"] = lambda n: re.compile(r"speed [56] pair [12] 2")
 # case: notes every swap of the case gives: these change the main block
 NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")

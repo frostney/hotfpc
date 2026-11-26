@@ -345,9 +345,11 @@ begin
   {$endif}
   while not Terminated do Sleep(20);
 end;
+var
+  Speed: Integer = 5;
 function Tick(n: Integer): string;
 begin
-  Result := 'text one';
+  Result := Format('text one speed %d', [Speed]);
 end;
 initialization
   Quiet := TQuiet.Create(False);
@@ -357,7 +359,8 @@ finalization
   Quiet.Free;
 end.
 '''}, [
-    ("another text, while a thread blocks every signal", [("u.pas", "'text one'", "'text two'")]),
+    ("another text, and Speed = 5 becomes Speed = 50, while a thread blocks every signal",
+     [("u.pas", "'text one speed", "'text two speed"), ("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;")]),
 ])
 
 # ---------------------------------------------------------------------------- initialization and finalization
@@ -925,7 +928,8 @@ end.
 # binds the save and before the commit, as a thread of the program could while the swap loads:
 # the commit finds it written, so it keeps the value the program has, and the note says so.
 # Speed fits in one aligned word, which the commit compares and writes in one step; Pair, of 16
-# bytes, it compares and copies while every other thread is stopped.
+# bytes, it compares and copies when every other thread is stopped, and keeps as it is when
+# one isn't (on Linux, a thread that blocks the agent's signal and sleeps).
 case("initrace", {
     "main.pas": MAIN,
     "u.pas": r"""unit u;

@@ -3161,7 +3161,7 @@ var
 // still runs during the commit (on Linux, one that blocks the park signal and sleeps in the
 // kernel) either wrote first, and keeps its value, or writes after. A longer variable only
 // while every other thread is stopped, AAllStopped; otherwise it keeps its value.
-function CopyInitialValue(const ACopy: TDataCopy; AAllStopped: Boolean): Boolean;
+function CopyInitialValue(const ACopy: TDataCopy; const AAllStopped: Boolean): Boolean;
 const
   WordBytes = 8;
 var
@@ -3573,8 +3573,8 @@ begin
     begin
       // An initialised variable or typed constant whose initial value was edited. If the
       // running value is still the old initial value, nothing has written it: take the new one.
-      // A thread can write it while the swap loads, so the commit compares, with the threads
-      // stopped (CopyInitialValue), and the note says what it found.
+      // A thread can write it while the swap loads, so the commit decides, as
+      // CopyInitialValue says, and the note says what it found.
       NewBytes := SymbolBytes(AObjectFile, Symbol);
       OldBytes := SymbolBytes(Previous, PreviousSymbol);
       if (NewBytes <> nil) and (OldBytes <> nil) and not HasRelocations(AObjectFile, Symbol) and not HasRelocations(Previous, PreviousSymbol) then
@@ -3583,7 +3583,9 @@ begin
         DataCopies[DataCopyCount].Destination := ExistingAddress;
         DataCopies[DataCopyCount].Source := NewBytes;
         DataCopies[DataCopyCount].Expected := OldBytes;
-        DataCopies[DataCopyCount].Size := Symbol^.Size;
+        // the size the object file states (ELF), not the 16 bytes fpc pads the section to
+        if (Symbol^.DeclaredSize <> 0) and (Symbol^.DeclaredSize <= Symbol^.Size) then DataCopies[DataCopyCount].Size := Symbol^.DeclaredSize
+        else DataCopies[DataCopyCount].Size := Symbol^.Size;
         DataCopies[DataCopyCount].Name := Name;
         DataCopies[DataCopyCount].Taken := False;
         Inc(DataCopyCount);
@@ -5755,7 +5757,7 @@ begin
     PatchedCount := 0;
     Cleared := False;
     // Test only: HOT_TEST_DATA_WRITE writes each variable about to get its new initial value
-    // here, after the check and before the threads stop, as a thread of the program could.
+    // here, after the binding and before the threads stop, as a thread of the program could.
     if TestDataWrite then
       for I := 0 to DataCopyCount - 1 do Inc(PByte(PtrUInt(DataCopies[I].Destination))^);
     // A thread can be about to resume inside an entry without being there: a signal or an
@@ -5786,7 +5788,7 @@ begin
       for I := 0 to StoreCount - 1 do InterLockedExchange64(PInt64(Stores[I].Destination)^, Int64(Stores[I].Value));
       // every other thread stopped: on Linux one that blocks the park signal and sleeps isn't
 {$ifdef linux}
-      AllStopped := SuspendThreads and (SleeperCount = 0);
+      AllStopped := SuspendThreads and not SleepingBlockers;
 {$else}
       AllStopped := SuspendThreads;
 {$endif}

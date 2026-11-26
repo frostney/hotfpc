@@ -39,7 +39,7 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | A new variable with an initial value | swap | `globals` |
 | `Speed: Integer = 5` becomes `= 50`, and `Speed` still holds 5 | swap: `Speed` is 50, with the note `U.SPEED still had its initial value; set to the new one` | `globals` |
 | `Total: Integer = 0` becomes `= 1000`, and the program has changed `Total` from 0 | swap: `Total` keeps its value, with the note `the initial value of U.TOTAL changed; the running value is kept` | `globals` |
-| `Speed: Integer = 5` becomes `= 50`, and a write to `Speed` lands while the swap loads (`HOT_TEST_DATA_WRITE` makes it) | swap: `Speed` keeps the program's value, with the note `the initial value of U.SPEED changed; the running value is kept` | `initrace` |
+| `Speed: Integer = 5` becomes `= 50` and a 16-byte record `Pair = (A: 1; B: 2)` becomes `(10, 20)`, and a write to each lands while the swap loads (`HOT_TEST_DATA_WRITE` makes it) | swap: both keep the program's values, each with the note `the initial value of U.<name> changed; the running value is kept` | `initrace` |
 | `Hidden: Integer` becomes `Hidden: Int64` | restart: `u.Hidden: the declaration changed its layout or type` | `globals` |
 | `Calls: Integer` in the implementation section becomes `Calls: Single`, the same size | restart: `u.Calls: the declaration changed its layout or type` | `hidden` |
 | `Calls: Integer = 0` in the implementation section becomes `Int64 = 0` | restart: `u.Calls: the declaration changed its layout or type` | `initvar` |
@@ -78,7 +78,7 @@ The program's variables keep their values through every swap: the scenarios `glo
 | `u.pas` becomes `w.pas`, and the program uses `w` | restart: `unit w is not part of the running program` | `rename` |
 | Another text, with a thread variable untouched | swap | `threadvars` |
 | A second thread variable | restart: `the thread variables of unit u changed` | `threadvars` |
-| Another text, while a thread of the program blocks every signal | swap, within the scenario's limit of 1 s inside the program | `signals` |
+| Another text, and `Speed: Integer = 5` becomes `= 50`, while a thread of the program blocks every signal | swap, within the scenario's limit of 1 s inside the program: `Speed` is 50 | `signals` |
 
 ## Restarts
 
