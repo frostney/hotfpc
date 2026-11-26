@@ -100,7 +100,10 @@ lists every step and its outcome.
 For a Windows target (`-Twin` in `HOT_DRIVER_OPTS`), `check.py` expects a restart in three
 cases where the other systems swap: in two, fpc's Windows linker leaves out runtime
 routines the program never called; in `progvar`, fpc can't write the assembler that shows
-a save's sizes. The comments in `check.py` say which. In the cases that check how a start
+a save's sizes. It expects a swap in `padunit`'s last save, where the other systems
+restart: a variable of a unit that only the program's code uses grows within its padding,
+the unit's object file comes out the same, and nothing checks the unit
+([#45](https://github.com/frostney/hotfpc/issues/45)). The comments in `check.py` say which. In the cases that check how a start
 leaves the sizes, `startblock`, `startcap`, `startnoasm` and `newconst`, it also requires
 the reason a Windows program gives for its restart, so that a case passes only with the
 sizes it is about. `shortentry` is swapped on Windows

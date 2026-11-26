@@ -59,7 +59,7 @@ with the new code ([What a save does](saves-and-restarts.md)).
 | A save removes `Small` and its uses | swap | `padvar` |
 | A later save brings `Small` back as `LongInt = 1`, with its uses | restart: `variable MAIN.SMALL changed size from 2 to 4 bytes` | `padvar` |
 | The first three of those saves in a unit's implementation section, without the check of layouts (`--ppudump` names a ppudump that doesn't exist) | restart, restart and swap: `variable U.SMALL changed size from 2 to 4 bytes`, then `variable U.FLAG changed size from 1 to 2 bytes` | `padunit` |
-| Then `Shared: Word = 1` in the unit's interface, before `SharedNext: Int64`, which only the program's code uses, becomes `LongInt = 1`: on macOS the unit's object file comes out the same | restart: `variable U.SHARED changed size from 2 to 4 bytes` | `padunit` |
+| Then `Shared: Word = 1` in the unit's interface, before `SharedNext: Int64`, which only the program's code uses, becomes `LongInt = 1`: on macOS the unit's object file comes out the same | restart: `variable U.SHARED changed size from 2 to 4 bytes`; on Windows, swap, as the unit's COFF object comes out the same too ([#45](https://github.com/frostney/hotfpc/issues/45)) | `padunit` |
 
 The program's variables keep their values through every swap: the scenarios `globals` and
 `hidden` check that a counter in a unit's implementation section keeps counting.

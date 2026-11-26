@@ -188,6 +188,11 @@ if "-Twin" in os.environ.get("HOT_DRIVER_OPTS", ""):
     # type, and the check of layouts finds it first), unknown after the sources kept changing
     # during the builds at the start (startcap), and unknown when fpc wrote no assembler for
     # the build the program started from, with the check still on (startnoasm)
+    # padunit's last save, Shared growing within its padding in a unit only the program's code
+    # uses it from, is swapped on Windows: the unit's COFF object comes out the same, so
+    # nothing checks the unit (#45)
+    EXPECT["padunit"] = (2, 2, 0)
+    SAYS["padunit"] = SAYS["padunit"][:2]
     SAYS["startblock"] = [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes"]
     SAYS["newconst"] = [r"restart needed: (variable W\.LIMIT changed size from 4 to 8 bytes|w\.Limit: the declaration changed its layout or type)"]
     SAYS["startcap"] = [r"restart needed: the sizes of variables with initial values are unknown: the sources changed while fpc compiled them"]
