@@ -23,18 +23,21 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
 ./build.sh                                   # build/hotfpc and the unit tests
-python3 tests/scenarios/check.py             # the 40 scenarios, about 2 minutes
+python3 tests/scenarios/check.py             # the 42 scenarios, about 2 minutes
+python3 tests/agent/check.py                 # the agent on its own
 python3 scripts/check-reference-docs.py      # docs/reference/ against the source
 npx --yes markdownlint-cli2@0.24.0           # the Markdown lint
 ```
 
 On Windows, `build.bat` takes the same arguments as `build.sh`. The installer's fpc builds
 32-bit programs by default, so give it the 64-bit target, `build.bat -- -Twin64 -Px86_64`,
-and run the scenarios with `HOT_DRIVER_OPTS` set to `-Twin64 -Px86_64`.
+and run the scenarios and the check of the agent with `HOT_DRIVER` set to
+`build/hotfpc.exe` and `HOT_DRIVER_OPTS` to `-Twin64 -Px86_64`, as CI does.
 
 ## When a change is done
 
-The unit tests pass, and `check.py` prints "40 of 40 cases as expected" on every system
+The unit tests pass, `check.py` prints "42 of 42 cases as expected", and
+`tests/agent/check.py` passes, on every system
 the change can affect: macOS arm64, macOS x86-64, Linux x86-64, Linux arm64, and Windows
 x86-64. Changes
 to the agent, or to the checks of layouts and sizes, are tested with fpc 3.2.2 and 3.3.1.
@@ -61,7 +64,7 @@ reference check fails until it does. A change users can see goes into `CHANGELOG
 ## CI
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to main: the build, the unit
-tests and the scenarios on Linux x86-64, Linux arm64, macOS arm64, macOS x86-64 and Windows
+tests, the scenarios and the check of the agent on Linux x86-64, Linux arm64, macOS arm64, macOS x86-64 and Windows
 x86-64 with
 fpc 3.2.2, and a `docs` job with the reference check and the Markdown lint.
 

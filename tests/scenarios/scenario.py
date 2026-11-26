@@ -56,12 +56,13 @@ EMPTIED_FIRST = "emptied first"
 AT_START = "at the start"
 
 
-def case(name, files, steps, opts=(), restart=False):
+def case(name, files, steps, opts=(), restart=False, env=None):
     """steps: (description, edits) or (description, edits, WHILE_COMPILING, EMPTIED_FIRST or AT_START), or
     (description, edits, AT_START, EMPTIED_FIRST). restart: the driver
     starts the program over when an edit needs a restart; the other cases pass --no-restart, so
-    that the program they check keeps running."""
-    CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)))
+    that the program they check keeps running. env: variables to add to the driver's
+    environment, which the program inherits, such as one of the agent's test variables."""
+    CASES[name] = (files, steps, tuple(opts) + (() if restart else ("--no-restart",)), dict(env or {}))
 
 
 # ---------------------------------------------------------------------------- globals
@@ -344,9 +345,11 @@ begin
   {$endif}
   while not Terminated do Sleep(20);
 end;
+var
+  Speed: Integer = 5;
 function Tick(n: Integer): string;
 begin
-  Result := 'text one';
+  Result := Format('text one speed %d', [Speed]);
 end;
 initialization
   Quiet := TQuiet.Create(False);
@@ -356,7 +359,8 @@ finalization
   Quiet.Free;
 end.
 '''}, [
-    ("another text, while a thread blocks every signal", [("u.pas", "'text one'", "'text two'")]),
+    ("another text, and Speed = 5 becomes Speed = 50, while a thread blocks every signal",
+     [("u.pas", "'text one speed", "'text two speed"), ("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;")]),
 ])
 
 # ---------------------------------------------------------------------------- initialization and finalization
@@ -545,17 +549,19 @@ case("procvars", {
 uses SysUtils, u;
 var
   Count: Integer = 0;
-  Plain: TPlain;
+  Plain, Hidden: TPlain;
   Event: TEvent;
   Target: TTarget;
 begin
   Plain := @OnPlain;
+  Hidden := HiddenRoutine;
   Target := TTarget.Create;
   Event := @Target.OnEvent;
   while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
   begin
     Inc(Count);
-    WriteLn('tick ', Count, ': ', Plain(Count), ', ', Event(Count), ', same address: ', Pointer(Plain) = Pointer(@OnPlain));
+    WriteLn('tick ', Count, ': ', Plain(Count), ', ', Event(Count), ', ', Hidden(Count),
+      ', same address: ', Pointer(Plain) = Pointer(@OnPlain), ' ', Pointer(Hidden) = Pointer(HiddenRoutine));
     Flush(Output);
     Sleep(300);
   end;
@@ -571,11 +577,21 @@ type
     function OnEvent(n: Integer): string;
   end;
 function OnPlain(n: Integer): string;
+function HiddenRoutine: TPlain;
 implementation
 uses SysUtils;
 function OnPlain(n: Integer): string;
 begin
   Result := 'plain v1 ' + IntToStr(n);
+end;
+// declared only here: fpc 3.2 gives it no symbol in a Windows object file
+function OnHidden(n: Integer): string;
+begin
+  Result := 'hidden v1 ' + IntToStr(n);
+end;
+function HiddenRoutine: TPlain;
+begin
+  Result := @OnHidden;
 end;
 function TTarget.OnEvent(n: Integer): string;
 begin
@@ -583,8 +599,72 @@ begin
 end;
 end.
 '''}, [
-    ("both bodies; the main block holds a procedure variable and a method pointer taken before the reload",
-     [("u.pas", "'plain v1 '", "'PLAIN V2 '"), ("u.pas", "'method v1 '", "'METHOD V2 '")]),
+    ("three bodies; the main block holds procedure variables and a method pointer taken before the reload, one of a routine of the implementation section",
+     [("u.pas", "'plain v1 '", "'PLAIN V2 '"), ("u.pas", "'method v1 '", "'METHOD V2 '"), ("u.pas", "'hidden v1 '", "'HIDDEN V2 '")]),
+    ("the routine of the implementation section is declared in the interface too, with another body",
+     [("u.pas", "function HiddenRoutine: TPlain;\nimplementation", "function HiddenRoutine: TPlain;\nfunction OnHidden(n: Integer): string;\nimplementation"),
+      ("u.pas", "'HIDDEN V2 '", "'HIDDEN V3 '")]),
+    ("its declaration in the interface is removed again, with another body",
+     [("u.pas", "function HiddenRoutine: TPlain;\nfunction OnHidden(n: Integer): string;\nimplementation", "function HiddenRoutine: TPlain;\nimplementation"),
+      ("u.pas", "'HIDDEN V3 '", "'HIDDEN V4 '")]),
+])
+
+# ---------------------------------------------------------------------------- a nested routine of a running frame
+# Run's frame runs across the swap, and calls its nested Show, which reads Run's locals. The
+# save puts locals around them, so the new Show would read the old frame in the wrong
+# places: the old frame must keep the old Show. The save also gives Done the initial value
+# True, which the swap applies: the old frame, which sees Done only after the swap, sets
+# Text to 'last', shows once more and returns, and the main block then calls the new Run,
+# whose fresh frame calls the new Show. The main block keeps running across the swap too,
+# and ends with its old frame's finally.
+case("nestedframe", {
+    "main.pas": r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, u;
+begin
+  while (Ticks < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do Run(ParamStr(2));
+end.
+""",
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+var
+  Ticks: Integer;
+  Done: Boolean = False;
+procedure Run(const AStop: string);
+implementation
+uses SysUtils;
+procedure Run(const AStop: string);
+var
+  Base: Integer;
+  Text: string;
+  procedure Show;
+  begin
+    WriteLn('tick ', Ticks, ': ', Text, ' ', Base, ' v1');
+    Flush(Output);
+  end;
+begin
+  Base := 42; Text := 'base';
+  while not FileExists(AStop) do
+  begin
+    Sleep(300);
+    if Done then Break;
+    Inc(Ticks); Show;
+  end;
+  if Done then
+  begin
+    Text := 'last';
+    Inc(Ticks); Show;
+  end;
+end;
+end.
+"""}, [
+    ("locals around Run's, another text for Show, Done becomes True, and managed temporaries in the main block, while Run's frame and the main block keep running",
+     [("u.pas", "var\n  Base: Integer;\n  Text: string;", "var\n  Before: array[0..31] of Integer;\n  Base: Integer;\n  Text: string;\n  After: array[0..31] of Integer;"),
+      ("u.pas", "' v1'", "' v2'"),
+      ("u.pas", "Done: Boolean = False;", "Done: Boolean = True;"),
+      ("u.pas", "    if Done then Break;\n    Inc(Ticks); Show;\n  end;\n  if Done then\n  begin\n    Text := 'last';\n    Inc(Ticks); Show;\n  end;", "    Inc(Ticks);\n    if Done then Show;\n  end;"),
+      ("main.pas", "begin\n  while", "begin\n  if ParamStr(3) <> '' then WriteLn('more ' + IntToStr(Length(ParamStr(0))) + ' ' + ParamStr(1) + ' ' + ParamStr(2));\n  while")]),
 ])
 
 # ---------------------------------------------------------------------------- records
@@ -842,6 +922,36 @@ end.
     ("another text", [("u.pas", "'one calls", "'two calls")]),
     ("Calls: Integer = 0 becomes Calls: Int64 = 0", [("u.pas", "Calls: Integer = 0;", "Calls: Int64 = 0;")]),
 ])
+
+# ---------------------------------------------------------------------------- an initial value written during the load
+# HOT_TEST_DATA_WRITE writes each variable whose initial value a save changes after the agent
+# binds the save and before the commit, as a thread of the program could while the swap loads:
+# the commit finds it written, so it keeps the value the program has, and the note says so.
+# Speed fits in one aligned word, which the commit compares and writes in one step; Pair, of 16
+# bytes, it compares and copies when every other thread is stopped, and keeps as it is when
+# one isn't (on Linux, a thread that blocks the agent's signal and sleeps).
+case("initrace", {
+    "main.pas": MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+function Tick(n: Integer): string;
+implementation
+uses SysUtils;
+type
+  TPair = record A, B: Int64; end;
+var
+  Speed: Integer = 5;
+  Pair: TPair = (A: 1; B: 2);
+function Tick(n: Integer): string;
+begin
+  Result := Format('speed %d pair %d %d', [Speed, Pair.A, Pair.B]);
+end;
+end.
+"""}, [
+    ("Speed = 5 becomes Speed = 50 and Pair = (1, 2) becomes (10, 20), and both are written during the load",
+     [("u.pas", "Speed: Integer = 5;", "Speed: Integer = 50;"), ("u.pas", "Pair: TPair = (A: 1; B: 2);", "Pair: TPair = (A: 10; B: 20);")]),
+], env={"HOT_TEST_DATA_WRITE": "1"})
 
 # ---------------------------------------------------------------------------- a typed constant
 # like a variable with an initial value, but fpc 3.2 leaves an implementation section's typed
@@ -1516,7 +1626,7 @@ MAX_TICKS = 1000
 
 
 def run(name):
-    files, steps, opts = CASES[name]
+    files, steps, opts, env = CASES[name]
     work = os.path.join(HERE, "work", name)
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
@@ -1538,7 +1648,8 @@ def run(name):
 
     print("=== %s" % name, flush=True)
     p = subprocess.Popen(driver_cmd() + list(opts) + [os.path.join(work, "main.pas"), "--", str(MAX_TICKS), stop],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                         env=dict(os.environ, **env))
     ended = threading.Event()
 
     def pump():

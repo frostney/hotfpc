@@ -16,8 +16,9 @@ for a 64-bit one, for hotfpc and for your program:
 hotfpc -Twin64 -Px86_64 demo.pas
 ```
 
-That is what CI runs on Windows with fpc 3.2.2: the unit tests and all scenarios, with
-`hotfpc.exe`, on pull requests and on pushes to main.
+That is what CI runs on Windows with fpc 3.2.2: the unit tests, all scenarios and the check
+of the agent, with `hotfpc.exe`, on pull requests and on pushes to main
+([tooling](../internals/tooling.md#ci)).
 
 ## From Linux or macOS, under Wine
 
@@ -34,6 +35,10 @@ name it with `--run`:
 ```sh
 hotfpc --run /opt/wine-staging/bin/wine -Twin64 -Px86_64 demo.pas
 ```
+
+Use Wine 6.8 or later: an older Wine lacks a call the agent needs to stop the program's
+threads, and every swap there fails with `the threads of the program could not be listed`
+([how it works](../internals/how-it-works.md#per-system)).
 
 When the launcher's name contains `wine`, hotfpc gives the agent Windows paths (`Z:\...`).
 The agent talks to hotfpc over TCP on 127.0.0.1, which works the same between a program
@@ -70,6 +75,6 @@ it too; otherwise the old program keeps running, and hotfpc says so:
   the program ends. hotfpc links the new program into `.hot/next/` and moves it into place,
   trying for up to 5 s.
 - **hotfpc links with `-Xm`.** The agent reads the linker's map, `.hot/<program>.map`, to
-  find the variables fpc 3.2 gives no symbol.
+  find the variables and routines fpc 3.2 gives no symbol.
 
 [How it works](../internals/how-it-works.md#per-system) has the details for each system.

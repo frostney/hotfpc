@@ -1,7 +1,7 @@
 # Environment variables
 
 hotfpc needs none of these. Two help with diagnosing hotfpc itself, two connect the
-program to hotfpc, and two exist for hotfpc's own tests.
+program to hotfpc, and three exist for hotfpc's own tests.
 
 ## Read by hotfpc
 
@@ -25,6 +25,7 @@ the program starts doesn't connect to hotfpc too.
 | Variable | Effect |
 | --- | --- |
 | `HOT_NOSUSPEND` | Any value: the agent doesn't stop the program's other threads during a swap, which is then not safe while they run. |
+| `HOT_TEST_DATA_WRITE` | `1` (the setting the tests use; any short value that isn't empty works): after it binds a swap and before it stops the program's threads, the agent adds 1 to the first byte of each variable it is about to give a new initial value, as a thread of the program could write it while the swap loads. In the `initrace` scenario the swap then keeps the value the variable has. |
 | `HOT_TEST_BLOCK` | A number of MiB: on Linux and macOS, the agent maps a block of that size just above the program before it looks for memory for new code, to test the case where something else took that space. |
 
 ## Read by the scenario tests

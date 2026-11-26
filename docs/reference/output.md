@@ -54,7 +54,7 @@ v<N> swapped: <units>: <n> functions redirected (<n> with other code, <n> new), 
 | Part | Meaning |
 | --- | --- |
 | `<units>` | The units whose object files changed. The program file is named after its source file, such as `demo` for `demo.pas`. A changed include file can change several. |
-| functions redirected | The program's functions that now jump to their new code. |
+| functions redirected | The program's functions that now jump to their new code. A routine nested in another isn't one: its old code stays for its parent's running frames. |
 | with other code | Of the unit's functions, those whose code differs from the running version. |
 | new | Functions the running version didn't have. |
 | variables and tables kept | Variables, virtual method tables and type information the new code shares with the program: they keep their addresses and values. |
@@ -71,8 +71,8 @@ A swap can be followed by notes:
 
 | Note | What it means |
 | --- | --- |
-| `note: <name> still had its initial value; set to the new one` | A variable with an initial value, or a typed constant, got a new initial value. Its running value was still the old initial value, byte for byte, and neither value is an address the linker fills in: it now has the new value. `nil` and a number cast to a pointer are plain bytes and count. A value the program changed and set back counts as unchanged. |
-| `note: the initial value of <name> changed; the running value is kept` | The same, but the running value differs from the old initial value, or one of the two values is an address the linker fills in (`@Table`, a routine, a `PChar` or a string with text): it keeps the value it has. |
+| `note: <name> still had its initial value; set to the new one` | A variable with an initial value, or a typed constant, got a new initial value. Its running value was still the old initial value, byte for byte, and neither value contains an address the linker fills in: it now has the new value. `nil` and a number cast to a pointer are plain bytes and count. A value the program changed and set back counts as unchanged. |
+| `note: the initial value of <name> changed; the running value is kept` | The same, but the running value differs from the old initial value, or one of the two values contains an address the linker fills in (`@Table`, a routine, a `PChar` or a string with text, also as a field of a record), or the variable is longer than one aligned 8 bytes while a thread the agent can't stop runs on (on Linux, one that blocks its signal and sleeps): it keeps the value it has. |
 | `note: resource string <name> changed; the running text is kept` | A `resourcestring` changed. The program keeps the text it has. |
 | `note: <name> changed; the running copy is kept` | Other data the program already has, such as a table, changed in a way that doesn't need a restart. The program keeps its copy. |
 | `note: the initialization section of <unit> changed; it is not run again` | The section isn't run again. The new code is in place for the next start. |
@@ -197,12 +197,12 @@ applied:
 
 | Error | Where | What it means |
 | --- | --- | --- |
-| `a thread of the program did not stop` | Linux | A thread didn't stop within 2 s. |
-| `a thread that blocks signals kept running` | Linux | A thread that blocks every signal, as some libraries start, was running, not waiting in the kernel. |
+| `a thread of the program did not stop` | Linux, Windows | On Linux the agent couldn't confirm within 2 s that every thread it sent the signal had stopped or ended; on both, new threads kept starting for 2 s while the agent stopped them. |
+| `a thread that blocks signals kept running` | Linux | A thread that blocks the signal the agent stops threads with, as the threads some libraries start that block every signal do, was running, not waiting in the kernel. |
 | `the program has more threads than the agent can stop` | any | The agent's list of threads to stop is full. |
-| `the threads of the program could not be listed` | macOS | `task_threads` kept failing, so the agent wrote nothing. |
-| `a thread of the program could not be suspended` | macOS | `thread_suspend` kept failing for a thread, so the agent wrote nothing. |
-| `the agent could not read where a thread of the program stopped` | macOS x86-64, Windows | `thread_get_state` or `GetThreadContext` kept failing for a thread, so the agent couldn't check that it was outside the entries it rewrites, and wrote nothing. |
+| `the threads of the program could not be listed` | any | `task_threads`, reading `/proc/self/task`, or `NtQuerySystemInformation`, `NtGetNextThread` or `NtQueryInformationThread` kept failing, so the agent wrote nothing. Under Wine before 6.8, which has no `NtGetNextThread`, every swap fails with it. |
+| `a thread of the program could not be suspended` | any | `thread_suspend`, the signal that stops a thread on Linux, or `SuspendThread` kept failing for a thread that hadn't ended, or on Windows a running thread couldn't be opened, so the agent wrote nothing. |
+| `the agent could not read where a thread of the program stopped` | macOS x86-64, Windows | `thread_get_state`, or on Windows reading a suspended thread's TEB or `GetThreadContext`, kept failing for a thread, so the agent couldn't check that it was outside the entries it rewrites, and wrote nothing. |
 | `the agent could not find the stack of a thread of the program` | x86-64 | The memory a thread's stack pointer points into kept not being found, or on Linux where a thread that blocks signals sleeps couldn't be read, so the agent couldn't check that the thread won't resume inside the entries it rewrites, and wrote nothing. |
 | `an entry to rewrite could not be written in one store while a thread that blocks signals sleeps` | Linux | A function's entry wasn't aligned for the one 8-byte store that keeps such a thread safe. |
 | `a thread stayed inside the first bytes of a function being redirected` | x86-64 | A thread kept stopping inside an entry the jump overwrites. |
@@ -228,7 +228,7 @@ say that hotfpc can't load it; please report them with the unit that causes them
 | Error | Where |
 | --- | --- |
 | `<file> is not an <arm64 or x86-64> Mach-O object` | macOS |
-| `<file> is not an aarch64 ELF object` | Linux arm64 |
+| `<file> is not an <aarch64 or x86-64> ELF object` | Linux |
 | `<file> is not an x86-64 COFF object` | Windows |
 | `<file> has no symbol table` | any |
 | `cannot read <file>` | any |

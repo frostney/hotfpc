@@ -30,25 +30,34 @@ A swap changes code, not state:
   section alike. New code reads and writes the same variables the old code did.
 - **Routines keep their addresses.** The old entry of each changed routine jumps to the new
   code, so procedure variables, method pointers, `@Proc` values and virtual method tables
-  taken before the swap call the new code.
+  taken before the swap call the new code. A routine nested in another is the exception:
+  it works in its parent's frame, so its old entry keeps the old code for the frames of
+  its parent that were running at the swap, and a nested procedure variable made in such
+  a frame calls the old code. The new nested routine runs once its parent runs new code.
 - **Objects stay valid.** An object that old code made works with new code: its class and
   virtual method table are the same ones, updated in place.
 - **Constants and literals are new.** The new code uses its own, so a changed `const`
   takes effect at once.
 - **A changed initial value** (`Speed: Integer = 5` to `= 50`) is applied when the
   variable still holds the old initial value, byte for byte, and neither the old nor the
-  new value is an address the linker fills in: `@Table`, a routine, a `PChar` or a string
-  with text. Otherwise it keeps the value it has. A pointer that holds a plain number, such
-  as `nil` or `Pointer(42)`, is bytes like any other value, so its new value is applied.
-  hotfpc compares values, not writes: a variable the program changed and then set back to
-  its initial value gets the new one. hotfpc notes which it was.
+  new value contains an address the linker fills in: `@Table`, a routine, a `PChar` or a
+  string with text, also as a field of a record. Otherwise it keeps the value it has. It
+  also keeps it when the agent can't stop every other thread (on Linux, one that blocks
+  the agent's signal and sleeps) and the variable is longer than what fits in one aligned
+  8 bytes, which it writes in one step: a value that stays this way isn't brought up again
+  by a later save. A pointer that holds a plain number, such as `nil` or `Pointer(42)`, is
+  bytes like any other value, so its new value is applied. hotfpc compares values, not
+  writes: a variable the program changed and then set back to its initial value gets the
+  new one. hotfpc notes which it was.
 - **Threads keep running.** The agent stops the program's other threads for the few
   microseconds the writes take.
 
 The main program's block is already running, so it keeps its old code (hotfpc notes it),
-and so does a routine that is running at the moment of the swap until it returns: the new
-code runs from the next call on. A unit's initialization section isn't run again. Put the
-code you want to change in routines in units, and call them from the main block.
+and so does a routine that is running at the moment of the swap until it returns, with the
+routines nested in it that it calls: the new code runs from the next call on, and a nested
+routine's new code once its parent runs new code. A unit's initialization section isn't
+run again. Put the code you want to change in routines in units, and call them from the
+main block.
 
 ## What needs a restart
 

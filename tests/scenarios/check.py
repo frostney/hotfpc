@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXPECT = {
     "globals": (4, 1, 0), "classes": (3, 2, 0), "heap": (1, 0, 0), "interfaces": (2, 1, 0), "exceptions": (2, 0, 0),
     "threadvars": (1, 1, 0), "initfinal": (2, 0, 0), "generics": (1, 0, 0), "inline": (1, 0, 0), "signature": (1, 0, 0),
-    "slowsave": (1, 0, 0), "procvars": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
+    "slowsave": (1, 0, 0), "procvars": (3, 0, 0), "nestedframe": (1, 0, 0), "records": (1, 2, 0), "newunit": (1, 2, 0), "rapid": ((2, 3, 4), 0, 0), "hidden": (1, 3, 0),
     # an include file shared by two units; a unit renamed (a restart: the new name is a new
     # unit) and renamed back with another body
     "include": (3, 0, 0), "rename": (1, 1, 0), "constants": (2, 0, 0),
@@ -36,7 +36,7 @@ EXPECT = {
     # a variable with an initial value and a typed constant that grow inside the 16 bytes fpc
     # pads the section of each to: the size an ELF object states shows it, and on Windows,
     # where a COFF object states none, the size in fpc's assembler output
-    "initvar": (1, 1, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
+    "initvar": (1, 1, 0), "initrace": (1, 0, 0), "typedconst": (1, 1, 0), "progvar": (2, 1, 0), "localconst": (1, 1, 0),
     # a variable of the program that a save removes and the next brings back larger: the agent
     # still has it at its first address, with its first size; back at that size, it swaps. In
     # a unit, variables back with another type of the same size: the check of layouts keeps
@@ -71,7 +71,14 @@ RESTARTS = {"restart": 1, "linkfail": 1, "crash": 2, "shortentry": 1, "shortcall
 # case: lines the program must print, so that a swap shows its new values
 PRINTS = {
     "constants": ["rate 2.50 scale 0.25", "offset 9.75 rate 2.50 scale 0.25"],
-    "signals": ["text two"],
+    # Speed takes its new initial value while a thread that blocks the agent's signal sleeps
+    # on (on Linux): it fits in one aligned word, which the commit writes in one step
+    "signals": ["text two speed 50"],
+    # Speed, a variable of the implementation section that nothing has written, takes its
+    # new initial value: on Windows with fpc 3.2 the agent knows it only by its section
+    "globals": [re.compile(r"TOTAL \d+ hidden \d+ speed 50 extra \d+")],
+    "procvars": [re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V2 \d+, same address: TRUE TRUE"),
+                 re.compile(r"PLAIN V2 \d+, METHOD V2 \d+, HIDDEN V3 \d+, same address: TRUE TRUE")],
     # the last of the quick saves shows, however they were merged (a pattern: the tick varies)
     "rapid": [re.compile(r"text five \d+")],
     # the save whose v.pas was emptied first runs with both of its files
@@ -96,6 +103,18 @@ SWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n
 # once after the swap's line, as its Tick ran the old code or had its result already
 UNSWAPPED = {name: lambda n: "main calls Area = %d, Tick calls Area = %d" % (n * n, n * n)
              for name in ("signature", "slowsave")}
+# procvars: procedure variables and a method pointer taken before the swaps call the new
+# code, and @OnHidden keeps its first address: the old entry of each, also of a routine
+# declared only in the implementation section, jumps to the new code, also after a save
+# that declares it in the interface and one that takes that back (PRINTS has the save in
+# between). The tick a swap is written in makes three calls, so it may print any mix of old
+# and new
+SWAPPED["procvars"] = lambda n: "PLAIN V2 %d, METHOD V2 %d, HIDDEN V4 %d, same address: TRUE TRUE" % (n, n, n)
+UNSWAPPED["procvars"] = lambda n: re.compile(r"PLAIN V2 %d, METHOD V2 %d, HIDDEN V[34] %d, same address: TRUE (TRUE|FALSE)" % (n, n, n))
+# initrace: Speed and Pair keep the values the program wrote while the swap loaded; a tick
+# that ran while the swap was written may still print either from before that write
+SWAPPED["initrace"] = lambda n: "speed 6 pair 2 2"
+UNSWAPPED["initrace"] = lambda n: re.compile(r"speed [56] pair [12] 2")
 # case: notes every swap of the case gives: these change the main block
 NOTES = {name: ["the main block changed; the frame that is running keeps its old code"] for name in ("signature", "slowsave")}
 # case: lines hotfpc must print (patterns, after "[hot] ")
@@ -103,6 +122,11 @@ SAYS = {
     # the program starts with the units of the build it runs, without one a save left out
     "startunit": [r"v1: built in [\d.]+ ms, started in [\d.]+ ms, 2 units of its own",
                   r"restart needed: unit w is not part of the running program"],
+    # the save of Speed = 50, whose value PRINTS checks
+    "globals": [r"  note: U\.SPEED still had its initial value; set to the new one"],
+    # written during the load: the commit finds it so and keeps the program's value
+    "initrace": [r"  note: the initial value of U\.SPEED changed; the running value is kept",
+                 r"  note: the initial value of U\.PAIR changed; the running value is kept"],
     "readdvar": [r"restart needed: variable MAIN\.CALLS changed size from 4 to 8 bytes",
                  r"  note: MAIN\.CALLS is back after a save removed it; it keeps its running value"],
     "readdtype": [r"restart needed: u\.Hits: the declaration changed its layout or type",
@@ -114,6 +138,13 @@ SAYS = {
 # is a variable of the unit's implementation section, which every swap must leave in place,
 # so every tick prints it and the two numbers stay equal
 COUNTERS = {"globals": "hidden", "hidden": "calls"}
+# case: (what every tick before the marker prints, the marker, what every tick after it
+# prints): the program hands over from old code to new at the marker, which it prints once,
+# and at least one tick follows it. The driver's record of the swap is no boundary: the
+# program runs on while the driver prints it. In nestedframe the frame of Run that runs
+# across the swap calls the old Show once more, with its own values (the new Show would read
+# that frame with the new layout), and the fresh frames of the new Run after it the new Show
+HANDOFFS = {"nestedframe": ("base 42 v1", "last 42 v1", "base 42 v2")}
 # case: a variable that a save removed and a later one brought back keeps its value. Two
 # patterns of what a tick prints: the first numbers the second prints are the last numbers
 # the first printed, each one more, as the new code counts on from the value
@@ -223,8 +254,11 @@ for name in names:
     # every tick after the last swap's record ran its code, but the first, which may have been
     # running when the swap was written; and one of them did
     after = tick_records(lines[swapped[-1] + 1:]) if name in SWAPPED and swapped else []
+    def unswapped(tick, text):
+        expected = UNSWAPPED[name](int(tick))
+        return expected.fullmatch(text.strip()) if isinstance(expected, re.Pattern) else text == " " + expected
     stale = [(tick, text.strip()) for i, (tick, text) in enumerate(after)
-             if text != " " + SWAPPED[name](int(tick)) and not (i == 0 and text == " " + UNSWAPPED[name](int(tick)))]
+             if text != " " + SWAPPED[name](int(tick)) and not (i == 0 and unswapped(tick, text))]
     if name in SWAPPED and not any(text == " " + SWAPPED[name](int(tick)) for tick, text in after):
         stale.append(("", "no tick"))
     ok = ok and not stale
@@ -246,6 +280,20 @@ for name in names:
     # and the notes every swap of the case must give
     unnoted = [text for text in NOTES.get(name, []) if not swaps or any(text not in notes for notes in swaps)]
     ok = ok and not unnoted
+    handoff = []
+    if name in HANDOFFS:
+        before, marker, later = HANDOFFS[name]
+        texts = [text.strip() for _, text in records]
+        marks = [i for i, text in enumerate(texts) if text == marker]
+        if len(marks) != 1:
+            handoff.append("printed %r %d times" % (marker, len(marks)))
+        else:
+            wrong = [(records[i][0], text) for i, text in enumerate(texts) if text != (before if i < marks[0] else marker if i == marks[0] else later)]
+            if wrong:
+                handoff.append("tick %s printed %r" % wrong[0])
+            if marks[0] == len(texts) - 1:
+                handoff.append("no tick after %r" % marker)
+    ok = ok and not handoff
     loads = [float(m.group(1)) for m in (re.search(r"of which in the program (-?[\d.]+)\)$", lines[i]) for i in swapped) if m]
     slow = [x for x in loads if name in LOAD_LIMITS and not 0 <= x < LOAD_LIMITS[name]]
     ok = ok and not slow
@@ -260,7 +308,8 @@ for name in names:
           + "".join("; after the swap tick %s printed %r" % (tick, text) if tick else "; no tick after the swap ran its code"
                     for tick, text in stale[:1])
           + "".join("; a swap noted %r twice" % text for text in repeated[:1])
-          + "".join("; a swap did not note %r" % text for text in unnoted[:1]))
+          + "".join("; a swap did not note %r" % text for text in unnoted[:1])
+          + "".join("; " + text for text in handoff[:1]))
     if not ok:
         failing.append((name, body))
 for name, body in failing:
