@@ -82,7 +82,9 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    meanwhile waits with it, and doesn't move that look later. The driver keeps each such
    file by its whole path, as the file system names it. It then deletes the compiler's
    record of the changed units so they're recompiled. A changed include file causes every
-   unit to be recompiled; units whose object file comes out the same are left alone.
+   unit to be recompiled; units whose object file comes out the same are left alone. On
+   macOS, a unit whose assembler changed apart from its comments is not, even when its
+   object file is the same ([Per system](#per-system)).
 2. fpc compiles without linking (`-Cn`). fpc reads the files one after the other, so a
    source that changes during the compile, such as the second file of a save written a
    moment after the first, or the next save, may be read before or after its change. When
@@ -146,8 +148,8 @@ symbols and `-FU`/`-o` to build into `.hot/`.
      versions state one: an ELF symbol does, and on macOS fpc's assembler does (see [Per
      system](#per-system)). Then a variable added or removed next to it, which changes the
      padding after it, changes nothing. Otherwise the size is the distance to the next
-     symbol or the section's end, padding included. On macOS, a variable whose size the
-     assembler doesn't give needs a restart.
+     symbol or the section's end, padding included. On macOS, a variable that keeps its
+     storage needs a restart when the assembler doesn't give its size.
    - A function keeps its first address, which gets a jump to the new code (a nested
      routine is the exception, below). That keeps `@Proc`, method pointers and virtual
      method tables valid. The jump must end before the next symbol or the end of the
@@ -218,8 +220,9 @@ after its agent connected, and the first program in every case, end hotfpc.
   it writes first. hotfpc passes `-a`, so fpc keeps that file beside each object
   (`.hot/units/<unit>.s`), and hands it to the agent with the object. The agent counts each
   datum's bytes there: the data its label lists, up to the next label, alignment or section,
-  or the size that `.lcomm` or `.zerofill` names. A variable whose size it can't count there
-  needs a restart. That costs no compile: fpc writes the file for every object anyway. A
+  or the size that `.lcomm` or `.zerofill` names. A variable that keeps the program's
+  storage needs a restart when it can't count the size there, for the new version or the one
+  it replaces. That costs no compile: fpc writes the file for every object anyway. A
   variable that grows within its padding can leave its unit's object file as it was, when
   no code of the unit uses it, so the driver counts a unit whose assembler changed as
   changed too, and loads it for the agent to compare.

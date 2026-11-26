@@ -3510,8 +3510,8 @@ begin
 end;
 
 { Copies an object file with the assembler fpc assembled it from, which the agent reads beside
-  it on macOS. Where there is none, or it can't be copied, the copy has none either, and the
-  agent finds the sizes of its variables unknown. }
+  it on macOS. Where there is none, or it can't be copied whole, the copy has none either, and
+  the agent finds the sizes of its variables unknown: a part of it could give wrong ones. }
 procedure CopyObjectFile(const ASource, ADestination: string);
 var
   Source, Destination: string;
@@ -3523,10 +3523,40 @@ begin
   if FileExists(Source) then
     try
       CopyFileContents(Source, Destination);
+      if not SameFileContents(Source, Destination) then
+        DeleteFile(Destination);
     except
       on EStreamError do
         DeleteFile(Destination);
     end;
+end;
+
+{ Whether two of fpc's assembler files are the same but for comments, such as the source lines
+  -al adds: a comment changes neither the object nor the sizes. False when one can't be read. }
+function SameAssembler(const AFirst, ASecond: string): Boolean;
+
+  function WithoutComments(const AText: string): string;
+  var
+    Lines: TStringList;
+    I: Integer;
+  begin
+    Lines := TStringList.Create;
+    try
+      Lines.Text := AText;
+      for I := Lines.Count - 1 downto 0 do
+        if StartsWith(TrimLeft(Lines[I]), AssemblerComment) then
+          Lines.Delete(I);
+      Result := Lines.Text;
+    finally
+      Lines.Free;
+    end;
+  end;
+
+var
+  FirstText, SecondText: string;
+begin
+  Result := ReadFileContents(AFirst, FirstText) and ReadFileContents(ASecond, SecondText)
+    and (WithoutComments(FirstText) = WithoutComments(SecondText));
 end;
 
 procedure TDriver.CopyObjectsToLive;
@@ -3721,7 +3751,7 @@ begin
       { A Mach-O object can come out the same when a variable grows within its padding, as it
         states no sizes: its assembler shows it, so the unit is loaded for the agent to see. }
       if not SameFileContents(FWorkspace.UnitsDirectory + ObjectName, FWorkspace.LiveDirectory + ObjectName)
-        or (FOptions.KeepAssembler and not SameFileContents(
+        or (FOptions.KeepAssembler and not SameAssembler(
           FWorkspace.UnitsDirectory + ChangeFileExt(ObjectName, AssemblerExtension),
           FWorkspace.LiveDirectory + ChangeFileExt(ObjectName, AssemblerExtension))) then
         AChanged.Add(ObjectName);
@@ -4672,6 +4702,21 @@ begin
   Expect(not SameFileContents(Root + 'a.txt', Root + 'b.txt'), 'another content is not');
   Expect(not SameFileContents(Root + 'a.txt', Root + 'missing.txt'), 'a missing file is not the same as anything');
   Expect(not SameFileContents(Root + 'missing.txt', Root + 'also-missing.txt'), 'nor as another missing one');
+end;
+
+{ Two assembler files are the same when only their comments differ, such as the source lines
+  -al adds, and not when a directive does. }
+procedure TestSameAssembler;
+var
+  Root: string;
+begin
+  Root := MakeTestDirectory('assembler-files');
+  WriteTestFile(Root + 'a.s', '# [12] Inc(Small);' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.short'#9'1' + LineEnding);
+  WriteTestFile(Root + 'b.s', '  # [13] Inc(Small); { a comment }' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.short'#9'1' + LineEnding);
+  Expect(SameAssembler(Root + 'a.s', Root + 'b.s'), 'another comment is the same assembler');
+  WriteTestFile(Root + 'b.s', '# [12] Inc(Small);' + LineEnding + '_TC_$U_$$_SMALL:' + LineEnding + #9'.long'#9'1' + LineEnding);
+  Expect(not SameAssembler(Root + 'a.s', Root + 'b.s'), 'another directive is not');
+  Expect(not SameAssembler(Root + 'a.s', Root + 'missing.s'), 'nor is a missing file');
 end;
 
 procedure TestRemoveTree;
@@ -7637,6 +7682,7 @@ begin
     TestAgentOptions;
     TestCompileArguments;
     TestKeepAssembler;
+    TestSameAssembler;
     TestCompileArgumentsLinking;
     TestAgentResource;
     TestForgetUnits;

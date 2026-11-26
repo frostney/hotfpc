@@ -53,7 +53,7 @@ v<N> swapped: <units>: <n> functions redirected (<n> with other code, <n> new), 
 
 | Part | Meaning |
 | --- | --- |
-| `<units>` | The units whose object files changed. The program file is named after its source file, such as `demo` for `demo.pas`. A changed include file can change several. |
+| `<units>` | The units whose object files changed, and on macOS also those whose assembler changed apart from its comments, as a variable that grows within its padding can leave the object file the same. The program file is named after its source file, such as `demo` for `demo.pas`. A changed include file can change several. |
 | functions redirected | The program's functions that now jump to their new code. A routine nested in another isn't one: its old code stays for its parent's running frames. |
 | with other code | Of the unit's functions, those whose code differs from the running version. |
 | new | Functions the running version didn't have. |
@@ -166,8 +166,9 @@ from starting the new one until its agent connected. With `--no-restart`, a
 not swapped: the generated code is the same (compile <ms> ms)
 ```
 
-The source changed, but fpc made the same object files from it: a comment, blank lines, or
-a change to code that nothing uses.
+The source changed, but fpc made the same object files from it, and on macOS the same
+assembler but for its comments: a comment, blank lines, or a change to code that nothing
+uses.
 
 ### Errors
 
