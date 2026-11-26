@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 - A variable that a save removes and a later save brings back with another type now needs
   a restart, as one that changes its type in place does. The program keeps the variable at
