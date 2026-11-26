@@ -69,6 +69,23 @@ writes a file, such as `.hot/asm/main.s`, so that fpc can't write it, and
 `(path, None, None)` removes it again. After the last step the script tells the program to
 end. The program prints a numbered tick every 0.3 s, with what the unit's code returns.
 
+Once a case has failed, it ends within seconds. hotfpc and every process it starts, the
+program among them, are a process group that hotfpc leads, and on Windows a job object, so
+the script can stop them all by hotfpc's process ID. It does so at the end of every case,
+and at once with its own complaint, a line that starts with `!!!` and names the step the
+case was at, after which it saves no more files. It complains when:
+
+- an edit doesn't apply, or hotfpc gives no outcome of a save within 150 s, or ends first;
+- the program hasn't ended, and its output closed, 30 s after the script told it to;
+- the run prints a line longer than 64 KiB, or more than 1 MiB in all (a case prints a few
+  kilobytes; a program whose memory a swap broke can print a string of a wrong length,
+  gigabytes on one line);
+- the case runs for more than 300 s from hotfpc's start (in CI the slowest case takes under
+  15 s).
+
+Ctrl+C stops them too, and so do `SIGTERM` and `SIGHUP` to `check.py` or `scenario.py` on
+macOS and Linux; on Windows the job object ends them when the script ends.
+
 `check.py` runs `scenario.py` and checks each case's run, line by line without the script's
 timestamps: hotfpc's lines start with `[hot]`, and a check matches a whole line from its
 start, so a line the program prints is never taken for one of hotfpc's:
@@ -91,8 +108,9 @@ start, so a line the program prints is never taken for one of hotfpc's:
   (`LOAD_LIMITS`), and a tick the program prints once where it hands over from the old code
   to the new, with what every tick before it and after it prints (`HANDOFFS`).
 
-It prints one line per case, the run of each case that failed, and "N of M cases as
-expected", and ends with 1 when one failed. [Edits and what they do](../guides/edits.md)
+It prints one line per case, with the script's first complaint and how long the case took,
+its end included, the run of each case that failed, and "N of M cases as expected", and ends with 1 when one
+failed. [Edits and what they do](../guides/edits.md)
 lists every step and its outcome.
 
 For a Windows target (`-Twin` in `HOT_DRIVER_OPTS`), `check.py` expects a restart in three

@@ -4,7 +4,7 @@
   scenario.py                 run every case
   scenario.py classes heap    run the named cases
 """
-import os, platform, shlex, re, shutil, subprocess, sys, threading, time
+import locale, os, platform, shlex, re, shutil, signal, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOTRUN = os.environ.get("HOT_DRIVER") or os.path.join(HERE, "..", "..", "build", "hotfpc")
@@ -1568,6 +1568,207 @@ QUICK_TIMEOUT = 10
 OUTCOME_TIMEOUT = 150
 # The most ticks a program runs if the script never tells it to end
 MAX_TICKS = 1000
+# How long the program may take to end once the script has told it to, and its output to
+# close: it looks for the stop file before every tick, 0.3 s apart, and the driver then prints
+# its closing line. The same again bounds stopping them all at the end of a case.
+STOP_TIMEOUT = 30
+# The longest a case may take, from the driver's start. The slowest system in CI, macOS
+# x86-64, runs all the cases in under 4 minutes, the slowest of them in under 15 s; a case that
+# takes longer hangs, and the script stops it at the step it is at.
+CASE_TIMEOUT = 300
+# The longest line, without its line ending, and the most output of a case. A program whose
+# memory a swap broke can print a string of a wrong length: gigabytes on one line, which the
+# script and check.py would hold and search. A case's run prints a few kilobytes.
+LINE_LIMIT = 64 * 1024
+OUTPUT_LIMIT = 1024 * 1024
+# How long the script reads on after the driver ended, for what it printed: the program it
+# started can hold the output open.
+DRAIN = 0.5
+# What the driver and the program print is text in the system's encoding
+ENCODING = locale.getpreferredencoding(False)
+
+
+class CaseFailed(Exception):
+    """The script complained about the case: it saves no more of its steps."""
+
+
+class Signals:
+    """Ctrl+C, and SIGTERM and SIGHUP elsewhere than on Windows, end the script through the
+    cleanup of the case that runs (KeyboardInterrupt, SystemExit), except while the driver
+    starts: they wait until the case owns its processes."""
+    held = False
+    pending = []
+
+    @classmethod
+    def install(cls):
+        numbers = [signal.SIGINT] + ([] if sys.platform == "win32" else [signal.SIGTERM, signal.SIGHUP])
+        for number in numbers:
+            signal.signal(number, cls.handle)
+
+    @classmethod
+    def handle(cls, number, frame):
+        if cls.held:
+            cls.pending.append(number)
+        else:
+            cls.end(number)
+
+    @staticmethod
+    def end(number):
+        if number == signal.SIGINT:
+            raise KeyboardInterrupt()
+        raise SystemExit(128 + number)
+
+    @classmethod
+    def hold(cls):
+        cls.held = True
+
+    @classmethod
+    def release(cls):
+        cls.held = False
+        if cls.pending:
+            cls.end(cls.pending.pop(0))
+
+
+class Processes:
+    """The driver and every process it starts, the program among them, which the script stops
+    together by the driver's process ID: on Windows a job object, which holds them also after
+    the driver ended and ends them should the script end without stopping them; elsewhere a
+    process group that the driver leads. The driver is reaped only after the last signal to
+    its group, so that the group's ID stays its own until then."""
+
+    def __init__(self):
+        self.process = None
+        self.job = None
+        self.exited = threading.Event()   # the driver ended
+        self.exited_at = None
+
+    def start(self, command, env, on_exit):
+        """Starts the driver; on_exit is called once it ended."""
+        if sys.platform == "win32":
+            # suspended until it is in the job, so that every process it starts is in it too
+            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                                            creationflags=0x4)   # CREATE_SUSPENDED
+            self.job = self.windows_job()
+        else:
+            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                                            start_new_session=True)
+
+        def watch():
+            if sys.platform == "win32" or not hasattr(os, "waitid"):
+                # before Python 3.13 macOS has no waitid: the driver is reaped as it ends, and
+                # the stop at the end of the case signals its group by an ID that only a wrap
+                # of the system's process IDs since could give to another group
+                self.process.wait()
+            else:
+                try:   # waits without reaping it
+                    os.waitid(os.P_PID, self.process.pid, os.WEXITED | os.WNOWAIT)
+                except ChildProcessError:
+                    pass
+            self.exited_at = time.monotonic()
+            self.exited.set()
+            on_exit()
+        threading.Thread(target=watch, daemon=True).start()
+
+    def windows_job(self):
+        """A job object that ends its processes when its last handle closes, with the suspended
+        driver in it, whose thread then runs."""
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+        class Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_uint64 * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        self.kernel32 = kernel32
+        job = kernel32.CreateJobObjectW(None, None)
+        error = ctypes.get_last_error()
+        if job:
+            limits = Extended()
+            limits.BasicLimitInformation.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if kernel32.SetInformationJobObject(job, 9, ctypes.addressof(limits), ctypes.sizeof(limits)) \
+                    and kernel32.AssignProcessToJobObject(job, int(self.process._handle)):
+                if self.resume_windows(ctypes, wintypes, kernel32):
+                    return job
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(job)
+        self.process.kill()
+        self.process.wait()
+        raise ctypes.WinError(error)
+
+    def resume_windows(self, ctypes, wintypes, kernel32):
+        """Lets the suspended driver's thread run: the one thread of the process, found in a
+        snapshot of the system's threads. True when it runs."""
+        class ThreadEntry(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ThreadID", wintypes.DWORD),
+                        ("th32OwnerProcessID", wintypes.DWORD), ("tpBasePri", wintypes.LONG),
+                        ("tpDeltaPri", wintypes.LONG), ("dwFlags", wintypes.DWORD)]
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+        kernel32.Thread32First.argtypes = (wintypes.HANDLE, ctypes.POINTER(ThreadEntry))
+        kernel32.Thread32Next.argtypes = (wintypes.HANDLE, ctypes.POINTER(ThreadEntry))
+        kernel32.OpenThread.restype = wintypes.HANDLE
+        kernel32.OpenThread.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.ResumeThread.restype = wintypes.DWORD
+        kernel32.ResumeThread.argtypes = (wintypes.HANDLE,)
+        snapshot = kernel32.CreateToolhelp32Snapshot(0x4, 0)   # TH32CS_SNAPTHREAD
+        if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+            return False
+        resumed = False
+        try:
+            entry = ThreadEntry()
+            entry.dwSize = ctypes.sizeof(entry)
+            found = kernel32.Thread32First(snapshot, ctypes.byref(entry))
+            while found:
+                if entry.th32OwnerProcessID == self.process.pid:
+                    thread = kernel32.OpenThread(0x2, False, entry.th32ThreadID)   # THREAD_SUSPEND_RESUME
+                    if thread:
+                        resumed = kernel32.ResumeThread(thread) != 0xFFFFFFFF or resumed
+                        kernel32.CloseHandle(thread)
+                found = kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+        finally:
+            kernel32.CloseHandle(snapshot)
+        return resumed
+
+    def stop(self):
+        """Stops every one of them that still runs."""
+        if self.process is None:
+            return
+        if self.job is not None:
+            self.kernel32.TerminateJobObject(self.job, 1)
+        elif sys.platform != "win32":
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except OSError:   # none of them runs any more
+                pass
+
+    def finish(self, timeout):
+        """Stops what still runs and reaps the driver; False when it hasn't ended in timeout."""
+        if self.process is None:
+            return True
+        self.stop()
+        try:
+            self.process.wait(timeout=timeout)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        finally:
+            if self.job is not None:
+                self.kernel32.CloseHandle(self.job)
+                self.job = None
 
 
 def run(name):
@@ -1582,43 +1783,130 @@ def run(name):
     stop = os.path.join(work, "stop")
     restarts = "--no-restart" not in opts
     t0 = time.time()
+    started = time.monotonic()
     lock = threading.Lock()
-    lines = []   # what the driver printed, in order
+    lines = []   # what the driver and the program printed, in order
     arrived = []   # when each line arrived
     changed = threading.Condition(lock)
+    failed = threading.Event()   # the script complained: the case has failed
+    closed = threading.Event()   # the case is over: nothing more of it is printed
+    ended = threading.Event()   # the run's output closed
+    where = ["the start"]   # what the script is doing, for a complaint
+    processes = Processes()
+    # a complaint and a change to the case's files happen one at a time, so that no file
+    # changes after a complaint
+    mutating = threading.Lock()
+
+    def say(line):
+        """Prints a line of the case; the caller holds the lock."""
+        if not closed.is_set():
+            print("%6.2fs  %s" % (time.time() - t0, line), flush=True)
 
     def out(line):
         with lock:
-            print("%6.2fs  %s" % (time.time() - t0, line), flush=True)
+            say(line)
 
-    print("=== %s" % name, flush=True)
-    p = subprocess.Popen(driver_cmd() + list(opts) + [os.path.join(work, "main.pas"), "--", str(MAX_TICKS), stop],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                         env=dict(os.environ, **env))
-    ended = threading.Event()
-
-    def pump():
-        for line in p.stdout:
-            line = line.rstrip("\n")
-            with changed:
-                print("%6.2fs  %s" % (time.time() - t0, line), flush=True)
-                lines.append(line)
-                arrived.append(time.time())
-                changed.notify_all()
+    def complain(text):
+        """The script's own failure of the case ("!!! "), with the step it was at: it stops the
+        driver and every process it started, every wait of the script ends, and it saves no
+        more steps."""
+        with mutating:
+            failed.set()
+        processes.stop()
         with changed:
-            ended.set()
+            say("!!! %s, at: %s" % (text, where[0]))
             changed.notify_all()
 
+    def fail(text):
+        complain(text)
+        raise CaseFailed()
+
+    def pump():
+        p = processes.process
+        size = 0
+        pending = b""
+        try:
+            while True:
+                chunk = p.stdout.read1(1 << 16)
+                if not chunk:
+                    break
+                size += len(chunk)
+                pending += chunk
+                *whole, pending = pending.split(b"\n")
+                # a line without its end yet may be LINE_LIMIT bytes and the CR of a CRLF
+                long = pending if len(pending) > LINE_LIMIT and not (len(pending) == LINE_LIMIT + 1
+                                                                     and pending.endswith(b"\r")) else None
+                for raw in whole:
+                    text = raw[:-1] if raw.endswith(b"\r") else raw
+                    if len(text) > LINE_LIMIT:
+                        long = text
+                        break
+                    line = text.decode(ENCODING, "backslashreplace")
+                    with changed:
+                        say(line)
+                        lines.append(line)
+                        arrived.append(time.time())
+                        changed.notify_all()
+                if long is not None:
+                    with changed:
+                        say(long[:200].decode(ENCODING, "backslashreplace") + " ...")
+                    complain("the run printed a line longer than %d bytes" % LINE_LIMIT)
+                    break
+                if size > OUTPUT_LIMIT:
+                    complain("the run printed more than %d bytes" % OUTPUT_LIMIT)
+                    break
+            # the last line, without its end
+            text = pending[:-1] if pending.endswith(b"\r") else pending
+            if len(text) > LINE_LIMIT and not failed.is_set():
+                with changed:
+                    say(text[:200].decode(ENCODING, "backslashreplace") + " ...")
+                complain("the run printed a line longer than %d bytes" % LINE_LIMIT)
+            elif text and not failed.is_set():
+                line = text.decode(ENCODING, "backslashreplace")
+                with changed:
+                    say(line)
+                    lines.append(line)
+                    arrived.append(time.time())
+            while p.stdout.read(1 << 16):   # what is left after a limit, unread
+                pass
+        except Exception as error:   # such as a line this script cannot print
+            complain("the script could not pass on the run's output (%r)" % error)
+        finally:
+            with changed:
+                ended.set()
+                changed.notify_all()
+
+    def overdue():
+        complain("the case took more than %d s" % CASE_TIMEOUT)
+
+    def gone():
+        """The driver is gone: the output closed, or the driver ended DRAIN s ago, time enough
+        for what it printed to arrive (the program it started may hold the output open)."""
+        return ended.is_set() or (processes.exited.is_set() and time.monotonic() - processes.exited_at > DRAIN)
+
     def wait(test, timeout=OUTCOME_TIMEOUT):
-        """Waits until a line the driver printed passes test, or it ends; False after the
-        timeout."""
+        """Waits until a line the driver printed passes test; False after the timeout, or when
+        the driver is gone before one did. A complaint in the meantime ends the steps."""
         deadline = time.time() + timeout
         with changed:
-            while not ended.is_set() and not test():
+            while not gone() and not failed.is_set() and not test():
                 if time.time() > deadline:
-                    return False
-                changed.wait(deadline - time.time())
-        return True
+                    break
+                changed.wait(min(deadline - time.time(), DRAIN))
+            passed = test()
+        if failed.is_set():
+            raise CaseFailed()
+        return passed
+
+    def no_outcome(what):
+        """Fails the case for a wait that ended without the line it waited for: the driver did not
+        do what within OUTCOME_TIMEOUT, or ended first."""
+        fail(("the driver ended, and did not %s" if gone() else "the driver did not %s within %d s" % ("%s", OUTCOME_TIMEOUT)) % what)
+
+    def pause(seconds):
+        """Sleeps, unless the case fails in the meantime."""
+        if failed.wait(seconds):
+            raise CaseFailed()
 
     def outcome(since, saved=None):
         """The driver is done with what was saved after its first `since` lines; with saved, the
@@ -1632,32 +1920,35 @@ def run(name):
         return False
 
     def write(path, text):
-        """Saves a file of a step: its text; None removes it, or the directory BLOCKED put there."""
-        if text is None:
-            if os.path.isdir(path):
-                os.rmdir(path)
-            elif os.path.exists(path):
-                os.remove(path)
-        elif text is BLOCKED:
-            if os.path.exists(path):
-                os.remove(path)
-            os.makedirs(path)
-        else:
-            with open(path, "w") as fh:
-                fh.write(text)
+        """Saves a file of a step: its text; None removes it, or the directory BLOCKED put there.
+        Nothing once the case has failed."""
+        with mutating:
+            if failed.is_set():
+                raise CaseFailed()
+            if text is None:
+                if os.path.isdir(path):
+                    os.rmdir(path)
+                elif os.path.exists(path):
+                    os.remove(path)
+            elif text is BLOCKED:
+                if os.path.exists(path):
+                    os.remove(path)
+                os.makedirs(path)
+            else:
+                with open(path, "w") as fh:
+                    fh.write(text)
 
     def write_emptied_first(texts):
         """Saves a step's files as an editor that empties the first before it writes it: the
         others 0.1 s after it emptied it, and its text 0.3 s after."""
         first = next(iter(texts))
-        open(first, "w").close()
+        write(first, "")
         emptied = time.time()
-        time.sleep(0.1)
+        pause(0.1)
         for path, text in list(texts.items())[1:]:
             write(path, text)
-        time.sleep(max(0.0, emptied + 0.3 - time.time()))
-        with open(first, "w") as fh:
-            fh.write(texts[first])
+        pause(max(0.0, emptied + 0.3 - time.time()))
+        write(first, texts[first])
 
     def texts_of(edits):
         """The files the edits make, by path, in the order the edits name them."""
@@ -1671,12 +1962,10 @@ def run(name):
                 with open(path) as fh:
                     texts[path] = fh.read()
             if old not in texts[path]:
-                out("!!! the edit does not apply: %r" % old)
+                fail("the edit does not apply: %r" % old)
             texts[path] = texts[path].replace(old, new)
         return texts
 
-    th = threading.Thread(target=pump)
-    th.start()
     # a step at the start is saved once fpc has written the program's object file, of the
     # first build, or of a build after the program was linked
     def written(path):
@@ -1691,76 +1980,140 @@ def run(name):
         # fpc may still be writing the main.o the step before saw: only a link after it ends
         # that build
         return made is not None and (before is None or before < linked < made)
-    before = None
-    while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
-        desc, edits = steps[0][:2]
-        emptied_first = EMPTIED_FIRST in steps[0][3:]
-        steps = steps[1:]
-        deadline = time.time() + OUTCOME_TIMEOUT
-        while not built(before) and p.poll() is None and time.time() < deadline \
-                and not any("] v1: built" in line for line in lines):
-            time.sleep(0.001)
-        if not built(before):
-            out("!!! the driver did not build main.pas %sbefore it started the program" % ("again " if before else ""))
-        before = written(os.path.join("units", "main.o"))
-        out("--- the script saves: " + desc)
-        texts = texts_of(edits)
-        if emptied_first:
-            write_emptied_first(texts)
-        else:
-            for path, text in texts.items():
-                write(path, text)
-    # Wait until the driver watches the files and the program runs: the steps must not depend
-    # on how long the build or the start took. (Waiting for the build's object file was not
-    # enough: under load a new executable took up to 9 s to start, and early saves merged.)
-    if not wait(lambda: any("] v1: built" in line for line in lines)):
-        out("!!! the driver did not start the program within %d s" % OUTCOME_TIMEOUT)
-    time.sleep(0.9)
-    for i, step in enumerate(steps):
-        desc, edits = step[:2]
-        while_compiling = len(step) > 2 and step[2] == WHILE_COMPILING
-        emptied_first = len(step) > 2 and step[2] == EMPTIED_FIRST
-        # a "+" marks a step that follows the one before it after 0.12 s, while the driver is
-        # still busy with that one; every other step waits for the driver's outcome of the
-        # one before, as someone who saves, looks at the result and edits again
-        quick_next = i + 1 < len(steps) and steps[i + 1][0].startswith("+")
-        out("--- the script saves: " + desc.lstrip("+"))
-        texts = texts_of(edits)
-        with lock:
-            since = len(lines)
-        saved = time.time()
-        first = next(iter(texts))
-        if emptied_first:
-            write_emptied_first(texts)
-        else:
-            for k, (path, text) in enumerate(texts.items()):
-                if k == 1 and while_compiling:
-                    record = os.path.join(work, ".hot", "units", os.path.splitext(os.path.basename(first))[0] + ".ppu")
-                    deadline = time.time() + OUTCOME_TIMEOUT
-                    while os.path.exists(record) and time.time() < deadline:
-                        time.sleep(0.001)
-                    if os.path.exists(record):
-                        out("!!! the driver did not start to compile %s within %d s" % (os.path.basename(first), OUTCOME_TIMEOUT))
-                write(path, text)
-        if quick_next:
-            time.sleep(0.12)
-            continue
-        # after a quick save, a swap of the save before is not its outcome; but a swap that
-        # merged the two can carry the earlier save's time when the driver read the files
-        # late, so after QUICK_TIMEOUT s any outcome counts
-        if not (desc.startswith("+") and wait(lambda: outcome(since, saved), QUICK_TIMEOUT)) \
-                and not wait(lambda: outcome(since)):
-            out("!!! the driver gave no outcome within %d s of the save" % OUTCOME_TIMEOUT)
-        # the program runs a few ticks with what the driver made of the save
-        time.sleep(1.2)
-    with open(stop, "w"):
-        pass
-    p.wait()
-    th.join()
+
+    def save_steps(steps):
+        """Saves the steps, each once the driver is done with the one before."""
+        before = None
+        while steps and len(steps[0]) > 2 and steps[0][2] == AT_START:
+            desc, edits = steps[0][:2]
+            emptied_first = EMPTIED_FIRST in steps[0][3:]
+            steps = steps[1:]
+            where[0] = "the save during the start: " + desc
+            deadline = time.time() + OUTCOME_TIMEOUT
+            while not built(before) and not gone() and time.time() < deadline \
+                    and not any("] v1: built" in line for line in lines):
+                pause(0.001)
+            if not built(before):
+                fail("the driver did not build main.pas %sbefore it started the program" % ("again " if before else ""))
+            before = written(os.path.join("units", "main.o"))
+            out("--- the script saves: " + desc)
+            texts = texts_of(edits)
+            if emptied_first:
+                write_emptied_first(texts)
+            else:
+                for path, text in texts.items():
+                    write(path, text)
+        # Wait until the driver watches the files and the program runs: the steps must not depend
+        # on how long the build or the start took. (Waiting for the build's object file was not
+        # enough: under load a new executable took up to 9 s to start, and early saves merged.)
+        where[0] = "the start of the program"
+        if not wait(lambda: any("] v1: built" in line for line in lines)):
+            no_outcome("start the program")
+        pause(0.9)
+        for i, step in enumerate(steps):
+            desc, edits = step[:2]
+            where[0] = "the save: " + desc.lstrip("+")
+            while_compiling = len(step) > 2 and step[2] == WHILE_COMPILING
+            emptied_first = len(step) > 2 and step[2] == EMPTIED_FIRST
+            # a "+" marks a step that follows the one before it after 0.12 s, while the driver is
+            # still busy with that one; every other step waits for the driver's outcome of the
+            # one before, as someone who saves, looks at the result and edits again
+            quick_next = i + 1 < len(steps) and steps[i + 1][0].startswith("+")
+            out("--- the script saves: " + desc.lstrip("+"))
+            texts = texts_of(edits)
+            with lock:
+                since = len(lines)
+            saved = time.time()
+            first = next(iter(texts))
+            if emptied_first:
+                write_emptied_first(texts)
+            else:
+                for k, (path, text) in enumerate(texts.items()):
+                    if k == 1 and while_compiling:
+                        record = os.path.join(work, ".hot", "units", os.path.splitext(os.path.basename(first))[0] + ".ppu")
+                        deadline = time.time() + OUTCOME_TIMEOUT
+                        while os.path.exists(record) and not gone() and time.time() < deadline:
+                            pause(0.001)
+                        if os.path.exists(record):
+                            no_outcome("start to compile %s" % os.path.basename(first))
+                    write(path, text)
+            if quick_next:
+                pause(0.12)
+                continue
+            # after a quick save, a swap of the save before is not its outcome; but a swap that
+            # merged the two can carry the earlier save's time when the driver read the files
+            # late, so after QUICK_TIMEOUT s any outcome counts
+            if not (desc.startswith("+") and wait(lambda: outcome(since, saved), QUICK_TIMEOUT)) \
+                    and not wait(lambda: outcome(since)):
+                no_outcome("give an outcome of the save")
+            # the program runs a few ticks with what the driver made of the save
+            pause(1.2)
+
+    def told_to_end():
+        with changed:
+            changed.notify_all()
+
+    print("=== %s" % name, flush=True)
+    th = watchdog = None
+    try:
+        # the case owns its processes and its threads before a signal can end it
+        Signals.hold()
+        try:
+            processes.start(driver_cmd() + list(opts) + [os.path.join(work, "main.pas"), "--", str(MAX_TICKS), stop],
+                            dict(os.environ, **env), told_to_end)
+            th = threading.Thread(target=pump, daemon=True)
+            th.start()
+            watchdog = threading.Timer(CASE_TIMEOUT, overdue)
+            watchdog.daemon = True
+            watchdog.start()
+        finally:
+            Signals.release()
+        try:
+            save_steps(steps)
+        except CaseFailed:
+            pass
+        # the program ends, and then the driver, which closes the output with every process it
+        # started: all within STOP_TIMEOUT
+        where[0] = "the end, after the stop file"
+        with mutating:
+            told = not failed.is_set()
+            if told:
+                with open(stop, "w"):
+                    pass
+        if told:
+            deadline = time.monotonic() + STOP_TIMEOUT
+            if not processes.exited.wait(STOP_TIMEOUT):
+                complain("the program did not end within %d s of the stop file" % STOP_TIMEOUT)
+            else:
+                th.join(max(0.0, deadline - time.monotonic()))
+                if th.is_alive():
+                    complain("the run's output stayed open %d s after the stop file, after the driver ended" % STOP_TIMEOUT)
+    finally:
+        # every process the driver started ends with the case, also after a complaint, Ctrl+C or
+        # SIGTERM: none of them gets a signal sent to this script's process group. A signal
+        # during this waits for it to finish, and one deadline bounds it.
+        Signals.hold()
+        try:
+            if watchdog is not None:
+                watchdog.cancel()
+                watchdog.join()
+            deadline = time.monotonic() + STOP_TIMEOUT
+            if not processes.finish(STOP_TIMEOUT):
+                complain("the driver did not end within %d s of being stopped" % STOP_TIMEOUT)
+            if th is not None:
+                th.join(max(0.0, deadline - time.monotonic()))
+            with lock:
+                say("--- the case took %.2f s" % (time.monotonic() - started))
+                closed.set()
+        finally:
+            Signals.release()
     print(flush=True)
 
 
 if __name__ == "__main__":
+    Signals.install()
+    # a line in another encoding than the console's still prints
+    sys.stdout.reconfigure(errors="backslashreplace")
     names = sys.argv[1:] or list(CASES)
     for n in names:
         run(n)

@@ -7,7 +7,7 @@ $HOT_DRIVER_OPTS adds options to it (--fpc, fpc options).
 
   check.py [case ...]
 """
-import os, platform, re, subprocess, sys
+import os, platform, re, signal, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # case: (reloads applied, refused, failed to compile); a tuple lists the numbers a case may give, as
@@ -172,7 +172,29 @@ if platform.machine().lower() not in ("x86_64", "amd64"):
         EXPECT[name] = (1, 0, 0)
         RESTARTS[name] = 0
 names = sys.argv[1:] or list(EXPECT)
-run = subprocess.run([sys.executable, os.path.join(HERE, "scenario.py")] + names, capture_output=True, text=True)
+# scenario.py writes UTF-8 to this script whatever the console's encoding, and this script
+# prints what its console can't show escaped
+sys.stdout.reconfigure(errors="backslashreplace")
+# SIGTERM or SIGHUP to this script ends scenario.py too, which stops the case it runs, also
+# one that comes while scenario.py starts; Ctrl+C reaches both
+signalled = []
+scenarios = None
+if sys.platform != "win32":
+    def forward(number, frame):
+        signalled.append(number)
+        if scenarios is not None:
+            scenarios.send_signal(number)
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, forward)
+scenarios = subprocess.Popen([sys.executable, os.path.join(HERE, "scenario.py")] + names, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, encoding="utf-8", errors="backslashreplace",
+                             env=dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace"))
+if signalled:
+    scenarios.send_signal(signalled[0])
+stdout, stderr = scenarios.communicate()
+if signalled:
+    sys.exit(128 + signalled[0])
+run = subprocess.CompletedProcess(scenarios.args, scenarios.returncode, stdout, stderr)
 out = run.stdout
 if os.environ.get("HOT_TRANSCRIPT"):
     with open(os.environ["HOT_TRANSCRIPT"], "w") as f:
@@ -190,10 +212,15 @@ for name in names:
     # matches a whole record from its start, so a line of the program that has a driver's
     # words in it is no record of the driver's
     lines = re.findall(r"^ *\d+\.\d+s  (.*)$", body or "", re.M)
+    # the script's first complaint, with the step it was at, and how long the case took, its
+    # end included
+    complaint = next((line[4:] for line in lines if line.startswith("!!! ")), None)
+    took = next(("; took %s s" % m.group(1) for m in (re.match(r"--- the case took ([\d.]+) s$", line) for line in lines) if m), "")
+    said = ("; " + complaint if complaint is not None else "") + took
     ends = [m for m in (re.match(r"\[hot\] the program ended with (-?\d+) after .*?; (\d+) reloads applied, (\d+) refused, (\d+) failed to compile, (\d+) without a change in code, (\d+) restarts$", line) for line in lines) if m]
     end = ends[-1] if ends else None
     if not end:
-        print("%-11s FAIL  %s" % (name, "no closing line" if body is not None else "did not run"))
+        print("%-11s FAIL  %s%s" % (name, "no closing line" if body is not None else "did not run", said))
         failing.append((name, body))
         continue
     rc, applied, refused, failed, unchanged, restarts = map(int, end.groups())
@@ -203,14 +230,16 @@ for name in names:
     # during it, so none finds the same code ("not swapped")
     # "!!! " is the script's own complaint: an edit that does not apply, or a save the driver
     # gave no outcome for
-    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and not any(line.startswith("!!! ") for line in lines)
+    ok = rc == 0 and (applied in ea if isinstance(ea, tuple) else applied == ea) and (refused in er if isinstance(er, tuple) else refused == er) and failed == ef and unchanged == 0 and restarts == RESTARTS.get(name, 0) and complaint is None
     # the program's tick records: the same records count toward continuity and carry the
     # counters
     def tick_records(lines):
         return [m.groups() for m in (re.match(r"tick (\d+):(.*)$", line) for line in lines) if m]
     records = tick_records(lines)
     ticks = [int(tick) for tick, _ in records]
-    seq = sorted(set(ticks)) == list(range(1, max(ticks) + 1)) if ticks else False
+    # every number from 1 to the last, counted without listing them: a program whose memory a
+    # swap broke can print any number
+    seq = bool(ticks) and min(ticks) == 1 and len(set(ticks)) == max(ticks)
     ok = ok and seq
     missing = [text for text in PRINTS.get(name, [])
                if not any(re.match(r"tick \d+: " + (text.pattern if isinstance(text, re.Pattern) else re.escape(text)) + "$", line)
@@ -283,7 +312,8 @@ for name in names:
                     for tick, text in stale[:1])
           + "".join("; a swap noted %r twice" % text for text in repeated[:1])
           + "".join("; a swap did not note %r" % text for text in unnoted[:1])
-          + "".join("; " + text for text in handoff[:1]))
+          + "".join("; " + text for text in handoff[:1])
+          + said)
     if not ok:
         failing.append((name, body))
 for name, body in failing:
