@@ -2,14 +2,15 @@
 
 ## 1.2.0
 
-- A variable that a save removes and a later save brings back with another type now needs
-  a restart, as one that changes its type in place does. The program keeps the variable at
-  its first address, and the agent swapped the new code in with the note `kept without a
-  check`, so it used the old storage as the new type: a larger one ran past it. Only for a
-  Windows program did hotfpc already find a variable with an initial value that came back
-  larger. The agent now keeps the sizes of what a save removes, thread variables included,
-  and the check of layouts in units the declarations a save removes, so a type that comes
-  back with another layout needs a restart too. A variable that comes back as it was is
+- A variable that a save removes and a later save brings back at another size now needs a
+  restart, and so does one in a unit that comes back with another type of the same size
+  (`Integer` to `Single`): the same rule as for a variable that changes in place. The
+  program keeps the variable at its first address, and the agent swapped the new code in
+  with the note `kept without a check`, so it used the old storage as the new type: a
+  larger one ran past it. The agent now keeps the sizes of what a save removes, thread
+  variables included, and the check of layouts in units the declarations a save removes. In
+  the program file, which has no unit file for ppudump to read, only a change of size is
+  found ([limits](docs/reference/limits.md)). A variable that comes back as it was is
   swapped, with the note `<name> is back after a save removed it; it keeps its running
   value`.
 - A swap no longer overwrites a value the program writes while the swap loads with a
@@ -144,9 +145,11 @@
   lost and the program could crash: gas refers to such a variable through the symbol of
   its section, and the agent placed that section again. The scenarios now check that such
   a counter keeps counting across swaps.
-- The documentation is a tree under `docs/`: guides from an introduction to
-  troubleshooting, a reference for the command line, every `[hot]` line, the environment
-  variables, the platforms and the limits, and pages for contributors. The README shows the
+- The documentation is published at
+  [frostney.github.io/hotfpc](https://frostney.github.io/hotfpc/), with search, a Markdown
+  copy of each page and an `llms.txt`, and is a tree under `docs/` in the repository: guides from an introduction to troubleshooting, a reference for the
+  command line, every `[hot]` line, the environment variables, the platforms and the
+  limits, and pages for contributors. The README shows the
   Homebrew install and a recording of `examples/raylib`: four saves swapped into the
   running game, then a fifth that grows a variable, after which hotfpc starts the game over
   by itself. CONTRIBUTING.md is new.
