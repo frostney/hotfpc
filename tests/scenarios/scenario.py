@@ -1395,6 +1395,60 @@ end.
     ("Shared: Integer becomes Shared: Single", [("u.pas", "  Shared: Integer;", "  Shared: Single;")]),
 ])
 
+# ---------------------------------------------------------------------------- a refused unit file, then a unit the program drops
+# v reads Shared of u, and changes its type with it: the check of layouts refuses, as in
+# sharedtype. A save after it that still uses u is refused again: fpc compiles u again, and
+# its unit file still shows the change. Then v no longer uses u, so fpc no longer compiles u:
+# its refused unit file is gone, and the save is swapped
+DROPUNIT_MAIN = r"""program main;
+{$mode objfpc}{$H+}
+uses SysUtils, v;
+var
+  Count: Integer = 0;
+begin
+  while (Count < StrToInt(ParamStr(1))) and not FileExists(ParamStr(2)) do
+  begin
+    Inc(Count);
+    WriteLn('tick ', Count, ': ', Line(Count));
+    Flush(Output);
+    Sleep(300);
+  end;
+end.
+"""
+
+case("dropunit", {
+    "main.pas": DROPUNIT_MAIN,
+    "u.pas": r"""unit u;
+{$mode objfpc}{$H+}
+interface
+var
+  Shared: Integer;
+implementation
+end.
+""",
+    "v.pas": r"""unit v;
+{$mode objfpc}{$H+}
+interface
+function Line(n: Integer): string;
+implementation
+uses SysUtils, u;
+function Line(n: Integer): string;
+var
+  Value: Extended;
+begin
+  Shared := Shared + 1;
+  Value := Shared;
+  Result := 'one ' + FloatToStr(Value);
+end;
+end.
+"""}, [
+    ("Shared: Integer in u, which v reads, becomes Shared: Single", [("u.pas", "  Shared: Integer;", "  Shared: Single;")]),
+    ("another text in v, which still uses u", [("v.pas", "'one '", "'two '")]),
+    ("v no longer uses u, with another text",
+     [("v.pas", "uses SysUtils, u;", "uses SysUtils;"), ("v.pas", "  Shared := Shared + 1;\n  Value := Shared;\n", "  Value := n;\n"),
+      ("v.pas", "'two '", "'three '")]),
+])
+
 # ---------------------------------------------------------------------------- a unit checked once after a save that changes no code
 # A comment in u, which has a variable with an initial value: fpc compiles u again, and its
 # object file comes out the same, so the save changes no code, and u's new unit file becomes

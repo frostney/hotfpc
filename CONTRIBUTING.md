@@ -23,7 +23,7 @@ This guide is for people changing hotfpc itself. To use hotfpc, see the
 git clone https://github.com/frostney/hotfpc
 cd hotfpc
 ./build.sh                                   # build/hotfpc and the unit tests
-python3 tests/scenarios/check.py             # the 46 scenarios, about 2 minutes
+python3 tests/scenarios/check.py             # the 47 scenarios, about 2 minutes
 python3 tests/agent/check.py                 # the agent on its own
 python3 scripts/check-reference-docs.py      # docs/reference/ against the source
 npx --yes markdownlint-cli2@0.24.0           # the Markdown lint
@@ -36,7 +36,7 @@ and run the scenarios and the check of the agent with `HOT_DRIVER` set to
 
 ## When a change is done
 
-The unit tests pass, `check.py` prints "46 of 46 cases as expected", and
+The unit tests pass, `check.py` prints "47 of 47 cases as expected", and
 `tests/agent/check.py` passes, on every system
 the change can affect: macOS arm64, macOS x86-64, Linux x86-64, Linux arm64, and Windows
 x86-64. Changes

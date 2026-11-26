@@ -3406,6 +3406,7 @@ type
     function CompileSources(out ACompileSeconds: Double): Boolean;
     function CollectChangedObjects(const AChanged, AUnchanged: TStrings; const ACompileSeconds: Double): Boolean;
     procedure AcceptRecord(const AObjectName: string);
+    procedure ForgetRecords(const AUnits: TStrings);
     procedure AcceptRecords(const AUnits: TStrings);
     function LayoutsAllowSwap(const AChanged: TStrings; const ACompileSeconds: Double;
       out AInterfaceSeconds: Double): Boolean;
@@ -3768,8 +3769,6 @@ begin
   end;
 end;
 
-{ The object files that differ from the running program's. False when the compile made one
-  of a unit the program does not have. }
 { The object files that differ from the running program's (AChanged), and the units fpc
   compiled again whose object files came out the same, as their unit files show (AUnchanged;
   a unit fpc didn't compile keeps its unit file). A variable of a unit's interface that only
@@ -3828,6 +3827,18 @@ var
 begin
   for I := 0 to AUnits.Count - 1 do
     AcceptRecord(AUnits[I]);
+end;
+
+{ After a save the checks refused, removes the unit files of the units fpc compiled again
+  whose objects came out the same: such a unit file differs from the running program's, and
+  would keep every later save from swapping, even once the program no longer uses the unit.
+  fpc compiles the unit again for a save that still uses it, and the checks see it again. }
+procedure TDriver.ForgetRecords(const AUnits: TStrings);
+var
+  I: Integer;
+begin
+  for I := 0 to AUnits.Count - 1 do
+    DeleteFile(FWorkspace.UnitsDirectory + ChangeFileExt(AUnits[I], RecordExtension));
 end;
 
 { The unit file of a unit (named by its object file) becomes the running program's, with its
@@ -4220,10 +4231,12 @@ begin
     { the checks cover the units fpc compiled again whose objects came out the same, too }
     Checked.AddStrings(Changed);
     Checked.AddStrings(Unchanged);
-    if not LayoutsAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
+    if not LayoutsAllowSwap(Checked, CompileSeconds, InterfaceSeconds)
+      or not SizesAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
+    begin
+      ForgetRecords(Unchanged);
       Exit(True);
-    if not SizesAllowSwap(Checked, CompileSeconds, InterfaceSeconds) then
-      Exit(True);
+    end;
     if FStale then
       Exit;
     if Changed.Count = 0 then

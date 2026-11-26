@@ -87,7 +87,10 @@ symbols and `-FU`/`-o` to build into `.hot/`.
    object file is the same ([Per system](#per-system)). A unit fpc compiled again, which its
    new `.ppu` shows, gets the checks of steps 3 and 4 even when it is left alone: a variable
    of its interface that only other units use can change its type, or grow within its
-   padding, without changing the unit's object file.
+   padding, without changing the unit's object file. When the checks pass, its `.ppu`
+   becomes the running program's; when they refuse the save, the driver removes it, so that
+   fpc compiles the unit again, and the checks see it again, only while the program still
+   uses it.
 2. fpc compiles without linking (`-Cn`). fpc reads the files one after the other, so a
    source that changes during the compile, such as the second file of a save written a
    moment after the first, or the next save, may be read before or after its change. When

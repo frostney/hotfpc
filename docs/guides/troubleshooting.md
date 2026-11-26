@@ -63,7 +63,9 @@ hotfpc.
   code. hotfpc notes `the main block changed`. Move the code into a routine.
 - **The edit is in an initialization section.** It doesn't run again. hotfpc notes it.
 - **The code didn't change.** A comment or unused code gives `not swapped: the generated
-  code is the same`.
+  code is the same`. A unit fpc compiled again still gets the checks, so a declaration
+  that only other units use can need a restart instead
+  ([Output](../reference/output.md#not-swapped)).
 
 ### The change shows, but the program's values are wrong
 

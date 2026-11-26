@@ -168,7 +168,10 @@ not swapped: the generated code is the same (compile <ms> ms)
 
 The source changed, but fpc made the same object files from it, and on macOS the same
 assembler but for its comments: a comment, blank lines, or a change to code that nothing
-uses.
+uses. The checks of layouts and sizes still read the units fpc compiled again, so such a
+save can need a restart instead, as when a variable of a unit's interface that only other
+units use changes its type, or for a Windows program when the sizes of a unit with
+initial values can't be checked.
 
 ### Errors
 
